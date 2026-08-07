@@ -47,14 +47,18 @@ cards       id, note_id, template_id, ordinal, deck_id, anki_id
 
 decks       id, owner_id, name, description, visibility, forked_from_deck_id,
             preset jsonb, created_at, modified_at
-deck_access deck_id, user_id, role      -- 'owner' | 'editor' | 'viewer'
+            -- visibility: 'private' | 'public'
+deck_access deck_id, user_id, role, created_at   -- role: 'owner' | 'editor' | 'viewer'
             -- PRIMARY KEY (deck_id, user_id)
 ```
 
 `notes.fields` as `jsonb` (ordered array of strings) rather than a `note_fields` table:
 fields are always read and written as a unit with the note, never queried individually, and
-the row count would otherwise be 5–10× the note count. Search uses a generated `tsvector`
-column over the concatenation.
+the row count would otherwise be 5–10× the note count.
+
+**Deferred:** full-text search over notes. The intended shape is a generated `tsvector`
+column over the concatenated fields, but nothing queries it yet and it is not implemented.
+Add it with the search feature, not before.
 
 `notes.guid` is Anki's stable per-note identifier and the idempotency key for import.
 It must be present on every note from day one — retrofitting it duplicates every early
@@ -66,9 +70,10 @@ user's decks on their next import.
 
 ```sql
 user_card_state  user_id, card_id,
-                 due timestamptz, stability real, difficulty real,
+                 due timestamptz, stability float8, difficulty float8,
                  state smallint,           -- ts-fsrs State: 0 new,1 learning,2 review,3 relearning
                  reps int, lapses int, elapsed_days int, scheduled_days int,
+                 learning_steps smallint,
                  last_review timestamptz, suspended bool, buried_until date,
                  flag smallint
                  -- PRIMARY KEY (user_id, card_id)
@@ -77,20 +82,46 @@ user_card_state  user_id, card_id,
 review_log       id uuid,                  -- client-generated UUIDv7
                  user_id, card_id, rating smallint,
                  reviewed_at timestamptz, duration_ms int,
-                 state_before smallint, stability_before real, difficulty_before real,
+                 state_before smallint, learning_steps_before smallint,
+                 stability_before float8, difficulty_before float8,   -- NULL for imported history
                  elapsed_days_before int, scheduled_days_after int,
-                 fsrs_version smallint, review_kind smallint
+                 fsrs_version smallint,     -- NULL for imported history
+                 review_kind smallint
                  -- INDEX (user_id, reviewed_at)
                  -- append-only; the optimiser's training set
+                 -- FKs are ON DELETE RESTRICT: nothing may cascade training data away
 
-user_fsrs_params user_id, deck_id NULL,    -- NULL = the user's global default
+user_fsrs_params id, user_id, deck_id NULL,   -- deck_id NULL = the user's global default
                  fsrs_version smallint, params jsonb,
-                 desired_retention real, optimised_at, review_count_at_fit
+                 desired_retention float8, optimised_at, review_count_at_fit
                  -- UNIQUE (user_id, deck_id) with NULL treated as a value
+                 -- surrogate `id` PK; the pair above is the real key
 
 users            id, email, display_name, timezone, day_start_hour smallint DEFAULT 4,
                  created_at
+                 -- UNIQUE on lower(email): one account per address, any casing
 ```
+
+**CHECK constraints.** A handful of columns produce wrong schedules rather than errors when
+given a bad value, so the database rejects them: `users.day_start_hour` 0–23 (it is fed
+straight into `make_interval`), `review_log.rating` 1–4, `review_log.review_kind` 0–4,
+`review_log.state_before` and `user_card_state.state` 0–3, and
+`user_fsrs_params.desired_retention` strictly between 0 and 1.
+
+**Indexes backing `ON DELETE RESTRICT`.** A restricting foreign key makes Postgres run
+`SELECT 1 FROM child WHERE fk = $1` on every parent delete, so the referencing column needs
+to lead an index or that becomes a sequential scan. `review_log` carries
+`(card_id, user_id, reviewed_at)` for this — `card_id` leads for the RI check, and the
+trailing columns also serve the per-card replay path. `cards.template_id` and
+`notes.note_type_id` are indexed for the same reason.
+
+**`stability` and `difficulty` are `double precision`, not `real`.** `ts-fsrs` rounds them to
+8 decimal places and clamps stability to 36500; `real` holds ~7 significant digits, so a
+value round-tripped through it would not byte-match what the replay path computes in memory.
+That is precisely the silent client/server interval disagreement CLAUDE.md §3 warns about.
+
+`user_card_state.learning_steps` mirrors `ts-fsrs`'s `Card.learning_steps`. FSRS-6 short-term
+scheduling reads it, so it has to survive a reload or a `review_log` replay.
 
 `review_log` rows carry `*_before` values and `fsrs_version` so the log stays interpretable
 after a parameter refit or an algorithm upgrade — without them, old rows can't be replayed.
@@ -132,6 +163,11 @@ Anki's "due today" is not midnight UTC — it is a per-user rollover hour (defau
 local) so late-night study counts as the previous day. `users.timezone` +
 `users.day_start_hour` drive it. Compute the queue window in the query, not in the client,
 so a user crossing a timezone doesn't see a phantom empty queue.
+
+`src/lib/server/db/day-boundary.ts` builds the two SQL expressions every queue query needs:
+`studyDayStart()` and `studyDayEnd()`. A card counts as due when `user_card_state.due <
+studyDayEnd(...)`. The arithmetic runs on the local wall clock so a DST transition makes the
+study day 23 or 25 hours long rather than silently shifting the rollover.
 
 ---
 
