@@ -153,13 +153,18 @@ enshu/
 │  │  └─ api/               JSON endpoints for the write queue and batch fetches
 │  └─ app.d.ts
 ├─ tests/
-│  ├─ unit/
 │  ├─ fixtures/apkg/      real exports from multiple Anki versions — see §10
 │  └─ e2e/
 └─ scripts/
 ```
 
 **Boundary rules**
+
+- **Unit tests are colocated with source** (`foo.ts` + `foo.spec.ts` / `foo.test.ts` in the
+  same directory), not under `tests/unit/`. The scaffold's Vitest project and
+  `.svelte-kit/tsconfig.json` only glob `src/**`, so colocated is what actually runs and
+  typechecks. `tests/` holds only what genuinely lives outside `src/`: apkg fixtures and
+  Playwright e2e specs.
 
 - `src/lib/fsrs/` is isomorphic: pure functions, no DB, no `fetch`, no browser globals. This
   is what guarantees client and server schedule identically.
