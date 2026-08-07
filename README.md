@@ -226,24 +226,19 @@ LLM-generated cards.
 
 ## Licensing
 
-**Undecided, and — importantly — freely decidable.**
+**AGPL-3.0-or-later.**
 
-Because Enshu contains no Anki-derived code, we inherit no licence. Anki is AGPLv3-or-later,
+Because Enshu contains no Anki-derived code, we inherit no licence — Anki is AGPLv3-or-later,
 and forking its sync server would have made AGPL permanent and irreversible for this project
 (hundreds of contributors, no CLA, nobody able to grant an exception). Dropping sync means
-that constraint simply doesn't apply. We can pick anything, and we can change our minds later.
+that constraint simply doesn't apply, which is why the choice was ours to make freely rather
+than inherited.
 
-Given the project is FOSS regardless, the live options:
-
-- **AGPLv3** — consistent with the ecosystem Enshu sits in, and prevents someone running a
-  closed proprietary fork as a hosted service. The trade-off is that some organisations have
-  blanket policies against AGPL, which can limit institutional adoption — a real
-  consideration for something aimed at schools.
-- **MIT / Apache-2.0** — maximum adoption, no friction for institutional users. Apache-2.0
-  adds an explicit patent grant.
-
-Worth deciding before the first outside contribution arrives, since relicensing afterwards
-requires tracking down every contributor.
+We chose AGPLv3-or-later anyway: it's consistent with the ecosystem Enshu sits in, and it
+prevents someone running a closed proprietary fork as a hosted service. The trade-off is that
+some organisations have blanket policies against AGPL, which can limit institutional
+adoption — a real consideration for something aimed at schools, and a cost we accepted
+knowingly rather than one we missed.
 
 Deck content is a separate matter from code. Shared decks on AnkiWeb carry their own licence
 terms, and redistributing them without permission is something Ankitects has publicly
