@@ -88,18 +88,20 @@ These are the load-bearing choices. Each one is cheap now and a rewrite later.
 
 ## 3. Stack
 
-| Concern | Choice | Notes |
-|---|---|---|
-| App framework | SvelteKit + TypeScript (strict) | SSR for everything except the reviewer; the reviewer is client-driven. |
-| Scheduler | `ts-fsrs` | Runs on **both** client and server. Pin an exact version. |
-| Database | PostgreSQL | 16+. Row-level tenancy via `user_id` columns and explicit query scoping. |
-| ORM / migrations | Drizzle + `drizzle-kit` | Schema is TypeScript-first; migrations are generated SQL, committed, never edited after merge. |
-| `.apkg` read/write | `better-sqlite3` (server) | Plus `fflate`/`yauzl` for zip and `@bokuweb/zstd-wasm` or `zstd-napi` for newer exports. |
-| Tests | Vitest + Playwright | See §10. |
-| Auth | Lucia-style sessions or Auth.js | **Undecided** — see §12. Not blocking; keep it behind `src/lib/server/auth/`. |
+| Concern | Choice | Pinned version | Notes |
+|---|---|---|---|
+| App framework | SvelteKit + TypeScript (strict) | `@sveltejs/kit@^2.63.0`, `svelte@^5.56.1`, `typescript@^6.0.3` | SSR for everything except the reviewer; the reviewer is client-driven. |
+| Scheduler | `ts-fsrs` | `5.4.1` (exact) | Runs on **both** client and server. |
+| Database | PostgreSQL | `postgres:16` (Docker image) | Row-level tenancy via `user_id` columns and explicit query scoping. |
+| ORM / migrations | Drizzle + `drizzle-kit` | `drizzle-orm@^0.45.2`, `drizzle-kit@^0.31.10` | Schema is TypeScript-first; migrations are generated SQL, committed, never edited after merge. |
+| `.apkg` read/write | `better-sqlite3` (server) | `better-sqlite3@13.0.3`, `fflate@0.8.3`, `zstd-napi@0.0.13` (all exact) | `fflate` for zip; `zstd-napi` for zstd-compressed schema 18+ exports — native binding, chosen over `@bokuweb/zstd-wasm` for active maintenance (see git history for the comparison). |
+| Tests | Vitest + Playwright | `vitest@^4.1.8`, `@playwright/test@^1.60.0` | See §10. |
+| Auth | Lucia-style sessions or Auth.js | **Undecided** — see §12. Not blocking; keep it behind `src/lib/server/auth/`. | |
 
-**Pin versions on first install and record them here.** Network was unavailable at the time
-this file was written, so no version numbers are asserted — do not trust remembered ones.
+Versions pinned at scaffold time (`feature/3-scaffold`, 2026-08-07). Non-critical-path
+devDependencies (SvelteKit, Drizzle, Vitest, Playwright, ESLint, Prettier) use caret ranges,
+per `package.json`; `ts-fsrs` and the `.apkg` codec deps are pinned exact since a silent
+version drift there is the correctness hazard this file keeps warning about.
 
 **One language, end to end.** Scheduling must run in the browser, so an FSRS implementation
 in JS exists regardless of backend language. A Python or Go server would mean two FSRS
