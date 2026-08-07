@@ -346,10 +346,8 @@ LLM-generated cards.
 
 Unresolved. Do not silently pick one — surface it.
 
-- **Licence.** AGPLv3 vs MIT/Apache-2.0. AGPL fits the ecosystem and blocks closed hosted
-  forks; institutional AGPL bans could hurt school adoption, which is the target market.
-  **Must be settled before the first outside contribution** — relicensing afterwards means
-  tracking down every contributor.
+- ~~**Licence.**~~ Settled: AGPL-3.0-or-later. See `LICENSE` and the README's Licensing
+  section.
 - **Parameter optimisation implementation.** `ts-fsrs` schedules but the reference optimiser
   is Rust (`fsrs-rs`, exposed via `fsrs-rs-nodejs`). Using it reintroduces a native
   dependency — as a *prebuilt binary*, not a forked codebase, so it costs deployment
