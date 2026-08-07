@@ -51,6 +51,8 @@ export const users = pgTable(
 		id: id(),
 		email: text('email').notNull(),
 		displayName: text('display_name').notNull(),
+		/** argon2id hash (`@node-rs/argon2`). Never the plaintext, never a weaker algorithm. */
+		passwordHash: text('password_hash').notNull(),
 		/** IANA zone name, e.g. `Europe/London`. Drives the day boundary (see `day-boundary.ts`). */
 		timezone: text('timezone').notNull().default('UTC'),
 		/** Local hour at which the study day rolls over. 04:00 by default, never midnight UTC. */
@@ -65,6 +67,24 @@ export const users = pgTable(
 		// out-of-range value would silently shift every queue query for that user.
 		check('users_day_start_hour_range', sql`${t.dayStartHour} between 0 and 23`)
 	]
+);
+
+/**
+ * A logged-in session. `id` is the SHA-256 hash (hex) of the random token issued in the
+ * session cookie — the raw token never touches the database, so a read of this table (a
+ * backup, a compromised replica) discloses nothing usable. See `src/lib/server/auth/`.
+ */
+export const sessions = pgTable(
+	'sessions',
+	{
+		id: text('id').primaryKey(),
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		createdAt: createdAt()
+	},
+	(t) => [index('sessions_user_idx').on(t.userId)]
 );
 
 // ---------------------------------------------------------------------------

@@ -65,9 +65,12 @@ async function fixture(label: string) {
 		noteType: uuidv7(),
 		template: uuidv7()
 	};
-	await db
-		.insert(schema.users)
-		.values({ id: ids.user, email: `${label}@example.test`, displayName: label });
+	await db.insert(schema.users).values({
+		id: ids.user,
+		email: `${label}@example.test`,
+		displayName: label,
+		passwordHash: 'test-hash'
+	});
 	await db.insert(schema.decks).values({ id: ids.deck, ownerId: ids.user, name: label });
 	await db.insert(schema.noteTypes).values({ id: ids.noteType, ownerId: ids.user, name: 'Basic' });
 	await db.insert(schema.templates).values({
@@ -93,6 +96,7 @@ describe.skipIf(!url)('migrations on a fresh database', () => {
 			'note_types',
 			'notes',
 			'review_log',
+			'sessions',
 			'templates',
 			'user_card_state',
 			'user_fsrs_params',
@@ -285,6 +289,7 @@ describe.skipIf(!url)('value constraints', () => {
 			db.insert(schema.users).values({
 				email: `hour${hour}@example.test`,
 				displayName: 'x',
+				passwordHash: 'test-hash',
 				dayStartHour: hour
 			})
 		);
@@ -295,6 +300,7 @@ describe.skipIf(!url)('value constraints', () => {
 			await db.insert(schema.users).values({
 				email: `ok-hour${hour}@example.test`,
 				displayName: 'x',
+				passwordHash: 'test-hash',
 				dayStartHour: hour
 			});
 		}
@@ -352,9 +358,13 @@ describe.skipIf(!url)('value constraints', () => {
 
 describe.skipIf(!url)('users.email', () => {
 	it('is unique case-insensitively', async () => {
-		await db.insert(schema.users).values({ email: 'Case@Example.test', displayName: 'a' });
+		await db
+			.insert(schema.users)
+			.values({ email: 'Case@Example.test', displayName: 'a', passwordHash: 'test-hash' });
 		await rejectsWith(UNIQUE_VIOLATION, () =>
-			db.insert(schema.users).values({ email: 'case@example.TEST', displayName: 'b' })
+			db
+				.insert(schema.users)
+				.values({ email: 'case@example.TEST', displayName: 'b', passwordHash: 'test-hash' })
 		);
 	});
 
