@@ -1,11 +1,13 @@
-import { createNoteType, getNoteType, listNoteTypesForUser } from '$lib/server/db/queries/note-types';
+import {
+	createNoteType,
+	getNoteType,
+	listNoteTypesForUser
+} from '$lib/server/db/queries/note-types';
 
 const BASIC_NOTE_TYPE_INPUT = {
 	name: 'Basic',
 	fields: [{ name: 'Front' }, { name: 'Back' }],
-	templates: [
-		{ name: 'Card 1', qfmt: '{{Front}}', afmt: '{{FrontSide}}<hr id=answer>{{Back}}' }
-	]
+	templates: [{ name: 'Card 1', qfmt: '{{Front}}', afmt: '{{FrontSide}}<hr id=answer>{{Back}}' }]
 };
 
 /**

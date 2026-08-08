@@ -4,9 +4,7 @@
 
 	let { data }: { data: PageData } = $props();
 
-	const sortedFields = $derived(
-		data.noteType.fields.slice().sort((a, b) => a.ordinal - b.ordinal)
-	);
+	const sortedFields = $derived(data.noteType.fields.slice().sort((a, b) => a.ordinal - b.ordinal));
 </script>
 
 <main>
