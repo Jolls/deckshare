@@ -1,14 +1,18 @@
 /**
  * Synthetic `.apkg` fixtures, built to the description in `docs/apkg-format.md`.
  *
- * > **These are not real Anki exports.** No Anki build was available when they were written,
- * > so every claim they encode — table DDL, JSON member names, protobuf field numbers, the
- * > `cards.data` key names — is the format doc's claim, and the format doc is explicitly
- * > unverified (CLAUDE.md §7). What these fixtures prove is that the reader handles the
- * > *described* format consistently: both schemas converging on one IR, the `due` and `ivl`
- * > encodings normalised, media deduplicated, zstd and protobuf containers unwrapped. They
- * > cannot prove the description is right. Replace them with real exports when one is
- * > available, and correct the doc in place when the two disagree.
+ * > **These are not real Anki exports.** Every claim they encode — table DDL, JSON member
+ * > names, protobuf field numbers, `cards.data` key names — is `docs/apkg-format.md`'s claim,
+ * > and they are written with the same constants they are read with, so they cannot prove that
+ * > document right. What they prove is that the reader handles the *described* format
+ * > consistently: both schemas converging on one IR, the `due`/`odue` and `ivl` encodings
+ * > normalised, media deduplicated, zstd and protobuf containers unwrapped.
+ * >
+ * > **Partially superseded (2026-08-07).** One real export has since been read end to end and
+ * > confirmed the schema-11 half of what these encode — see "What the one real export
+ * > confirmed" in `docs/apkg-format.md`. It was schema 11 in a legacy container, so the
+ * > schema-18 / protobuf half remains unverified (issue #25). It also exposed two real-world
+ * > shapes these fixtures had not modelled, now covered by `buildDowngradeStubPackage()`.
  *
  * Both builders take the *same* logical collection, so a test can assert the schema-11 and
  * schema-18 readers produce the same IR — which is the whole point of having an IR.
@@ -21,7 +25,14 @@ import { compress as zstdCompress } from 'zstd-napi';
 // The collection both builders encode
 // ---------------------------------------------------------------------------
 
-/** 2024-01-01T04:00:00Z — a 04:00 rollover, as Anki sets `col.crt`. */
+/**
+ * 2024-01-01T04:00:00Z. Deliberately *not* a round midnight, so a reader that quietly rounds
+ * `crt` to a day boundary, or adds a rollover hour of its own on top, shows up as a four-hour
+ * error in every day-offset due date.
+ *
+ * Not a claim about what Anki puts here: the one real export inspected had `crt` at exactly
+ * midnight UTC. `crt` is an opaque anchor to be used verbatim — see `docs/apkg-format.md`.
+ */
 export const CRT_SECONDS = 1_704_081_600;
 
 export const BASIC_NOTETYPE_ID = 1_600_000_000_000;
@@ -486,6 +497,38 @@ export function buildSchema11Package(): Uint8Array {
 	members[MEDIA_MEMBER] = new TextEncoder().encode(JSON.stringify(mediaIndex));
 
 	return zipSync(members);
+}
+
+/**
+ * A package carrying **two** collections: the real one as `collection.anki21`, and a
+ * `collection.anki2` downgrade stub holding a single placeholder note.
+ *
+ * Not hypothetical — this is the shape of a real 2025 shared-deck export inspected during
+ * verification: 319 notes in `collection.anki21` and 1 in `collection.anki2`, which older Anki
+ * builds read instead. A reader that picks the wrong member imports one note out of hundreds
+ * and reports success, so the newest-first preference order is load-bearing.
+ */
+export function buildDowngradeStubPackage(): Uint8Array {
+	const real = newCollection(11, MODELS_JSON, DECKS_JSON);
+	const realBytes = real.serialize();
+	real.close();
+
+	const stub = newCollection(11, '{}', '{}');
+	stub.exec('DELETE FROM notes; DELETE FROM cards; DELETE FROM revlog');
+	stub
+		.prepare(
+			`INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data)
+		 VALUES (1, 'stub-note', 1, 0, -1, '', 'Please upgrade Anki', '', 0, 0, '')`
+		)
+		.run();
+	const stubBytes = stub.serialize();
+	stub.close();
+
+	return zipSync({
+		'collection.anki21': new Uint8Array(realBytes),
+		'collection.anki2': new Uint8Array(stubBytes),
+		[MEDIA_MEMBER]: new TextEncoder().encode('{}')
+	});
 }
 
 // ---------------------------------------------------------------------------

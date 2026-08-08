@@ -53,9 +53,13 @@ import type {
 import { buildMedia, parseMediaIndex } from './media';
 
 /**
- * Collection member names, newest first. A package can carry more than one so that older Anki
- * versions still find something they can read; the newest is the authoritative copy and the
- * others are downgraded duplicates.
+ * Collection member names, **newest first, and the order is load-bearing.**
+ *
+ * A package can carry more than one so that older Anki versions still find something they can
+ * read. The others are not equivalent copies: a real 2025 shared-deck export inspected during
+ * verification carried 319 notes in `collection.anki21` and a **one-note** "please upgrade"
+ * placeholder in `collection.anki2`. Reading the wrong member imports one note out of hundreds
+ * and reports success. Regression test: `buildDowngradeStubPackage()`.
  */
 const COLLECTION_MEMBERS = ['collection.anki21b', 'collection.anki21', 'collection.anki2'];
 

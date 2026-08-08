@@ -33,6 +33,7 @@ import {
 	REVLOG_LEARN_ID,
 	REVLOG_REVIEW_ID,
 	SUBDECK_ID,
+	buildDowngradeStubPackage,
 	buildSchema11Package,
 	buildSchema18ClaimWithoutTablesPackage,
 	buildSchema18Package
@@ -379,6 +380,16 @@ describe('container handling', () => {
 	it('rejects a zip that holds no collection', () => {
 		const notAPackage = zipSync({ 'readme.txt': new TextEncoder().encode('hello') });
 		expect(() => readApkg(notAPackage)).toThrow(/Not an Anki package/);
+	});
+
+	it('prefers the newest collection member over the downgrade stub beside it', () => {
+		// A real 2025 shared-deck export carries `collection.anki21` with the whole deck and
+		// `collection.anki2` with a one-note "please upgrade" placeholder. Reading the wrong member
+		// imports one note out of hundreds and looks like a success.
+		const ir = readApkg(buildDowngradeStubPackage());
+		expect(ir.notes).toHaveLength(2);
+		expect(ir.notes.map((n) => n.guid)).toEqual(['guid-basic-001', 'guid-cloze-001']);
+		expect(ir.notes.map((n) => n.guid)).not.toContain('stub-note');
 	});
 
 	it('refuses an archive with an implausible number of members', () => {

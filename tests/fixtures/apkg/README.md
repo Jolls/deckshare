@@ -14,7 +14,22 @@ For each fixture, record here:
 
 | File | Anki version | Schema | Exercises |
 |---|---|---|---|
-| _(none yet)_ | | | |
+| _(none committed)_ | | | |
+
+### Inspected but not committed
+
+A real widely-distributed community geography deck (v53, exported ~2025-04) was read end to end
+on 2026-08-07 to verify the format. **It is not in the repo and must not be**: it is
+third-party deck content under its own licence, which is precisely the open question in
+CLAUDE.md §12. Findings are recorded in words in
+[`docs/apkg-format.md`](../../../docs/apkg-format.md) under "What the one real export
+confirmed", and the two real-world traps it exposed are now covered by synthetic regression
+tests (`buildDowngradeStubPackage()`).
+
+**Still wanted: any schema-18 export** — a `.colpkg`, or an `.apkg` exported with "support
+older Anki versions" turned *off*. That is the one fixture that would close issue #25. A
+self-made deck of two notes is enough; it does not need to be anyone's real collection, which
+also sidesteps the licensing problem entirely.
 
 ---
 
@@ -44,6 +59,7 @@ test meaningful.
 | `buildSchema11Package()` | 11 | plain zip, JSON media index | note types/decks as `col` JSON blobs, `::` deck names |
 | `buildSchema18Package()` | 18 | zstd collection + media index, uncompressed media, `meta`, protobuf media index | `notetypes`/`fields`/`templates`/`decks` tables, protobuf configs, `\x1f` deck names |
 | `buildSchema18ClaimWithoutTablesPackage()` | claims 18, has none | plain zip | `col.ver` lying about the layout — the reader must decide from table presence |
+| `buildDowngradeStubPackage()` | 11 | plain zip, two collections | `collection.anki21` (full) beside a one-note `collection.anki2` downgrade stub — **modelled on a real export**, not invented |
 
 Shared content: two note types (one standard with three fields and three templates, one
 cloze), three decks including a filtered one and a subdeck, two notes (one with non-ASCII

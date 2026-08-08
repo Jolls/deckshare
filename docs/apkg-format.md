@@ -4,11 +4,21 @@ Extracted from [CLAUDE.md](../CLAUDE.md) §7. Read this before touching
 `src/lib/server/apkg/`. Companion to the fixtures in `tests/fixtures/apkg/`.
 
 > [!warning]
-> **Everything below is from memory and has not been checked against a live Anki build or
-> the format documentation.** Network access was unavailable when it was written. Treat it
-> as a map of what to look for, not a contract. Verify each claim against a real export
-> before relying on it, and correct this file in place when you do — noting which Anki
-> version you verified against.
+> **Everything below started as memory, unchecked against a live Anki build.** Treat an
+> unverified claim as a map of what to look for, not a contract. Verify each against a real
+> export before relying on it, and correct this file in place when you do.
+>
+> **Verification status as of 2026-08-07.** One real export has been inspected: a widely
+> distributed community geography deck, v53, exported ~2025-04, 319 notes / 978 cards / 546
+> media files. It is **schema 11 in a legacy container**, so it verifies that path and says
+> nothing about schema 18. Claims below are tagged:
+>
+> - ✅ **verified** against that export
+> - ❓ **unverified** — still memory only
+>
+> The whole of the schema-18 / protobuf section is ❓. Getting a schema-18 export (any
+> `.colpkg`, or an `.apkg` exported with "support older Anki versions" switched off) is the
+> single highest-value fixture still missing.
 
 **No Anki-derived code.** File formats are not copyrightable, so the reader/writer is ours.
 Copying `ankitects/anki` source (AGPLv3) would make the licence question permanent and
@@ -22,17 +32,28 @@ codebase.
 `.apkg` is a zip containing:
 
 - a SQLite collection — member named `collection.anki2`, `collection.anki21`, or
-  `collection.anki21b` depending on the exporting version
-- a `media` file: a JSON map of index to filename, `{"0":"cat.jpg","1":"audio.mp3"}`
-- the media files themselves, named by those numeric indices
+  `collection.anki21b` depending on the exporting version ✅
+- a `media` file: a JSON map of index to filename, `{"0":"cat.jpg","1":"audio.mp3"}` ✅
+- the media files themselves, named by those numeric indices ✅ (stored uncompressed)
+
+✅ **A package can carry more than one collection, and the extra one is a trap.** The verified
+export contains *both* `collection.anki21` (319 notes — the real deck) and `collection.anki2`
+(**1 note**, a "please upgrade" placeholder for pre-2.1 Anki). Picking the wrong member imports
+one note out of hundreds and reports success. `read.ts` prefers `collection.anki21b`, then
+`collection.anki21`, then `collection.anki2` — newest first — and that order is load-bearing,
+not cosmetic. Regression test: `buildDowngradeStubPackage()`.
+
+✅ **Legacy containers are still in active use.** The 2025 export's `meta` member is two bytes,
+`08 02` — protobuf field 1 = **2**, not 3 — and nothing in the archive is zstd-compressed. Do
+not assume a recent export implies the modern container.
 
 Newer Anki exports zstd-compress entries and add a protobuf `meta` file. `.colpkg` is the
 same container for a whole collection rather than a deck selection.
 
 **Correction (2026-08-07, `feature/9-apkg-reader`).** The `media` map is only JSON in the
-legacy container. In the modern (`meta`-carrying, zstd) container it is a **protobuf list**,
-where an entry's *position* in the list is the zip member name that the legacy JSON spelled as
-an object key. The member bytes themselves are zstd-compressed too.
+legacy container ✅. In the modern (`meta`-carrying, zstd) container it is a **protobuf list**
+❓, where an entry's *position* in the list is the zip member name that the legacy JSON spelled
+as an object key.
 
 `src/lib/server/apkg/read.ts` therefore does not branch on the package version at all: it
 sniffs the zstd frame magic (`28 B5 2F FD`) and sniffs `{` versus a protobuf tag byte for the
@@ -58,17 +79,19 @@ See `ArchiveLimits` in `read.ts`.
 
 Two must both be readable:
 
-- **Schema 11 and earlier** — note types and decks live as JSON blobs in the single-row
-  `col` table (`models`, `decks`, `dconf`, `conf`).
-- **Schema 18+** — real tables: `notetypes`, `fields`, `templates`, `decks`, `deck_config`,
-  `config`, `tags`.
+- **Schema 11 and earlier** ✅ — note types and decks live as JSON blobs in the single-row
+  `col` table (`models`, `decks`, `dconf`, `conf`). Still what a 2025 shared deck exports.
+- **Schema 18+** ❓ — real tables: `notetypes`, `fields`, `templates`, `decks`, `deck_config`,
+  `config`, `tags`. **No real schema-18 file has been inspected.**
 
 Shared by both: `notes` (fields joined by `\x1f`, `guid`, `mid`, `csum`, `tags`), `cards`
 (`nid`, `did`, `ord`, `type`, `queue`, `due`, `ivl`, `factor`, `reps`, `lapses`, `odid`,
 `flags`, `data`), `revlog` (`cid`, `ease`, `ivl`, `lastIvl`, `factor`, `time`, `type`),
 `graves`.
 
-**Corrections (2026-08-07, `feature/9-apkg-reader`).** "Real tables" understates the work:
+**Corrections (2026-08-07, `feature/9-apkg-reader`).** "Real tables" understates the work.
+**Everything in this list about schema 18 is ❓** — the verified export was schema 11, so none
+of it has been checked against a real file:
 
 - Schema 18's configuration columns — `notetypes.config`, `fields.config`,
   `templates.config`, `decks.common`, `decks.kind` — are **protobuf BLOBs, not JSON**. Reading
@@ -105,12 +128,19 @@ looking but wrong output if missed:
   `type` — is the discriminator, and for a displaced card the value is not even in this
   column.**
 
-  Also retracted: *"Converting requires `col.crt` and the rollover hour."* It requires `crt`
-  alone. `col.crt` is already the collection's rollover instant, not midnight — 04:00 local on
-  the day the collection was made — so `crt + days × 86400` lands on the correct rollover
-  without the hour being applied a second time. Applying `users.day_start_hour` on top of it
+  Also retracted: *"Converting requires `col.crt` and the rollover hour."* ✅ It requires `crt`
+  alone — `crt + days × 86400`, with `users.day_start_hour` **not** applied on top. Doing so
   would shift every imported review card. The rollover hour matters for *our* queue queries
   (`docs/schema.md`), not for this conversion.
+
+  > **Superseded sub-claim (same day, corrected by the real export).** A first pass at this
+  > retraction asserted `col.crt` "is already the rollover instant, not midnight — 04:00 local".
+  > That is not supportable. The verified export's `crt` is `1362182400` =
+  > **2013-03-02T00:00:00Z, exactly midnight UTC** and exactly divisible by 86400. It may be
+  > 04:00 local for a UTC+4 author, or Anki may normalise `crt` on export; neither can be told
+  > from one file. Treat `crt` as an **opaque anchor**: use it verbatim, add nothing to it, and
+  > do not assume it encodes any particular local hour. ❓ what it means; ✅ that using it
+  > verbatim is what the format wants.
 
   | `queue` | `due` means | Example (`crt` = 2024-01-01T04:00Z) |
   |---|---|---|
@@ -214,6 +244,40 @@ database code runs.
 
 Lossy in that direction by definition — a shared deck's other users' progress cannot be
 represented in an Anki collection. That's fine and expected, but the UI should say so.
+
+---
+
+## What the one real export confirmed
+
+Inspected 2026-08-07 (a widely distributed community geography deck, v53, exported ~2025-04).
+The deck itself is not committed — it is third-party content under its own licence, which is
+exactly the open question in CLAUDE.md §12.
+
+Shape: schema 11, legacy container, `meta` = version 2, 1 note type (8 fields, 4 templates),
+2 decks, 319 notes, 978 cards, 0 revlog rows, 546 media files.
+
+Confirmed by reading it end to end with no errors and no warnings:
+
+- The schema-11 JSON blob layout: `col.models` / `col.decks`, field and template shapes,
+  `flds`/`tmpls` array members, `sortf`, `type`, `css`, deck `desc` and `dyn`.
+- `notes.flds` splitting on `\x1f` — every one of the 319 notes yields exactly 8 fields,
+  matching the note type's field count, including empty ones in the middle.
+- `notes.tags` space-surrounded parsing, and `notes.id` as epoch **milliseconds**.
+- **Card generation matches the templates semantically**, which is the strongest single check:
+  ordinal 3 (an unconditional template) produced 319 cards, one per note, while the three
+  `{{#Field}}`-conditional templates produced 219 / 219 / 221. A field-ordering or
+  template-parsing error would not land on those numbers.
+- `cards.due` as a **position** for new cards — all 978 are new, positions 1..1398, sparse
+  exactly because conditional templates skip ordinals.
+- **The media index resolves perfectly**: 546 entries, 546 distinct filenames referenced by
+  `<img src=…>` in note content, **zero dangling and zero unreferenced** in either direction.
+- Media stored uncompressed; mimes 319 PNG + 227 SVG.
+- Reading the same file twice produces an identical IR.
+
+Not exercised by it, and therefore still ❓: everything schema-18 (real tables, all protobuf
+field numbers, `COLLATE unicase`), the zstd container, the protobuf media index, FSRS state in
+`cards.data`, `revlog`, `odue`/filtered decks, negative `ivl`, suspension and burial, and
+non-ASCII media filenames — this deck has none of them.
 
 ---
 

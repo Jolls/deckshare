@@ -16,7 +16,8 @@ import { decodeMessage, pbRepeatedMessages, pbString } from './protobuf';
 /**
  * `MediaEntries` / `MediaEntry` are message names from Anki's separately-published `.proto`
  * interface files, not from its source code (CLAUDE.md §2.7). The **field numbers** below are
- * unverified guesses — see the note in `anki-schema.ts` and issue #25. Two different confidence
+ * unverified guesses (issue #25) — the one real export inspected so far carried the legacy
+ * *JSON* index, which is verified, and never reached this branch. Two different confidence
  * levels, deliberately called out.
  */
 const MEDIA_ENTRIES = { entries: 1 } as const;
@@ -49,8 +50,11 @@ const DEFAULT_MIME = 'application/octet-stream';
  *
  * Two encodings exist and both are in circulation:
  *
- * - the legacy one, a JSON object `{"0":"cat.jpg","1":"音声.mp3"}` keyed by the zip member name;
- * - the modern one, a protobuf list where an entry's *position* is its zip member name.
+ * - the legacy one, a JSON object `{"0":"cat.jpg","1":"音声.mp3"}` keyed by the zip member name —
+ *   **verified** against a real 2025 export whose 546 entries resolved one-to-one against the
+ *   filenames its note content referenced, with nothing dangling either way;
+ * - the modern one, a protobuf list where an entry's *position* is its zip member name —
+ *   **unverified** (issue #25).
  *
  * Sniffing the encoding rather than deriving it from the package version keeps this working
  * for a package whose `meta` member is missing or unreadable.

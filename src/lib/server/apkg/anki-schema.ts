@@ -8,22 +8,29 @@
  *
  * Two layouts must both be readable:
  *
- * - **Schema 11 and below.** `notetypes` and `decks` do not exist; the same data lives as JSON
- *   blobs in the single-row `col` table (`col.models`, `col.decks`).
- * - **Schema 18 and above.** Real `notetypes` / `fields` / `templates` / `decks` tables, whose
- *   configuration columns are protobuf BLOBs rather than JSON. `col.models` and `col.decks`
- *   still exist as columns but are emptied.
+ * - **Schema 11 and below — verified.** `notetypes` and `decks` do not exist; the same data
+ *   lives as JSON blobs in the single-row `col` table (`col.models`, `col.decks`). Checked
+ *   against a real 2025 shared-deck export (319 notes, 1 note type of 8 fields and 4
+ *   templates); see the verification section of `docs/apkg-format.md`. Still the layout a
+ *   widely distributed deck ships in, so this is not a legacy path.
+ * - **Schema 18 and above — unverified.** Real `notetypes` / `fields` / `templates` / `decks`
+ *   tables, whose configuration columns are protobuf BLOBs rather than JSON. `col.models` and
+ *   `col.decks` still exist as columns but are emptied. No real schema-18 file has been
+ *   inspected.
  *
  * **Two different confidence levels, do not conflate them.** The protobuf *message names*
  * below (`NotetypeConfig`, `FieldConfig`, `CardTemplateConfig`, `DeckKindContainer`) come from
  * Anki's separately-published `.proto` interface files — interface definitions, not source code
  * (CLAUDE.md §2.7). The *field numbers* are unverified guesses.
  *
- * > The protobuf field numbers below are **unverified against a real Anki build** — see the
- * > warning at the top of `docs/apkg-format.md` and issue #25. They are the one part of this
- * > module a synthetic fixture cannot validate, because the fixture is written with the same
- * > constants it is read with. Check them against a real schema-18 export before trusting an
- * > import.
+ * > **Issue #25 is still open.** The protobuf field numbers below remain **unverified against a
+ * > real Anki build**. The one real export inspected so far (2026-08-07) turned out to be
+ * > schema 11, so it exercised the JSON readers below and none of the protobuf ones. These
+ * > constants are the one part of this module a synthetic fixture cannot validate, because the
+ * > fixture is written with the same constants it is read with — a wrong number passes every
+ * > test we have and yields a garbled or empty note type against a real file. Getting any
+ * > schema-18 export (a `.colpkg`, or an `.apkg` exported without "support older Anki
+ * > versions") is what closes this.
  */
 import type Database from 'better-sqlite3';
 import type { IrDeck, IrField, IrNoteType, IrTemplate } from './ir';
