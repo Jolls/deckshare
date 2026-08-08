@@ -29,6 +29,29 @@ codebase.
 Newer Anki exports zstd-compress entries and add a protobuf `meta` file. `.colpkg` is the
 same container for a whole collection rather than a deck selection.
 
+**Correction (2026-08-07, `feature/9-apkg-reader`).** The `media` map is only JSON in the
+legacy container. In the modern (`meta`-carrying, zstd) container it is a **protobuf list**,
+where an entry's *position* in the list is the zip member name that the legacy JSON spelled as
+an object key. The member bytes themselves are zstd-compressed too.
+
+`src/lib/server/apkg/read.ts` therefore does not branch on the package version at all: it
+sniffs the zstd frame magic (`28 B5 2F FD`) and sniffs `{` versus a protobuf tag byte for the
+media index. That is deliberate while this document is unverified — deriving the container
+shape from the bytes cannot be wrong about a version number's meaning.
+
+**Only the collection and the `media` index are zstd-compressed; the media files themselves
+are stored as-is.** The reader sniffs those two members and no others. Sniffing every member
+would be actively harmful: media bytes are arbitrary, so a legitimate image or audio file
+whose first four bytes happen to be the zstd magic would be mangled or rejected. *(Which
+members are compressed is itself unverified — if a real export turns out to compress media
+too, this is the line to change.)*
+
+**Packages are untrusted input** (shared decks are other users' bytes, CLAUDE.md §8), so the
+reader enforces ceilings on member count, per-member decompressed size and total decompressed
+size, and checks a zstd frame's declared `Frame_Content_Size` *before* decompressing — the
+native decompress call is one uninterruptible allocation, so a post-hoc check is too late.
+See `ArchiveLimits` in `read.ts`.
+
 ---
 
 ## Collection schemas
@@ -41,8 +64,32 @@ Two must both be readable:
   `config`, `tags`.
 
 Shared by both: `notes` (fields joined by `\x1f`, `guid`, `mid`, `csum`, `tags`), `cards`
-(`nid`, `did`, `ord`, `type`, `queue`, `due`, `ivl`, `factor`, `reps`, `lapses`, `data`),
-`revlog` (`cid`, `ease`, `ivl`, `lastIvl`, `factor`, `time`, `type`), `graves`.
+(`nid`, `did`, `ord`, `type`, `queue`, `due`, `ivl`, `factor`, `reps`, `lapses`, `odid`,
+`flags`, `data`), `revlog` (`cid`, `ease`, `ivl`, `lastIvl`, `factor`, `time`, `type`),
+`graves`.
+
+**Corrections (2026-08-07, `feature/9-apkg-reader`).** "Real tables" understates the work:
+
+- Schema 18's configuration columns — `notetypes.config`, `fields.config`,
+  `templates.config`, `decks.common`, `decks.kind` — are **protobuf BLOBs, not JSON**. Reading
+  a schema-18 collection needs a protobuf decoder, which is why
+  `src/lib/server/apkg/protobuf.ts` exists. The field numbers it is driven by are recorded in
+  `anki-schema.ts` and are themselves unverified.
+- **Deck names spell their hierarchy differently in each schema**: schema 11's JSON name uses
+  `::`, schema 18's `decks.name` column uses `\x1f`. The IR normalises both to `::`. Missing
+  this silently flattens or mangles a deck tree.
+- Schema 18 keeps the `col.models` / `col.decks` columns but empties them, so a reader that
+  only checks whether they parse will see an empty collection rather than an error. Conversely,
+  **`col.ver` is not trustworthy on its own**: a repacked or downgraded package can claim 18
+  while carrying only the JSON blobs. `read.ts` decides from table presence — all four of
+  `notetypes`, `fields`, `templates`, `decks` — and never from the version number.
+- **`fields.ord` / `templates.ord` are authoritative, array order is not.** Schema 11 stores
+  them as JSON arrays whose order can disagree with the `ord` values, while schema 18 has them
+  as real rows. `notes.flds` is indexed by `ord`, so a reader trusting array order maps every
+  field value onto the wrong field name — and the two schema readers silently disagree.
+- Real schema-18 collections declare `COLLATE unicase` on the name columns. `better-sqlite3`
+  cannot register that collation, so any query that would *use* it fails. Our readers order by
+  integer id only, which avoids it — but do not add `ORDER BY name`.
 
 ---
 
@@ -53,7 +100,50 @@ looking but wrong output if missed:
 
 - `cards.due` means **days since `col.crt`** for review cards, but a **new-card position
   integer** for new cards. Converting requires `col.crt` and the rollover hour.
+
+  **Correction (2026-08-07, `feature/9-apkg-reader`): there is a third meaning, `queue` — not
+  `type` — is the discriminator, and for a displaced card the value is not even in this
+  column.**
+
+  Also retracted: *"Converting requires `col.crt` and the rollover hour."* It requires `crt`
+  alone. `col.crt` is already the collection's rollover instant, not midnight — 04:00 local on
+  the day the collection was made — so `crt + days × 86400` lands on the correct rollover
+  without the hour being applied a second time. Applying `users.day_start_hour` on top of it
+  would shift every imported review card. The rollover hour matters for *our* queue queries
+  (`docs/schema.md`), not for this conversion.
+
+  | `queue` | `due` means | Example (`crt` = 2024-01-01T04:00Z) |
+  |---|---|---|
+  | `0` new | queue **position**, no calendar meaning | `3` → the fourth new card |
+  | `1` learning, `4` preview | **epoch seconds** | `1704085200` → 2024-01-01T05:00Z |
+  | `2` review, `3` day-learning | **days since `col.crt`** | `5` → 2024-01-06T04:00Z |
+  | `-1`/`-2`/`-3` suspended, buried | ambiguous — the hold overwrote the queue | see below |
+  | *any, when `odid != 0`* | **read `odue` instead** — see below | `due = -12345`, `odue = 7` → 2024-01-08T04:00Z |
+
+  Using `type` as the discriminator is wrong in both directions: a `type = 2` (review) card
+  sits in `queue = 3` (day-learning) mid-relearn with a *day offset*, and a `type = 3`
+  (relearning) card sits in `queue = 1` with an *epoch-seconds timestamp*.
+
+  **`cards.odue` shadows `cards.due` whenever `odid != 0`.** Moving a card into a filtered
+  ("cram") deck overwrites `due` with the filtered deck's own ordering value and stashes the
+  card's real due value in `odue`. A reader that takes `due` for those cards imports a schedule
+  that was never theirs — the same class of silent wrongness as the two unit traps, and it
+  affects every card that is currently in a filtered deck, not a rare corner. How the value is
+  *interpreted* is unchanged by this; only which column it is read from. (`odid` is also what
+  says where the card actually lives: `did` is the filtered deck, `odid` the real home.)
+
+  A hold is the one genuinely ambiguous case, because the negative `queue` has replaced the
+  queue the card came from. `type = 0` still means a position; otherwise the magnitude is the
+  only signal, and `read.ts` treats `due ≥ 1_000_000_000` as epoch seconds (day offsets are
+  counted from collection creation and stay in the thousands).
+
 - `cards.ivl` is days when positive, **seconds when negative**.
+
+  **Correction (2026-08-07):** the same encoding applies to **`revlog.ivl` and
+  `revlog.lastIvl`**, not just `cards.ivl`. A negative value is how a sub-day learning step is
+  represented: `ivl = -600` is ten minutes. Read naively it becomes a 600-day interval — an
+  86,400× error that looks entirely plausible in a card browser. The IR carries seconds
+  throughout so the distinction cannot reappear.
 - `cards.factor` is SM-2 ease × 1000 — meaningless under FSRS. Do not map it to difficulty.
 - FSRS state on modern exports lives in `cards.data` as JSON (stability, difficulty, desired
   retention). Cards without it were never scheduled by FSRS.
@@ -61,6 +151,31 @@ looking but wrong output if missed:
   these are separate concerns from `type`.
 - `notes.csum` is a truncated SHA-1 of the first field, used for duplicate detection.
 - Note fields are joined by `\x1f` (unit separator), not a printable delimiter.
+
+Added 2026-08-07 while writing the reader, same unverified status as the rest:
+
+- **`notes.id`, `cards.id` and `revlog.id` are epoch *milliseconds*; `mod` columns are epoch
+  *seconds*.** Mixing them up is a three-orders-of-magnitude timestamp error. `revlog.id`
+  doubles as the review instant.
+- **`cards.odid` / `cards.odue`** are both set while a card sits in a filtered deck: `did` is
+  then the filtered deck and `odid` the card's real home, and `odue` holds the real due value
+  that `due` has been overwritten with. We have no filtered decks, so the IR files the card
+  under `odid`, keeps `did` only as `filteredDeckAnkiId`, and resolves the due date from
+  `odue`. See the `cards.due` correction above.
+- **A note's cards can span several decks.** Anki scopes decks to cards; we scope them to notes
+  (`UNIQUE (deck_id, guid)`), so the reader must pick one. Policy: the resolved home deck of
+  the note's **lowest-numbered card** — deterministic across re-imports, which a
+  majority-of-cards or first-row rule is not. See `IrNote.primaryDeckAnkiId`.
+- **`cards.flags`**: only the low three bits are the flag colour.
+- **`notes.tags`** is space-separated *and* space-surrounded (`" kanji jlpt-n5 "`), so a naive
+  split yields empty tags.
+- **Media filenames are NFC.** A package produced on macOS can carry NFD in the index; without
+  normalising, the filename will not match the `[sound:…]` / `<img src=…>` reference in the
+  note field it belongs to.
+- **`cards.data`** is JSON with short keys — `pos` (preserved new-card position), `s`, `d`,
+  `dr` (FSRS stability, difficulty, desired retention). These key names are among the least
+  verified claims here; `read.ts` treats an unparseable or unrecognised `data` as absent rather
+  than failing the import.
 
 ---
 
