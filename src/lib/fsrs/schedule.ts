@@ -7,7 +7,16 @@
  * Fuzz is off. Fuzz would still be deterministic (ts-fsrs seeds it from the card),
  * but off is one fewer thing that can silently differ between the two paths.
  */
-import { checkParameters, FSRS, fsrs, type Card, type FSRSParameters, State } from 'ts-fsrs';
+import {
+	checkParameters,
+	default_request_retention,
+	default_w,
+	FSRS,
+	fsrs,
+	type Card,
+	type FSRSParameters,
+	State
+} from 'ts-fsrs';
 import type { CardState, FsrsParams, Grade, ReviewEvent, ScheduleResult } from './types';
 
 /** Parameter-array length per FSRS generation. See CLAUDE.md §2.3. */
@@ -16,6 +25,22 @@ const PARAM_LENGTH = new Map<number, number>([
 	[5, 19],
 	[6, 21]
 ]);
+
+/**
+ * What a user schedules with before their first optimiser fit: `ts-fsrs`' own defaults.
+ *
+ * Lives here rather than in a DB default so the client and the server-side replay path read
+ * the same constant, and so the `fsrs_version` recorded alongside it is derived from the
+ * array's length by the same table every other path uses.
+ */
+export function defaultFsrsParams(): FsrsParams {
+	const params = [...default_w];
+	const version = [...PARAM_LENGTH].find(([, length]) => length === params.length)?.[0];
+	if (version === undefined) {
+		throw new Error(`ts-fsrs default_w has unrecognised length ${params.length}.`);
+	}
+	return { fsrsVersion: version, params, desiredRetention: default_request_retention };
+}
 
 /** A never-reviewed card. `due` is when the card first becomes available. */
 export function newCardState(due: Date): CardState {
