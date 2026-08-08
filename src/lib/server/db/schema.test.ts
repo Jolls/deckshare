@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { getTableConfig } from 'drizzle-orm/pg-core';
-import { cards, notes, userCardState, reviewLog, userFsrsParams, users } from './schema';
+import { cards, notes, userCardState, reviewLog, userFsrsParams, users, sessions } from './schema';
 
 const columnNames = (table: Parameters<typeof getTableConfig>[0]) =>
 	getTableConfig(table).columns.map((c) => c.name);
@@ -136,5 +136,25 @@ describe('users', () => {
 		const cols = getTableConfig(users).columns;
 		expect(cols.find((c) => c.name === 'timezone')?.notNull).toBe(true);
 		expect(cols.find((c) => c.name === 'day_start_hour')?.default).toBe(4);
+	});
+
+	it('requires a password hash', () => {
+		const cols = getTableConfig(users).columns;
+		expect(cols.find((c) => c.name === 'password_hash')?.notNull).toBe(true);
+	});
+});
+
+describe('sessions', () => {
+	// CLAUDE.md §12: the session id is the SHA-256 hash of the cookie token, never the token
+	// itself — a leaked table read must not be a leaked, replayable session.
+	it('keys on a text id, not a database-generated uuid', () => {
+		const idCol = getTableConfig(sessions).columns.find((c) => c.name === 'id');
+		expect(idCol?.getSQLType()).toBe('text');
+		expect(idCol?.primary).toBe(true);
+	});
+
+	it("is indexed by user, so all of a user's sessions can be invalidated", () => {
+		const idx = getTableConfig(sessions).indexes.find((i) => i.config.name === 'sessions_user_idx');
+		expect(indexColumnNames(idx?.config.columns ?? [])).toEqual(['user_id']);
 	});
 });

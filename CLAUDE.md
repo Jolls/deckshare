@@ -96,12 +96,13 @@ These are the load-bearing choices. Each one is cheap now and a rewrite later.
 | ORM / migrations | Drizzle + `drizzle-kit` | `drizzle-orm@^0.45.2`, `drizzle-kit@^0.31.10` | Schema is TypeScript-first; migrations are generated SQL, committed, never edited after merge. |
 | `.apkg` read/write | `better-sqlite3` (server) | `better-sqlite3@13.0.3`, `fflate@0.8.3`, `zstd-napi@0.0.13` (all exact) | `fflate` for zip; `zstd-napi` for zstd-compressed schema 18+ exports — native binding, chosen over `@bokuweb/zstd-wasm` for active maintenance (see git history for the comparison). |
 | Tests | Vitest + Playwright | `vitest@^4.1.8`, `@playwright/test@^1.60.0` | See §10. |
-| Auth | Lucia-style sessions or Auth.js | **Undecided** — see §12. Not blocking; keep it behind `src/lib/server/auth/`. | |
+| Auth | Hand-rolled sessions (Lucia-style) | `@node-rs/argon2@2.0.2` (exact) for password hashing | See §12 for rationale. Lives entirely behind `src/lib/server/auth/`. |
 
 Versions pinned at scaffold time (`feature/3-scaffold`, 2026-08-07). Non-critical-path
 devDependencies (SvelteKit, Drizzle, Vitest, Playwright, ESLint, Prettier) use caret ranges,
-per `package.json`; `ts-fsrs` and the `.apkg` codec deps are pinned exact since a silent
-version drift there is the correctness hazard this file keeps warning about.
+per `package.json`; `ts-fsrs`, the `.apkg` codec deps, and `@node-rs/argon2` are pinned exact
+since a silent version drift there is the correctness/security hazard this file keeps warning
+about.
 
 **One language, end to end.** Scheduling must run in the browser, so an FSRS implementation
 in JS exists regardless of backend language. A Python or Go server would mean two FSRS
@@ -357,8 +358,19 @@ Unresolved. Do not silently pick one — surface it.
   README's "no Rust anywhere." Alternatives: pure-TS optimiser (slow, and a correctness
   surface we said we wouldn't own) or an out-of-process optimiser job. **Decide before step
   9 of Phase 1.**
-- **Auth library.** Lucia-style hand-rolled sessions vs Auth.js. Keep it behind
-  `lib/server/auth/` so the choice stays reversible.
+- ~~**Auth library.**~~ Settled: hand-rolled sessions, Lucia-style. Auth.js's value is its
+  OAuth provider ecosystem and adapter abstraction — neither earns its weight here. Phase 1
+  is email/password only (invariant §2.8 rules out any federated-identity-shaped sync
+  surface), and Auth.js's Drizzle adapter is community-maintained and fights our
+  already-decided schema conventions (UUIDv7 ids, the `lower(email)` functional unique
+  index) rather than matching them. Lucia the *package* is archived upstream in favour of a
+  "copy this pattern" guide, so "Lucia-style" means exactly that: a `sessions` table keyed by
+  the SHA-256 hash of a random token (the raw token lives only in the cookie, so a DB read
+  never discloses a usable session), `argon2id` via `@node-rs/argon2` for password hashing,
+  and an explicit `Origin`-header check on state-changing requests for CSRF. Full control,
+  consistent with this project owning its own schema and `.apkg` codec rather than adopting
+  someone else's shape. Kept behind `src/lib/server/auth/` regardless, so it stays
+  reversible.
 - **Native-speaker check on "Enshu."** Connotation is where non-native judgement is least
   reliable. Renaming a repo is cheap; renaming a product with users and inbound links is not.
 - **Deck-content licensing** for the public directory. Shared decks carry their own terms and

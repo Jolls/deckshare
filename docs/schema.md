@@ -97,9 +97,15 @@ user_fsrs_params id, user_id, deck_id NULL,   -- deck_id NULL = the user's globa
                  -- UNIQUE (user_id, deck_id) with NULL treated as a value
                  -- surrogate `id` PK; the pair above is the real key
 
-users            id, email, display_name, timezone, day_start_hour smallint DEFAULT 4,
-                 created_at
+users            id, email, password_hash, display_name, timezone,
+                 day_start_hour smallint DEFAULT 4, created_at
                  -- UNIQUE on lower(email): one account per address, any casing
+                 -- password_hash is argon2id (@node-rs/argon2), never a weaker algorithm
+
+sessions         id text pk,             -- SHA-256 hex of the session token; the raw token
+                                          -- lives only in the cookie, never in the database
+                 user_id, expires_at, created_at
+                 -- INDEX (user_id)      -- to invalidate all of a user's sessions
 ```
 
 **CHECK constraints.** A handful of columns produce wrong schedules rather than errors when
