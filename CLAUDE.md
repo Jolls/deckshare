@@ -128,6 +128,9 @@ enshu/
 ├─ CLAUDE.md              this file
 ├─ README.md              public rationale
 ├─ enshu.md               personal notes digest
+├─ .claude/
+│  ├─ memory/             agent memory — repo-local, gitignored, see §19
+│  └─ skills/
 ├─ docs/
 │  ├─ schema.md           full DDL + rationale (§5 lives here)
 │  ├─ apkg-format.md      Anki format reference (§7 lives here)
@@ -547,3 +550,23 @@ Windows 11, PowerShell primary (Bash tool also available — each takes its own 
 | **`guid`** | Anki's stable per-note identifier. The idempotency key for import. |
 | **`.apkg` / `.colpkg`** | Anki's deck / full-collection export. Zip of SQLite + media. |
 | **IR** | The intermediate representation between `.apkg` and our schema (§4). |
+
+---
+
+## 19. Agent memory
+
+**Memory for this project lives in `.claude/memory/`, in the repo — not in the global
+`~/.claude/projects/…` store.** It is gitignored, so it stays local to this checkout: sessions
+on this machine share it, but it is not committed, not reviewed, and not distributed. Anything
+that needs to outlive this working copy or reach another contributor belongs in `CLAUDE.md`,
+`docs/`, or an issue — not here.
+
+- `.claude/memory/MEMORY.md` is the index: one line per memory, no content of its own.
+- One fact per file, kebab-case name, frontmatter carrying `name`, `description`, and
+  `metadata.type` (`user` / `feedback` / `project` / `reference`). Cross-link with `[[name]]`.
+- Record what the repo doesn't already say. Decisions and their *reasoning* — especially
+  things deliberately **not** built and why — belong here. Code structure, past fixes, and
+  anything recoverable from git history do not.
+- Update the existing file when a fact changes; delete it when it turns out to be wrong.
+  A memory reflects what was true when written, so verify anything it names still exists
+  before acting on it.
