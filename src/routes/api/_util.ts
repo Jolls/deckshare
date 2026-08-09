@@ -9,6 +9,7 @@
 import { error } from '@sveltejs/kit';
 import { DeckAccessError } from '$lib/server/db/queries/access';
 import { NoteTypeAccessError } from '$lib/server/db/queries/note-types';
+import { DuplicateNameError } from '$lib/server/db/queries/errors';
 
 /**
  * `locals.user.id` is set by the auth layer's hooks.server.ts (issue #7) from the session
@@ -37,4 +38,14 @@ export function respondToAccessError(err: unknown): never {
 		throw error(403, 'Forbidden');
 	}
 	throw err;
+}
+
+/**
+ * The above plus `DuplicateNameError` → 409. Used by the handlers that name a deck or a note
+ * type: those are unique on `(owner_id, name)` because the name is what import dedups on
+ * (`docs/schema.md`), so a reused name is a client error, not a server fault.
+ */
+export function respondToQueryError(err: unknown): never {
+	if (err instanceof DuplicateNameError) throw error(409, err.message);
+	respondToAccessError(err);
 }

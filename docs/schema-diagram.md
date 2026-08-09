@@ -62,11 +62,11 @@ erDiagram
     NOTE_TYPES {
         uuid id PK
         uuid owner_id FK
-        text name
+        text name "UNIQUE (owner_id, name)"
         text css
         bool is_cloze
         int sort_field_idx
-        bigint anki_id
+        bigint anki_id "export fidelity only"
     }
 
     FIELDS {
@@ -93,7 +93,8 @@ erDiagram
 
     NOTES {
         uuid id PK
-        text guid "UNIQUE (deck_id, guid)"
+        text guid "UNIQUE (owner_id, guid)"
+        uuid owner_id FK "denormalised from decks.owner_id"
         uuid note_type_id FK
         uuid deck_id FK
         jsonb fields
@@ -116,13 +117,14 @@ erDiagram
     DECKS {
         uuid id PK
         uuid owner_id FK
-        text name
+        text name "UNIQUE (owner_id, name)"
         text description
         text visibility "private | public"
         uuid forked_from_deck_id FK "self-ref, see note below"
         jsonb preset
         timestamptz created_at
         timestamptz modified_at
+        bigint anki_id "export fidelity only"
     }
 
     DECK_ACCESS {
@@ -165,6 +167,7 @@ erDiagram
         int scheduled_days_after
         smallint fsrs_version "NULL if imported"
         smallint review_kind
+        bigint anki_id "revlog.id; UNIQUE (user_id, card_id, anki_id)"
     }
 
     USER_FSRS_PARAMS {
@@ -198,6 +201,11 @@ erDiagram
   `USER_CARD_STATE`) is the invariant the whole schema protects (CLAUDE.md §2.1).
 - `CARDS ||--o|  USER_CARD_STATE` is one-per-`(user, card)` pair, not one-per-card; the
   diagram can't express the composite key directly, see `schema.md` for the real PK.
+- The uniqueness annotations are the re-import dedup keys. Decks and note types key on
+  **name**, the way Anki's own importer does — `anki_id` is per-collection (deck id 1 is
+  `Default` everywhere), so keying on it merges unrelated collections. `review_log` is the one
+  exception, since `revlog.id` genuinely identifies a row within its collection. See
+  `schema.md`.
 - `decks.forked_from_deck_id` is a self-reference to another `DECKS` row (the deck this one
   was forked from, nullable). Not drawn as an edge — Mermaid's `erDiagram` renders
   self-relationships as a stray loop to nowhere rather than a curve back to the same entity,
@@ -222,11 +230,11 @@ erDiagram
     NOTE_TYPES {
         uuid id PK
         uuid owner_id FK
-        text name
+        text name "UNIQUE (owner_id, name)"
         text css
         bool is_cloze
         int sort_field_idx
-        bigint anki_id
+        bigint anki_id "export fidelity only"
     }
 
     FIELDS {
@@ -253,7 +261,8 @@ erDiagram
 
     NOTES {
         uuid id PK
-        text guid "UNIQUE (deck_id, guid)"
+        text guid "UNIQUE (owner_id, guid)"
+        uuid owner_id FK "denormalised from decks.owner_id"
         uuid note_type_id FK
         uuid deck_id FK
         jsonb fields
@@ -334,6 +343,7 @@ erDiagram
         int scheduled_days_after
         smallint fsrs_version "NULL if imported"
         smallint review_kind
+        bigint anki_id "revlog.id; UNIQUE (user_id, card_id, anki_id)"
     }
 
     USER_FSRS_PARAMS {

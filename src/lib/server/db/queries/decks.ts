@@ -6,6 +6,7 @@ import { eq, and } from 'drizzle-orm';
 import { decks, deckAccess, type deckVisibility } from '../schema';
 import { db } from '../index';
 import { requireDeckAccess } from './access';
+import { rethrowDuplicateName } from './errors';
 import type { DbClient } from './types';
 
 type Visibility = (typeof deckVisibility.enumValues)[number];
@@ -17,24 +18,28 @@ export interface CreateDeckInput {
 	preset?: unknown;
 }
 
-/** Creates a deck and grants its creator the `owner` role, atomically. */
+/** Creates a deck and grants its creator the `owner` role, atomically. Throws
+ *  `DuplicateNameError` if the user already owns a deck of that name — the name is the key
+ *  import dedups on, so it can't be reused. */
 export async function createDeck(userId: string, input: CreateDeckInput, client: DbClient = db) {
-	return client.transaction(async (tx) => {
-		const [deck] = await tx
-			.insert(decks)
-			.values({
-				ownerId: userId,
-				name: input.name,
-				description: input.description ?? '',
-				visibility: input.visibility ?? 'private',
-				preset: input.preset
-			})
-			.returning();
-		if (!deck) throw new Error('deck insert returned no row');
+	return rethrowDuplicateName('deck', input.name, () =>
+		client.transaction(async (tx) => {
+			const [deck] = await tx
+				.insert(decks)
+				.values({
+					ownerId: userId,
+					name: input.name,
+					description: input.description ?? '',
+					visibility: input.visibility ?? 'private',
+					preset: input.preset
+				})
+				.returning();
+			if (!deck) throw new Error('deck insert returned no row');
 
-		await tx.insert(deckAccess).values({ deckId: deck.id, userId, role: 'owner' });
-		return deck;
-	});
+			await tx.insert(deckAccess).values({ deckId: deck.id, userId, role: 'owner' });
+			return deck;
+		})
+	);
 }
 
 /** Every deck the user has an explicit `deck_access` row for. Does not include the public
@@ -49,7 +54,7 @@ export async function listDecksForUser(userId: string, client: DbClient = db) {
 
 /** Throws `DeckAccessError` if the deck doesn't exist or the user can't read it. */
 export async function getDeck(userId: string, deckId: string, client: DbClient = db) {
-	const role = await requireDeckAccess(client, userId, deckId, 'read');
+	const { role } = await requireDeckAccess(client, userId, deckId, 'read');
 	const [deck] = await client.select().from(decks).where(eq(decks.id, deckId));
 	if (!deck) throw new Error(`deck ${deckId} vanished after access check`);
 	return { deck, role };
@@ -69,11 +74,14 @@ export async function updateDeck(
 	client: DbClient = db
 ) {
 	await requireDeckAccess(client, userId, deckId, 'write');
-	const [deck] = await client
-		.update(decks)
-		.set({ ...patch, modifiedAt: new Date() })
-		.where(eq(decks.id, deckId))
-		.returning();
+	// A unique violation here can only be the rename colliding with another of the user's decks.
+	const [deck] = await rethrowDuplicateName('deck', patch.name ?? '', () =>
+		client
+			.update(decks)
+			.set({ ...patch, modifiedAt: new Date() })
+			.where(eq(decks.id, deckId))
+			.returning()
+	);
 	return deck ?? null;
 }
 

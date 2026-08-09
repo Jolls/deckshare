@@ -7,6 +7,7 @@
 import { eq } from 'drizzle-orm';
 import { noteTypes, fields, templates } from '../schema';
 import { db } from '../index';
+import { rethrowDuplicateName } from './errors';
 import type { DbClient } from './types';
 
 export interface FieldInput {
@@ -53,54 +54,57 @@ export async function requireNoteTypeOwner(client: DbClient, userId: string, not
 }
 
 /** Creates a note type with its fields and templates in one transaction. Ordinals follow
- *  array order. */
+ *  array order. Throws `DuplicateNameError` if the user already owns one of that name — the
+ *  name is the key import dedups on, so it can't be reused. */
 export async function createNoteType(
 	userId: string,
 	input: CreateNoteTypeInput,
 	client: DbClient = db
 ) {
-	return client.transaction(async (tx) => {
-		const [noteType] = await tx
-			.insert(noteTypes)
-			.values({
-				ownerId: userId,
-				name: input.name,
-				css: input.css ?? '',
-				isCloze: input.isCloze ?? false,
-				sortFieldIdx: input.sortFieldIdx ?? 0
-			})
-			.returning();
-		if (!noteType) throw new Error('note type insert returned no row');
+	return rethrowDuplicateName('note type', input.name, () =>
+		client.transaction(async (tx) => {
+			const [noteType] = await tx
+				.insert(noteTypes)
+				.values({
+					ownerId: userId,
+					name: input.name,
+					css: input.css ?? '',
+					isCloze: input.isCloze ?? false,
+					sortFieldIdx: input.sortFieldIdx ?? 0
+				})
+				.returning();
+			if (!noteType) throw new Error('note type insert returned no row');
 
-		if (input.fields.length > 0) {
-			await tx.insert(fields).values(
-				input.fields.map((f, ordinal) => ({
-					noteTypeId: noteType.id,
-					ordinal,
-					name: f.name,
-					font: f.font ?? 'Arial',
-					size: f.size ?? 20,
-					isRtl: f.isRtl ?? false,
-					sticky: f.sticky ?? false
-				}))
-			);
-		}
-		if (input.templates.length > 0) {
-			await tx.insert(templates).values(
-				input.templates.map((t, ordinal) => ({
-					noteTypeId: noteType.id,
-					ordinal,
-					name: t.name,
-					qfmt: t.qfmt,
-					afmt: t.afmt,
-					browserQfmt: t.browserQfmt,
-					browserAfmt: t.browserAfmt
-				}))
-			);
-		}
+			if (input.fields.length > 0) {
+				await tx.insert(fields).values(
+					input.fields.map((f, ordinal) => ({
+						noteTypeId: noteType.id,
+						ordinal,
+						name: f.name,
+						font: f.font ?? 'Arial',
+						size: f.size ?? 20,
+						isRtl: f.isRtl ?? false,
+						sticky: f.sticky ?? false
+					}))
+				);
+			}
+			if (input.templates.length > 0) {
+				await tx.insert(templates).values(
+					input.templates.map((t, ordinal) => ({
+						noteTypeId: noteType.id,
+						ordinal,
+						name: t.name,
+						qfmt: t.qfmt,
+						afmt: t.afmt,
+						browserQfmt: t.browserQfmt,
+						browserAfmt: t.browserAfmt
+					}))
+				);
+			}
 
-		return noteType;
-	});
+			return noteType;
+		})
+	);
 }
 
 export async function listNoteTypesForUser(userId: string, client: DbClient = db) {
@@ -141,11 +145,10 @@ export async function updateNoteType(
 	const [existing] = await client.select().from(noteTypes).where(eq(noteTypes.id, noteTypeId));
 	if (!existing || existing.ownerId !== userId) return null;
 
-	const [updated] = await client
-		.update(noteTypes)
-		.set(patch)
-		.where(eq(noteTypes.id, noteTypeId))
-		.returning();
+	// A unique violation here can only be the rename colliding with another of the user's types.
+	const [updated] = await rethrowDuplicateName('note type', patch.name ?? '', () =>
+		client.update(noteTypes).set(patch).where(eq(noteTypes.id, noteTypeId)).returning()
+	);
 	return updated ?? null;
 }
 

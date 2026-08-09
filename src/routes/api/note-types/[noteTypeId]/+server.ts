@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { getNoteType, updateNoteType, deleteNoteType } from '$lib/server/db/queries/note-types';
-import { requireUserId } from '../../_util';
+import { requireUserId, respondToQueryError } from '../../_util';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ locals, params }) => {
@@ -13,12 +13,17 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 	const userId = requireUserId(locals);
 	const body = await request.json();
-	const noteType = await updateNoteType(userId, params.noteTypeId, {
-		name: typeof body?.name === 'string' ? body.name : undefined,
-		css: typeof body?.css === 'string' ? body.css : undefined,
-		isCloze: typeof body?.isCloze === 'boolean' ? body.isCloze : undefined,
-		sortFieldIdx: typeof body?.sortFieldIdx === 'number' ? body.sortFieldIdx : undefined
-	});
+	let noteType;
+	try {
+		noteType = await updateNoteType(userId, params.noteTypeId, {
+			name: typeof body?.name === 'string' ? body.name : undefined,
+			css: typeof body?.css === 'string' ? body.css : undefined,
+			isCloze: typeof body?.isCloze === 'boolean' ? body.isCloze : undefined,
+			sortFieldIdx: typeof body?.sortFieldIdx === 'number' ? body.sortFieldIdx : undefined
+		});
+	} catch (err) {
+		respondToQueryError(err);
+	}
 	if (!noteType) throw error(404, 'Not found');
 	return json(noteType);
 };

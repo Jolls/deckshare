@@ -65,8 +65,14 @@ These are the load-bearing choices. Each one is cheap now and a rewrite later.
    `user_card_state`, primary-keyed `(user_id, card_id)`. Every multiuser feature — shared
    decks, cohorts, forking with preserved progress — is a consequence of this one fact.
    Adopting Anki's schema and bolting multiuser on afterwards is a rewrite.
-2. **Every note carries Anki's `guid`.** It is what makes import and re-import idempotent.
-   Retrofitting it duplicates every early user's decks on their next import.
+2. **Every note carries Anki's `guid`, unique per owner.** `UNIQUE (owner_id, guid)` is what
+   makes import and re-import idempotent. Retrofitting it duplicates every early user's decks
+   on their next import. Owner-scoped, not deck-scoped: `guid` is globally unique in Anki, so
+   a deck-scoped key would make note identity depend on deck dedup landing first. Decks and
+   note types dedup on `UNIQUE (owner_id, name)`, the way Anki's own importer does — never on
+   `anki_id`, which is per-collection (deck id 1 is `Default` everywhere) and would silently
+   merge unrelated decks. `review_log` is the one exception: `revlog.id` identifies a row
+   within its collection, so `UNIQUE (user_id, card_id, anki_id)` is safe and needed.
 3. **FSRS parameters are per-user** (optionally per `(user, deck)`), stored as a JSON array
    plus an explicit `fsrs_version` integer — never fixed-width columns. Parameter count
    changes upstream: 17 in FSRS-4.5, 19 in FSRS-5, 21 in FSRS-6.
@@ -190,7 +196,8 @@ The parts you need without opening it:
 - **UUIDv7 ids, client-generated where possible.** `review_log` rows are created on the
   client, so a client-generated id makes retry idempotent for free. Anki's numeric ids are
   kept as `anki_id` columns for export fidelity, never as keys.
-- `notes.guid` + `UNIQUE (deck_id, guid)` is what makes re-import idempotent.
+- `notes.guid` + `UNIQUE (owner_id, guid)` is what makes re-import idempotent; decks and note
+  types dedup on `UNIQUE (owner_id, name)`.
 - `review_log` is append-only training data. `user_fsrs_params.params` is a JSON array plus
   an explicit `fsrs_version`.
 - **The day boundary is not midnight UTC.** It's a per-user rollover hour (default 04:00
@@ -256,7 +263,7 @@ The parts you need without opening it:
   decks as JSON blobs in `col`) and 18+ (real tables).
 - Everything goes through an **IR**: `apkg -> IR -> db`, `db -> IR -> apkg`. Never Drizzle
   rows directly.
-- Import is idempotent on `(deck_id, guid)`; `revlog` becomes `review_log`, which is the
+- Import is idempotent on `(owner_id, guid)`; `revlog` becomes `review_log`, which is the
   difference between a cold start and a warm one.
 - Two traps that silently produce plausible-looking wrong data: **`cards.due` is
   days-since-`col.crt` for review cards but a position integer for new ones**, and

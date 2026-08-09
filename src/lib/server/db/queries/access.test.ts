@@ -133,6 +133,7 @@ async function buildFixture(): Promise<Fixture> {
 		.insert(schema.notes)
 		.values({
 			guid: 'public-seed-note',
+			ownerId: users.owner,
 			noteTypeId,
 			deckId: publicDeckId,
 			fields: ['public front', 'public back']

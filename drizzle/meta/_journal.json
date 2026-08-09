@@ -29,6 +29,13 @@
       "when": 1786138973147,
       "tag": "0003_dear_tarot",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786253116000,
+      "tag": "0004_cooing_caretaker",
+      "breakpoints": true
     }
   ]
 }
