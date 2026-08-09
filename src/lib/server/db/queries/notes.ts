@@ -65,12 +65,16 @@ export async function createNote(
 	client: DbClient = db
 ) {
 	return client.transaction(async (tx) => {
-		await requireDeckAccess(tx, userId, deckId, 'write');
+		// `notes.owner_id` is the deck's owner, not the caller: an editor on someone else's deck
+		// adds notes to *that* owner's collection, and it's their `(owner_id, guid)` namespace
+		// the import key lives in. The access check already read the row, so this is free.
+		const { ownerId } = await requireDeckAccess(tx, userId, deckId, 'write');
 
 		const [note] = await tx
 			.insert(notes)
 			.values({
 				deckId,
+				ownerId,
 				noteTypeId: input.noteTypeId,
 				guid: input.guid,
 				fields: input.fields,

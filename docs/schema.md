@@ -27,18 +27,51 @@ epoch-millis ints. Rationale:
 Anki's original numeric ids are preserved as `anki_id` columns on imported rows — needed for
 round-trip export fidelity, never used as a key.
 
+**Re-import dedups on name, not on `anki_id`.** Anki ids are per-collection: deck id 1 is
+`Default` in every collection that has ever existed, and note-type ids are creation
+timestamps unique only within one profile. `UNIQUE (owner_id, anki_id)` would therefore
+assert "one user can only ever own one deck with Anki id 1", and the second import would
+silently upsert into the first import's deck — merging two unrelated collections
+unrecoverably. It would also reject a same-owner fork, and merge two genuinely different note
+types, which renders every field into the wrong slot (`notes.fields` is positional, indexed
+by `fields.ordinal`).
+
+So the keys are:
+
+| Table | Key | Why |
+|---|---|---|
+| `decks` | `UNIQUE (owner_id, name)` | Names are unique by full path within a collection, so re-importing an updated export still matches. A cross-collection collision becomes "import into the deck of that name" — what Anki does and what a user expects. |
+| `note_types` | `UNIQUE (owner_id, name)` | Matches Anki's own reconcile rule. |
+| `notes` | `UNIQUE (owner_id, guid)` | `guid` is globally unique in Anki, so this doesn't need deck dedup to land first. |
+| `review_log` | `UNIQUE (user_id, card_id, anki_id)` | The one `anki_id` worth keying on: `revlog.id` is epoch-millis and identifies the row within its collection. `user_id` leads because cards are shared content while reviews are per-user training data (§2.5) — one user's imported history must never block another's. |
+
+`notes.owner_id` is denormalised from `decks.owner_id` because a unique index can't span a
+join. It must not drift: moving a note between decks sets it to the new deck's owner. A no-op
+in Phase 1, load-bearing once decks are shared or forked.
+
+`anki_id` is nullable everywhere and NULLs stay distinct, so rows authored here rather than
+imported collide on nothing — including every row the live write-queue path
+(`src/lib/server/db/queries/review.ts`) writes, which never sets one.
+
+Because `(owner_id, name)` is a real constraint, a user reusing a deck or note-type name is
+an ordinary client error: the query layer raises `DuplicateNameError`
+(`src/lib/server/db/queries/errors.ts`) and routes answer 409, never a 500.
+
 ---
 
 ## Content (shared, one copy per deck)
 
 ```sql
 note_types  id, owner_id, name, css, is_cloze, sort_field_idx, anki_id
+            -- UNIQUE (owner_id, name)   <- re-import reuses the owner's note type
 fields      id, note_type_id, ordinal, name, font, size, is_rtl, sticky
 templates   id, note_type_id, ordinal, name, qfmt, afmt, browser_qfmt, browser_afmt
 
-notes       id, guid, note_type_id, deck_id, fields jsonb, tags text[],
+notes       id, guid, owner_id, note_type_id, deck_id, fields jsonb, tags text[],
             checksum bigint, created_at, modified_at, anki_id
-            -- UNIQUE (deck_id, guid)   <- makes re-import idempotent
+            -- UNIQUE (owner_id, guid)   <- makes re-import idempotent
+            -- INDEX (deck_id)           <- deck-scoped queries + the deck-delete RI check
+            -- owner_id is denormalised from decks.owner_id; a unique index can't span a join
             -- fields is an ordered array, indexed by fields.ordinal
 
 cards       id, note_id, template_id, ordinal, deck_id, anki_id
@@ -46,8 +79,9 @@ cards       id, note_id, template_id, ordinal, deck_id, anki_id
             -- UNIQUE (note_id, ordinal)
 
 decks       id, owner_id, name, description, visibility, forked_from_deck_id,
-            preset jsonb, created_at, modified_at
+            preset jsonb, created_at, modified_at, anki_id
             -- visibility: 'private' | 'public'
+            -- UNIQUE (owner_id, name)   <- re-import reuses the owner's deck of that name
 deck_access deck_id, user_id, role, created_at   -- role: 'owner' | 'editor' | 'viewer'
             -- PRIMARY KEY (deck_id, user_id)
 ```
@@ -60,9 +94,11 @@ the row count would otherwise be 5–10× the note count.
 column over the concatenated fields, but nothing queries it yet and it is not implemented.
 Add it with the search feature, not before.
 
-`notes.guid` is Anki's stable per-note identifier and the idempotency key for import.
-It must be present on every note from day one — retrofitting it duplicates every early
-user's decks on their next import.
+`notes.guid` is Anki's stable per-note identifier and, paired with `owner_id`, the
+idempotency key for import. It must be present on every note from day one — retrofitting it
+duplicates every early user's decks on their next import. One guid is one note per owner, not
+per deck: re-importing the same collection into a second deck finds the existing note rather
+than forking its identity.
 
 ---
 
@@ -86,8 +122,10 @@ review_log       id uuid,                  -- client-generated UUIDv7
                  stability_before float8, difficulty_before float8,   -- NULL for imported history
                  elapsed_days_before int, scheduled_days_after int,
                  fsrs_version smallint,     -- NULL for imported history
-                 review_kind smallint
+                 review_kind smallint,
+                 anki_id bigint             -- revlog.id; NULL for rows our reviewer produced
                  -- INDEX (user_id, reviewed_at)
+                 -- UNIQUE (user_id, card_id, anki_id)   <- re-import dedup
                  -- append-only; the optimiser's training set
                  -- FKs are ON DELETE RESTRICT: nothing may cascade training data away
 
@@ -197,7 +235,12 @@ migration; never edit an applied one.
 Checklist for a new table:
 
 1. Add it to `src/lib/server/db/schema.ts`.
-2. Generate the migration; commit the generated SQL unedited.
+2. Generate the migration; commit the generated SQL unedited. **One exception, before merge
+   only:** a `NOT NULL` column added to an existing table. `drizzle-kit` emits a bare
+   `ADD COLUMN ... NOT NULL`, which applies fine to an empty database and fails on every
+   database that has rows. Split it into add-nullable → backfill → `SET NOT NULL` by hand
+   (`0004` does this for `notes.owner_id`) and cover it with a test that migrates a *populated*
+   database, since the fresh-database test cannot see the failure.
 3. Verify it applies cleanly to a fresh database.
 4. Update this file's table listing and, if it holds per-user state, confirm the
    `(user_id, …)` key and index shape.

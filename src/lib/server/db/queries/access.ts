@@ -13,6 +13,13 @@ import type { DbClient } from './types';
 
 export type DeckRole = 'owner' | 'editor' | 'viewer';
 
+/** The caller's role plus the deck's owner — both read from the one row the check already
+ *  fetches, so `notes.owner_id` costs no extra query (`docs/schema.md`). */
+export interface DeckAccess {
+	role: DeckRole;
+	ownerId: string;
+}
+
 const WRITE_ROLES: ReadonlySet<DeckRole> = new Set(['owner', 'editor']);
 
 /** Thrown by `requireDeckAccess`. Route handlers map this to 404 (unknown) or 403 (denied). */
@@ -27,24 +34,24 @@ export class DeckAccessError extends Error {
 }
 
 /**
- * The caller's effective role on a deck, or `null` if the deck doesn't exist or they have no
- * access to it. A public deck with no explicit `deck_access` row resolves to an implicit
- * `viewer` — read of content only, never a basis for write.
+ * The caller's effective access to a deck, or `null` if the deck doesn't exist or they have
+ * none. A public deck with no explicit `deck_access` row resolves to an implicit `viewer` —
+ * read of content only, never a basis for write.
  */
-export async function getDeckRole(
+export async function getDeckAccess(
 	db: DbClient,
 	userId: string,
 	deckId: string
-): Promise<DeckRole | null> {
+): Promise<DeckAccess | null> {
 	const [row] = await db
-		.select({ role: deckAccess.role, visibility: decks.visibility })
+		.select({ role: deckAccess.role, visibility: decks.visibility, ownerId: decks.ownerId })
 		.from(decks)
 		.leftJoin(deckAccess, and(eq(deckAccess.deckId, decks.id), eq(deckAccess.userId, userId)))
 		.where(eq(decks.id, deckId));
 
 	if (!row) return null;
-	if (row.role) return row.role;
-	if (row.visibility === 'public') return 'viewer';
+	if (row.role) return { role: row.role, ownerId: row.ownerId };
+	if (row.visibility === 'public') return { role: 'viewer', ownerId: row.ownerId };
 	return null;
 }
 
@@ -70,13 +77,14 @@ export async function requireDeckAccess(
 	userId: string,
 	deckId: string,
 	min: 'read' | 'write' | 'owner'
-): Promise<DeckRole> {
-	const role = await getDeckRole(db, userId, deckId);
-	if (role === null) throw new DeckAccessError(deckId, 'not_found');
+): Promise<DeckAccess> {
+	const access = await getDeckAccess(db, userId, deckId);
+	if (access === null) throw new DeckAccessError(deckId, 'not_found');
 
+	const { role } = access;
 	const satisfied =
 		min === 'read' ? canRead(role) : min === 'write' ? canWrite(role) : isOwner(role);
 	if (!satisfied) throw new DeckAccessError(deckId, 'forbidden');
 
-	return role;
+	return access;
 }

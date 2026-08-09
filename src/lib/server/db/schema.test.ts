@@ -4,7 +4,17 @@
  */
 import { describe, it, expect } from 'vitest';
 import { getTableConfig } from 'drizzle-orm/pg-core';
-import { cards, notes, userCardState, reviewLog, userFsrsParams, users, sessions } from './schema';
+import {
+	cards,
+	decks,
+	noteTypes,
+	notes,
+	userCardState,
+	reviewLog,
+	userFsrsParams,
+	users,
+	sessions
+} from './schema';
 
 const columnNames = (table: Parameters<typeof getTableConfig>[0]) =>
 	getTableConfig(table).columns.map((c) => c.name);
@@ -12,6 +22,12 @@ const columnNames = (table: Parameters<typeof getTableConfig>[0]) =>
 /** Index columns are typed `SQL | IndexedColumn`; only the latter carries a name. */
 const indexColumnNames = (columns: readonly unknown[]) =>
 	columns.map((c) => (c && typeof c === 'object' && 'name' in c ? c.name : undefined));
+
+const uniqueIndexColumns = (table: Parameters<typeof getTableConfig>[0]) =>
+	getTableConfig(table)
+		.indexes.map((i) => i.config)
+		.filter((c) => c.unique)
+		.map((c) => indexColumnNames(c.columns));
 
 describe('cards', () => {
 	// CLAUDE.md §2.1: scheduling state never lives on the cards row. Adopting Anki's schema
@@ -57,14 +73,49 @@ describe('cards', () => {
 });
 
 describe('notes', () => {
-	it('has a unique index on (deck_id, guid) — the import idempotency key', () => {
-		const idx = getTableConfig(notes).indexes.map((i) => i.config);
-		const unique = idx.filter((c) => c.unique).map((c) => indexColumnNames(c.columns));
-		expect(unique).toContainEqual(['deck_id', 'guid']);
+	// Owner-scoped, not deck-scoped: `guid` is globally unique in Anki, and keying it to the
+	// deck would make note idempotency depend on deck dedup landing first.
+	it('has a unique index on (owner_id, guid) — the import idempotency key', () => {
+		expect(uniqueIndexColumns(notes)).toContainEqual(['owner_id', 'guid']);
+	});
+
+	// `notes_owner_guid_idx` subsumes the old `(deck_id, guid)` unique for uniqueness, but not
+	// for lookups: without this, every deck-scoped note query and the deck-delete RI check
+	// seq-scans.
+	it('still indexes deck_id on its own', () => {
+		const idx = getTableConfig(notes).indexes.find((i) => i.config.name === 'notes_deck_idx');
+		expect(indexColumnNames(idx?.config.columns ?? [])).toEqual(['deck_id']);
 	});
 
 	it('keeps anki_id for export fidelity', () => {
 		expect(columnNames(notes)).toContain('anki_id');
+	});
+});
+
+describe('re-import dedup keys', () => {
+	it('dedups decks on (owner_id, name), the way Anki imports do', () => {
+		expect(uniqueIndexColumns(decks)).toContainEqual(['owner_id', 'name']);
+	});
+
+	it('dedups note types on (owner_id, name)', () => {
+		expect(uniqueIndexColumns(noteTypes)).toContainEqual(['owner_id', 'name']);
+	});
+
+	// Anki deck id 1 is `Default` in every collection ever made, and note-type ids are creation
+	// timestamps unique only within one profile — deduping on either merges unrelated content,
+	// and `notes.fields` is positional, so a merged note type renders fields into wrong slots.
+	it.each([
+		['decks', decks],
+		['note_types', noteTypes]
+	])('never makes %s.anki_id unique — Anki ids are per-collection', (_label, table) => {
+		expect(uniqueIndexColumns(table).flat()).not.toContain('anki_id');
+	});
+
+	// `revlog.id` is the exception: epoch-millis, genuinely identifying within a collection.
+	// `user_id` leads because cards are shared content but review_log is per-user training
+	// data, so a card-scoped key would let one user's imported history block another's (§2.5).
+	it('dedups reviews on (user_id, card_id, anki_id)', () => {
+		expect(uniqueIndexColumns(reviewLog)).toContainEqual(['user_id', 'card_id', 'anki_id']);
 	});
 });
 

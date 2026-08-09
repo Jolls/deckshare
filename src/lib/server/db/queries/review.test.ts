@@ -95,6 +95,7 @@ async function makeDeck(label: string, cardCount = 2): Promise<Deck> {
 		await db.insert(schema.notes).values({
 			id: noteId,
 			guid: `${label}-note-${i}`,
+			ownerId: userId,
 			noteTypeId,
 			deckId,
 			fields: [`front ${i}`, `back ${i}`]

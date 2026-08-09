@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { getDeck, updateDeck, deleteDeck } from '$lib/server/db/queries/decks';
-import { requireUserId, respondToAccessError } from '../../_util';
+import { requireUserId, respondToAccessError, respondToQueryError } from '../../_util';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ locals, params }) => {
@@ -27,7 +27,7 @@ export const PATCH: RequestHandler = async ({ locals, params, request }) => {
 		});
 		return json(deck);
 	} catch (err) {
-		respondToAccessError(err);
+		respondToQueryError(err);
 	}
 };
 

@@ -35,7 +35,12 @@ const id = () => uuid('id').primaryKey().$defaultFn(uuidv7);
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
 const modifiedAt = () => timestamp('modified_at', { withTimezone: true }).notNull().defaultNow();
 
-/** Anki's original numeric id, kept only for round-trip export fidelity. Never a key. */
+/**
+ * Anki's original numeric id, kept only for round-trip export fidelity. Never a key, and —
+ * `review_log` excepted — never unique: Anki ids are per-collection, so deck id 1 is
+ * `Default` in every collection that has ever existed and note-type ids are creation
+ * timestamps unique only within one profile. Deduping on them merges unrelated decks.
+ */
 const ankiId = (name = 'anki_id') => bigint(name, { mode: 'number' });
 
 export const deckVisibility = pgEnum('deck_visibility', ['private', 'public']);
@@ -91,22 +96,31 @@ export const sessions = pgTable(
 // Content — shared, one copy per deck. No scheduling state anywhere below.
 // ---------------------------------------------------------------------------
 
-export const decks = pgTable('decks', {
-	id: id(),
-	ownerId: uuid('owner_id')
-		.notNull()
-		.references(() => users.id, { onDelete: 'restrict' }),
-	name: text('name').notNull(),
-	description: text('description').notNull().default(''),
-	visibility: deckVisibility('visibility').notNull().default('private'),
-	forkedFromDeckId: uuid('forked_from_deck_id').references((): AnyPgColumn => decks.id, {
-		onDelete: 'set null'
-	}),
-	/** Deck options (new/day limits, learning steps, …). Shape owned by the app, not the DB. */
-	preset: jsonb('preset'),
-	createdAt: createdAt(),
-	modifiedAt: modifiedAt()
-});
+export const decks = pgTable(
+	'decks',
+	{
+		id: id(),
+		ownerId: uuid('owner_id')
+			.notNull()
+			.references(() => users.id, { onDelete: 'restrict' }),
+		name: text('name').notNull(),
+		description: text('description').notNull().default(''),
+		visibility: deckVisibility('visibility').notNull().default('private'),
+		forkedFromDeckId: uuid('forked_from_deck_id').references((): AnyPgColumn => decks.id, {
+			onDelete: 'set null'
+		}),
+		/** Deck options (new/day limits, learning steps, …). Shape owned by the app, not the DB. */
+		preset: jsonb('preset'),
+		createdAt: createdAt(),
+		modifiedAt: modifiedAt(),
+		ankiId: ankiId()
+	},
+	// Import dedups on name, the way Anki's own importer does — deck names are unique by full
+	// path within a collection, so re-importing an updated export of the same collection still
+	// matches, while two packages that both use Anki deck id 1 stay two decks. Keying on
+	// `anki_id` instead would silently merge them, and would reject a same-owner fork.
+	(t) => [uniqueIndex('decks_owner_name_idx').on(t.ownerId, t.name)]
+);
 
 export const deckAccess = pgTable(
 	'deck_access',
@@ -123,17 +137,24 @@ export const deckAccess = pgTable(
 	(t) => [primaryKey({ columns: [t.deckId, t.userId] }), index('deck_access_user_idx').on(t.userId)]
 );
 
-export const noteTypes = pgTable('note_types', {
-	id: id(),
-	ownerId: uuid('owner_id')
-		.notNull()
-		.references(() => users.id, { onDelete: 'restrict' }),
-	name: text('name').notNull(),
-	css: text('css').notNull().default(''),
-	isCloze: boolean('is_cloze').notNull().default(false),
-	sortFieldIdx: smallint('sort_field_idx').notNull().default(0),
-	ankiId: ankiId()
-});
+export const noteTypes = pgTable(
+	'note_types',
+	{
+		id: id(),
+		ownerId: uuid('owner_id')
+			.notNull()
+			.references(() => users.id, { onDelete: 'restrict' }),
+		name: text('name').notNull(),
+		css: text('css').notNull().default(''),
+		isCloze: boolean('is_cloze').notNull().default(false),
+		sortFieldIdx: smallint('sort_field_idx').notNull().default(0),
+		ankiId: ankiId()
+	},
+	// Name-keyed for the same reason as `decks`, and because it matches Anki's own reconcile
+	// rule. `notes.fields` is a positional array indexed by `fields.ordinal`, so merging two
+	// genuinely different note types renders every field into the wrong slot.
+	(t) => [uniqueIndex('note_types_owner_name_idx').on(t.ownerId, t.name)]
+);
 
 export const fields = pgTable(
 	'fields',
@@ -176,6 +197,15 @@ export const notes = pgTable(
 		id: id(),
 		/** Anki's stable per-note identifier. The idempotency key for import. */
 		guid: text('guid').notNull(),
+		/**
+		 * Denormalised from `decks.owner_id`, because a unique index can't span a join and
+		 * `(owner_id, guid)` is the import key. It must not drift: moving a note between decks
+		 * sets this to the new deck's owner. A no-op in Phase 1, where both decks have the same
+		 * owner either way, and load-bearing once decks are shared or forked.
+		 */
+		ownerId: uuid('owner_id')
+			.notNull()
+			.references(() => users.id, { onDelete: 'restrict' }),
 		noteTypeId: uuid('note_type_id')
 			.notNull()
 			.references(() => noteTypes.id, { onDelete: 'restrict' }),
@@ -196,8 +226,15 @@ export const notes = pgTable(
 	},
 	// This is what makes re-import idempotent. Retrofitting it duplicates every early user's
 	// decks on their next import (CLAUDE.md §2.2).
+	//
+	// Owner-scoped, not deck-scoped: `guid` is globally unique in Anki, so keying it to the
+	// deck would make note idempotency depend on deck dedup landing first — and the same note
+	// re-imported into a second deck would silently become two notes with one identity.
 	(t) => [
-		uniqueIndex('notes_deck_guid_idx').on(t.deckId, t.guid),
+		uniqueIndex('notes_owner_guid_idx').on(t.ownerId, t.guid),
+		// Not subsumed by the index above: this is what serves deck-scoped note queries and the
+		// RI check when a deck is deleted.
+		index('notes_deck_idx').on(t.deckId),
 		// Backs the RESTRICT check when a note type is deleted.
 		index('notes_note_type_idx').on(t.noteTypeId)
 	]
@@ -319,10 +356,19 @@ export const reviewLog = pgTable(
 		/** `ts-fsrs` major version the row was scheduled with. Null for imported history. */
 		fsrsVersion: smallint('fsrs_version'),
 		/** 0 learn, 1 review, 2 relearn, 3 filtered, 4 manual — Anki's revlog `type`. */
-		reviewKind: smallint('review_kind').notNull()
+		reviewKind: smallint('review_kind').notNull(),
+		/** Anki's `revlog.id`. NULL for rows our own reviewer produced — they dedup on `id`. */
+		ankiId: ankiId()
 	},
 	(t) => [
 		index('review_log_user_reviewed_idx').on(t.userId, t.reviewedAt),
+		// Re-import dedup, and the one place an `anki_id` is unique: `revlog.id` is epoch-millis
+		// and genuinely identifies the row within its collection. `user_id` leads because cards
+		// are shared content while this table is per-user training data — a card-scoped key would
+		// let one user's imported history block another's, the §2.5 failure that stays invisible
+		// until an optimiser fit comes out wrong. NULLs stay distinct, so the live write-queue
+		// path (which never sets `anki_id`) collides on nothing.
+		uniqueIndex('review_log_user_card_anki_id_idx').on(t.userId, t.cardId, t.ankiId),
 		// `card_id` leads deliberately: Postgres's RESTRICT check on a card or deck delete runs
 		// `SELECT 1 FROM review_log WHERE card_id = $1`, and only a leading `card_id` keeps that
 		// off a seq scan of the largest table in the system. The trailing columns also serve the
