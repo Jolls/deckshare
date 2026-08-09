@@ -362,7 +362,8 @@ Unresolved. Do not silently pick one — surface it.
   complexity rather than the maintenance burden that sync would have. Slightly qualifies the
   README's "no Rust anywhere." Alternatives: pure-TS optimiser (slow, and a correctness
   surface we said we wouldn't own) or an out-of-process optimiser job. **Decide before step
-  9 of Phase 1.**
+  9 of Phase 1** — and step 8 (`.apkg` import) is in flight, so this is the *next* gate, and
+  the only open question left that blocks implementation rather than copy or policy.
 - ~~**Auth library.**~~ Settled: hand-rolled sessions, Lucia-style. Auth.js's value is its
   OAuth provider ecosystem and adapter abstraction — neither earns its weight here. Phase 1
   is email/password only (invariant §2.8 rules out any federated-identity-shaped sync
@@ -381,8 +382,13 @@ Unresolved. Do not silently pick one — surface it.
 - **Deck-content licensing** for the public directory. Shared decks carry their own terms and
   Ankitects has objected publicly to redistribution. The directory must record and display a
   per-deck licence.
-- **Media storage backend** for self-hosters: filesystem vs S3-compatible. Content addressing
-  (§5) makes this swappable, so it can wait.
+- ~~**Media storage backend.**~~ Settled: **filesystem**, content-addressed, for self-hosted
+  deployment. Bytes live at `${MEDIA_ROOT}/<sha[0:2]>/<sha>`; the database holds metadata rows
+  only (`media_blobs.sha256`/`size_bytes`/`mime`) and never a `bytea` column. This is what Anki
+  itself does, one step further: content-addressed rather than filename-addressed, because two
+  users' decks can each carry a different `image.jpg`. S3-compatible remains a drop-in later —
+  the metadata-row-plus-external-bytes shape is identical, only "external" changes. Implemented
+  in `src/lib/server/media/store.ts` ([#34](https://github.com/Jolls/enshu/issues/34)).
 
 ---
 
