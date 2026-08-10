@@ -1,6 +1,6 @@
 # `.apkg` fixtures
 
-Real exports from multiple Anki versions, used by the round-trip tests in CLAUDE.md §10.2.
+Real exports from multiple Anki versions, used by the round-trip tests in CLAUDE.md §10.3.
 Collect these early — per CLAUDE.md §10, they are the hardest test asset to produce later and
 the format is where the unknown-unknowns live.
 
@@ -21,7 +21,7 @@ For each fixture, record here:
 A real widely-distributed community geography deck (v53, exported ~2025-04) was read end to end
 on 2026-08-07 to verify the format. **It is not in the repo and must not be**: it is
 third-party deck content under its own licence, which is precisely the open question in
-CLAUDE.md §12. Findings are recorded in words in
+architecture.md §12. Findings are recorded in words in
 [`docs/apkg-format.md`](../../../docs/apkg-format.md) under "What the one real export
 confirmed", and the two real-world traps it exposed are now covered by synthetic regression
 tests (`buildDowngradeStubPackage()`).
@@ -38,7 +38,7 @@ also sidesteps the licensing problem entirely.
 > **These are not real Anki exports.** No Anki build was available when the reader was written
 > (`feature/9-apkg-reader`), so `synthetic.ts` builds packages **to the description in
 > [`docs/apkg-format.md`](../../../docs/apkg-format.md)**, which is itself explicitly
-> unverified (CLAUDE.md §7). Every claim they encode — table DDL, JSON member names, protobuf
+> unverified (architecture.md §7). Every claim they encode — table DDL, JSON member names, protobuf
 > field numbers, `cards.data` key names — is that document's claim, written by the same hands
 > that wrote the reader.
 

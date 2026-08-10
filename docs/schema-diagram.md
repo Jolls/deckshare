@@ -7,7 +7,7 @@ column-level detail. Regenerate this by hand if the shape in `schema.md` changes
 - [Content & authoring core](#content--authoring-core) — note types, fields, templates,
   notes, cards
 - [Per-user scheduling](#per-user-scheduling) — the FSRS-critical subset
-- [Access & sharing](#access--sharing) — users, decks, deck access, forking
+- [Access & sharing](#access--sharing) — users, decks, deck access
 - [Media & auth](#media--auth) — content-addressed media, sessions
 
 ---
@@ -119,8 +119,6 @@ erDiagram
         uuid owner_id FK
         text name "UNIQUE (owner_id, name)"
         text description
-        text visibility "private | public"
-        uuid forked_from_deck_id FK "self-ref, see note below"
         jsonb preset
         timestamptz created_at
         timestamptz modified_at
@@ -206,10 +204,9 @@ erDiagram
   `Default` everywhere), so keying on it merges unrelated collections. `review_log` is the one
   exception, since `revlog.id` genuinely identifies a row within its collection. See
   `schema.md`.
-- `decks.forked_from_deck_id` is a self-reference to another `DECKS` row (the deck this one
-  was forked from, nullable). Not drawn as an edge — Mermaid's `erDiagram` renders
-  self-relationships as a stray loop to nowhere rather than a curve back to the same entity,
-  so it's left as an FK-typed attribute instead.
+- `DECK_ACCESS` is the only path by which a deck reaches a second user. There is no visibility
+  flag and no public-deck carve-out (CLAUDE.md §9), so every cross-user edge in this diagram
+  passes through that table.
 
 ---
 
@@ -367,9 +364,9 @@ deck_id)`, which is why it's absent from the edges above.
 
 ## Access & sharing
 
-`deck_access` as the join table between users and decks, plus the forking self-reference.
-Small, but the shape Phase 2 multiuser work (roles, cohorts, forking with preserved
-progress) builds on.
+`deck_access` as the join table between users and decks — the only way a deck reaches someone
+who doesn't own it. Small, but the shape Phase 2 multiuser work (roles, co-authoring,
+classroom cohorts) builds on.
 
 ```mermaid
 erDiagram
@@ -387,8 +384,6 @@ erDiagram
         uuid id PK
         uuid owner_id FK
         text name
-        text visibility "private | public"
-        uuid forked_from_deck_id FK "self-ref, see note below"
         jsonb preset
     }
 
@@ -400,10 +395,9 @@ erDiagram
     }
 ```
 
-`decks.forked_from_deck_id` points at another `DECKS` row (not drawn — see the full-schema
-note above on Mermaid self-loops). A fork's own `user_card_state` is preserved for the
-forking user, per CLAUDE.md's Phase 2 scope — that relationship lives in the scheduling
-diagram, not this one, since `user_card_state` keys off `card_id`, not `deck_id`.
+A user reaches a deck they don't own through `DECK_ACCESS` and nothing else. Their progress on
+it still lives in their own `user_card_state` rows, which key off `card_id` and appear in the
+scheduling diagram rather than this one — sharing content never shares progress.
 
 ---
 
