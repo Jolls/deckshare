@@ -40,7 +40,7 @@ export function currentCard(session: ReviewSession): WireReviewCard | null {
 
 export interface GradeResult {
 	session: ReviewSession;
-	/** Append this to the durable write queue. Never sent from here. */
+	/** Append this to the write queue. Never sent from here. */
 	event: WireReviewEvent;
 }
 
@@ -51,6 +51,10 @@ export interface GradeResult {
  * learning steps come round again within a session. Anything scheduled past the day boundary
  * leaves, which is the same window the server's queue query uses, so the client and the
  * server agree on what "due today" means without the client owning the definition.
+ *
+ * The computed state drives the queue and the UI, and rides along on the event as `predicted`.
+ * It is not what gets stored: the server recomputes the same grade from its own copy of the
+ * card state and stores that, comparing `predicted` for divergence (CLAUDE.md §2.7, §6).
  */
 export function grade(
 	session: ReviewSession,
@@ -79,8 +83,7 @@ export function grade(
 			rating,
 			reviewedAt: now.toISOString(),
 			durationMs,
-			stateBefore: card.state,
-			stateAfter: next.state
+			predicted: { fsrsVersion: session.params.fsrsVersion, state: next.state }
 		}
 	};
 }

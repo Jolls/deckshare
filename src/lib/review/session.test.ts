@@ -39,8 +39,8 @@ describe('review session', () => {
 		if (!result) throw new Error('expected a graded card');
 
 		const expected = scheduleReview(newCardState(NOW), Rating.Good, NOW, PARAMS).state;
-		expect(fromWireCardState(result.event.stateAfter)).toEqual(expected);
-		expect(result.event.stateBefore).toEqual(toWireCardState(newCardState(NOW)));
+		expect(fromWireCardState(result.event.predicted.state)).toEqual(expected);
+		expect(result.event.predicted.fsrsVersion).toBe(PARAMS.fsrsVersion);
 		expect(result.event).toMatchObject({
 			cardId: 'a',
 			rating: Rating.Good,
@@ -68,10 +68,10 @@ describe('review session', () => {
 		if (!result) throw new Error('expected a graded card');
 
 		// Again puts a new card into learning with a minutes-scale interval.
-		expect(fromWireCardState(result.event.stateAfter).state).toBe(State.Learning);
+		expect(fromWireCardState(result.event.predicted.state).state).toBe(State.Learning);
 		expect(result.session.queue.map((c) => c.cardId)).toEqual(['b', 'a']);
 		// The requeued copy carries the updated state, not the stale one.
-		expect(result.session.queue[1]?.state).toEqual(result.event.stateAfter);
+		expect(result.session.queue[1]?.state).toEqual(result.event.predicted.state);
 	});
 
 	it('does not mutate the session it was given', () => {

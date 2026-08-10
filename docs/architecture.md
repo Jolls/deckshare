@@ -20,21 +20,15 @@ on *rationale* and this file wins on *mechanics*. If you change a decision, upda
 
 Merged: scaffold (#3), schema (#4), `lib/fsrs/` (#5), `lib/render/` + sanitisation (#12, #6),
 auth (#7), CRUD (#8), `.apkg` reader (#9), the reviewer (#13), auth and deck UI (#28, #29),
-re-import dedup keys (#32). Still open: `.apkg` import-to-database and export (#33, #10),
-media (#34), parameter optimisation (#11).
+re-import dedup keys (#32), server-authoritative grading (#39). Still open: `.apkg`
+import-to-database and export (#33, #10), media (#34), parameter optimisation (#11).
 
-**The gap you need to know about.** [CLAUDE.md §2.7](../CLAUDE.md#2-invariants--do-not-violate-without-an-explicit-decision) and §6 describe a server-authoritative grading path.
-The code still implements the earlier client-authoritative one — `src/lib/review/` computes
-FSRS locally and POSTs `stateAfter`, and the server writes what it receives. That is a
-recorded decision to change the code, not drift to reconcile in the other direction. When the
-two disagree, **this file is right and the code is stale.**
+**The gaps you need to know about.** Where this file and the code disagree, **this file is
+right and the code is stale** — the difference is a recorded decision to change the code, not
+drift to reconcile in the other direction.
 
-Specifically, as of 2026-08-09:
+Specifically, as of 2026-08-10:
 
-- `src/lib/review/session.ts`, `wire.ts`, `write-queue.ts` and `/api/reviews/batch` implement
-  the client-authoritative path. `write-queue.ts`'s `localStorage` durability existed to serve
-  offline study, which §11 now rules out; the idempotent endpoint and client-generated event
-  ids stay.
 - The session loader fetches 100 cards once and never refills — §6 now specifies 20, refilling
   at 10 unseen remaining.
 - `src/lib/server/db/schema.ts` still defines `deckVisibility`, `visibility` and
@@ -117,7 +111,7 @@ enshu/
 │  │  │  │  ├─ write.ts       IR -> .apkg
 │  │  │  │  ├─ anki-schema.ts Anki's SQLite shapes, schema 11 and 18
 │  │  │  │  └─ media.ts       media map + content-addressed blob store
-│  │  │  └─ fsrs/             server-side scheduling: import backfill, recompute, optimise
+│  │  │  └─ fsrs/             server-side scheduling: divergence check, import backfill, optimise
 │  │  ├─ fsrs/               ISOMORPHIC scheduling wrappers — used by client and server
 │  │  ├─ review/             review queue, write queue, session state (client)
 │  │  ├─ render/             note-type template rendering ({{Field}}, cloze, conditionals)
@@ -245,7 +239,8 @@ is not** — missing rows weaken an optimiser fit, wrong rows corrupt it (CLAUDE
 ```
 POST /api/reviews/batch
   { events: [{ id, cardId, rating, reviewedAt, durationMs,
-               predicted: {...} }] }        <- the client's own result, for comparison only
+               predicted: { fsrsVersion, state } }] }   <- the client's own result,
+                                                           for comparison only
 
 for each event:
   authorise (user_id, card_id) via deck_access
@@ -266,8 +261,35 @@ for each event:
 to assert. Everything written to `review_log` and `user_card_state` is derived server-side
 from state the server already holds.
 
-The `last_review <` guard makes application order-independent and last-write-wins by *review
-time*, not arrival time — the correctness property that makes a retrying sender safe.
+The `last_review <` guard makes application last-write-wins by *review time*, not arrival
+time — the correctness property that makes a retrying sender safe.
+
+**Ordering and concurrency, now that the server threads state forward itself.** Scheduling
+server-side turns each grade into a read-modify-write, and four mechanisms carry what the
+client's `stateAfter` used to:
+
+- **An advisory lock per `(user, card)`, held to commit.** Two batches for the same card — two
+  tabs, a redelivered POST — would otherwise both read the same `before` under READ COMMITTED
+  and one review would vanish. Advisory rather than `SELECT … FOR UPDATE`, because a card the
+  user has never seen has no row to lock, and two concurrent first grades are exactly that case.
+- **Sort the batch by `reviewed_at` before scheduling.** Two grades of the same card in one
+  batch have to be applied in the order they happened, so a shuffled batch still converges.
+- **Skip an event whose id is already in `review_log`.** A pure retry must not be rescheduled
+  from the row it already advanced — that would both do nothing (the guard blocks it) and
+  disagree with its own prediction, alarming the divergence counter over normal traffic. The
+  lookup is *not* scoped to `user_id`: `review_log.id` is a global primary key, so an id taken
+  by anyone is taken here, or `ON CONFLICT` would drop the row while its state write landed.
+- **Replay the card from `review_log` when a batch predates the stored `last_review`.** The
+  server cannot derive a truthful `*_before` for a review it is seeing out of order, and
+  fabricating one writes permanently wrong training data (§2.5) that no recompute repairs —
+  `replayReviews` only rebuilds `user_card_state`. Rebuilding the card's history instead makes
+  every arrival order converge. The client's sender is FIFO, so this is a fault path, not a
+  normal one; concurrent tabs on one deck are how it is actually reached.
+
+The one thing that cannot be walked back: a row written *before* the gap became visible keeps
+the `*_before` the server genuinely held at that moment, because `review_log` is append-only.
+Its `rating` and `reviewed_at` are still exact, which is what a replay and an optimiser fit
+need.
 
 **Divergence handling.** `predicted` is compared, never stored and never authoritative:
 

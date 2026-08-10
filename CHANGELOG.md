@@ -3,6 +3,28 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.4] - 2026-08-10
+
+### Changed
+- Grading is server-authoritative in the code, not only in the docs (CLAUDE.md §2.7). A client now asserts `{ id, cardId, rating, reviewedAt, durationMs }` and nothing else; `applyReviewBatch` reads the stored `user_card_state`, schedules the grade itself through `$lib/fsrs`, and writes *its own* numbers to `review_log` and `user_card_state` ([#39](https://github.com/Jolls/enshu/issues/39))
+- The client's local FSRS result travels as `predicted` — compared against the server's answer, never stored, never authoritative. §2.6 is unchanged: grading is still synchronous and local, and the UI never awaits the network ([#39](https://github.com/Jolls/enshu/issues/39))
+- `/api/reviews/batch` responds with the server's post-review state per event, so a client can reconcile its queue ([#39](https://github.com/Jolls/enshu/issues/39))
+- `review_log`'s FSRS columns come off `ts-fsrs`' own review log rather than being projected from the client's `stateBefore`/`stateAfter` ([#39](https://github.com/Jolls/enshu/issues/39))
+- Write-queue batches are sorted by review time before scheduling, and an event already present in `review_log` is skipped outright — a retry no longer reschedules from the row it advanced ([#39](https://github.com/Jolls/enshu/issues/39))
+- A batch whose reviews predate the stored `last_review` is replayed from `review_log` rather than folded onto the stored row, so out-of-order arrival converges instead of recording a `*_before` the card was never in ([#39](https://github.com/Jolls/enshu/issues/39))
+
+### Security
+- `applyReviewBatch` takes a per-`(user, card)` advisory lock for the transaction. Scheduling server-side makes each grade a read-modify-write, and two concurrent batches for one card (two tabs, a redelivered POST) would otherwise both schedule from the same state and silently drop a review ([#39](https://github.com/Jolls/enshu/issues/39))
+- `/api/reviews/batch` refuses a `reviewedAt` more than five minutes ahead of server time. Unbounded it both poisons the server's schedule and writes a `last_review` far enough ahead to freeze that card behind the §6 guard permanently ([#39](https://github.com/Jolls/enshu/issues/39))
+- The retry-skip lookup is global rather than scoped to `user_id`, matching `review_log.id`'s primary key. Scoped, a colliding id would have been dropped by `ON CONFLICT` while its `user_card_state` write still landed — state with no backing log row ([#39](https://github.com/Jolls/enshu/issues/39))
+
+### Added
+- `src/lib/server/fsrs/divergence.ts`: the §6 comparison (`state`/`reps`/`lapses` exact, `stability`/`difficulty` within `1e-6`, `due` to the second), a structured log line naming both `fsrs_version`s, and a process-lifetime counter. No table — the expected rate is zero, so it is an alert condition ([#39](https://github.com/Jolls/enshu/issues/39))
+- CLAUDE.md §10.1 coverage, the repo's top testing priority: a grade whose `predicted` block is hostile rather than merely stale stores the server's value, keeps `review_log` clean, and raises one divergence per event ([#39](https://github.com/Jolls/enshu/issues/39))
+
+### Removed
+- The write queue's `localStorage` durability. It existed to serve offline study, which architecture.md §11 rules out; the idempotent endpoint and client-generated event ids stay ([#39](https://github.com/Jolls/enshu/issues/39))
+
 ## [0.1.3] - 2026-08-09
 
 Documentation only. A fundamentals pass ahead of the code that implements it — see

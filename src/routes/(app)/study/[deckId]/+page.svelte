@@ -2,7 +2,9 @@
 	/**
 	 * The reviewer (CLAUDE.md §6). The one rule this file exists to honour: grading is
 	 * synchronous and local. `handleGrade` calls `$lib/fsrs`, advances the UI, and appends to
-	 * the durable queue — there is no `await` on the network in it (invariant §2.6).
+	 * the write queue — there is no `await` on the network in it (invariant §2.6). What the
+	 * local scheduler computed drives this UI only; the server recomputes the grade and stores
+	 * its own answer (§2.7).
 	 *
 	 * Card HTML arrives already sanitised from the server (`getReviewSession` runs
 	 * `sanitiseCardHtml`), which is what makes the `{@html}` below safe (CLAUDE.md §8).
@@ -27,10 +29,10 @@
 	let queue: WriteQueue | undefined;
 
 	onMount(() => {
-		queue = new WriteQueue({ post: postReviewBatch, storage: localStorage });
-		pending = queue.size;
-		// Anything left over from a tab closed mid-session drains as soon as we're back.
-		void queue.drain().then(() => (pending = queue?.size ?? 0));
+		queue = new WriteQueue({
+			post: postReviewBatch,
+			onPendingChange: (n) => (pending = n)
+		});
 	});
 
 	function handleGrade(rating: Grade) {
@@ -42,8 +44,9 @@
 		showAnswer = false;
 		shownAt = Date.now();
 
+		// Synchronous, and the last thing to happen: the queue reports its own size back through
+		// `onPendingChange`, including when a batch drains with no grading going on.
 		queue?.enqueue(result.event);
-		pending = queue?.size ?? 0;
 	}
 
 	const KEYS: Record<string, Grade> = {

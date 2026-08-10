@@ -1,8 +1,8 @@
 /**
- * The durable write queue (CLAUDE.md §6).
+ * The write queue (CLAUDE.md §6).
  *
- * `enqueue` is synchronous and returns immediately — it writes through to `localStorage` and
- * nudges a background drain. Grading never awaits any of this (invariant §2.6).
+ * `enqueue` is synchronous and returns immediately — it appends and nudges a background
+ * drain. Grading never awaits any of this (invariant §2.6).
  *
  * The drain POSTs whole batches to `/api/reviews/batch` with exponential backoff, and only
  * drops entries the server has acknowledged. The server contract is idempotent on the
@@ -10,34 +10,39 @@
  * closed mid-flight) is always safe — which is what lets this drop entries on success and
  * keep them on anything else, with no other bookkeeping.
  *
- * Storage and transport are injected so the whole thing is testable in Node.
+ * **In memory only, deliberately.** Batching here is to be kind to mobile radios, not to
+ * build a durable offline log: architecture.md §11 rules out offline study, so there is
+ * nothing for a `localStorage` copy to serve. Losing a handful of unsent events to a hard
+ * crash is acceptable — missing rows weaken an optimiser fit, where a wrong row would
+ * corrupt it (§2.5), and under §2.7 a wrong row is not something the client can produce.
+ *
+ * Transport is injected so the whole thing is testable in Node.
  */
 import type { WireReviewEvent } from './types';
-
-export interface QueueStorage {
-	getItem(key: string): string | null;
-	setItem(key: string, value: string): void;
-}
 
 export interface WriteQueueOptions {
 	/** Sends one batch. Resolves on 2xx, rejects on anything else. */
 	post: (events: WireReviewEvent[]) => Promise<void>;
-	storage: QueueStorage;
-	storageKey?: string;
 	/** Largest batch per request. */
 	batchSize?: number;
 	/** Backoff delays in ms, indexed by consecutive-failure count; the last one repeats. */
 	backoffMs?: readonly number[];
 	/** Injected so tests don't wait in real time. */
 	setTimer?: (fn: () => void, ms: number) => void;
+	/**
+	 * Called whenever the number of unacknowledged events changes. The queue owns that number,
+	 * so a UI showing it subscribes rather than re-reading `size` at moments it happens to
+	 * think are interesting — a batch that drains during a backoff wait, with no further
+	 * grading, is exactly when a polled counter goes stale and exactly when it matters.
+	 */
+	onPendingChange?: (pending: number) => void;
 }
 
-const DEFAULT_KEY = 'enshu:review-write-queue';
 const DEFAULT_BACKOFF = [1_000, 2_000, 5_000, 15_000, 30_000, 60_000] as const;
 
 export class WriteQueue {
 	private readonly options: Required<WriteQueueOptions>;
-	private pending: WireReviewEvent[];
+	private pending: WireReviewEvent[] = [];
 	/** The in-flight drain, so concurrent callers await the same one instead of racing. */
 	private draining: Promise<void> | null = null;
 	private retryPending = false;
@@ -47,13 +52,12 @@ export class WriteQueue {
 
 	constructor(options: WriteQueueOptions) {
 		this.options = {
-			storageKey: DEFAULT_KEY,
 			batchSize: 50,
 			backoffMs: DEFAULT_BACKOFF,
 			setTimer: (fn, ms) => void setTimeout(fn, ms),
+			onPendingChange: () => {},
 			...options
 		};
-		this.pending = this.load();
 	}
 
 	/** Events accepted but not yet acknowledged by the server. */
@@ -61,10 +65,10 @@ export class WriteQueue {
 		return this.pending.length;
 	}
 
-	/** Synchronous. Persists, then schedules a drain. Never throws on a network problem. */
+	/** Synchronous. Appends, then schedules a drain. Never throws on a network problem. */
 	enqueue(event: WireReviewEvent): void {
-		this.pending = [...this.pending, event];
-		this.persist();
+		this.pending.push(event);
+		this.options.onPendingChange(this.pending.length);
 		void this.drain();
 	}
 
@@ -109,7 +113,7 @@ export class WriteQueue {
 			// Re-read `pending`: `enqueue` may have appended while the request was in flight.
 			const ids = new Set(batch.map((e) => e.id));
 			this.pending = this.pending.filter((e) => !ids.has(e.id));
-			this.persist();
+			this.options.onPendingChange(this.pending.length);
 			this.failures = 0;
 		}
 	}
@@ -122,26 +126,6 @@ export class WriteQueue {
 			this.retryScheduled = false;
 			void this.startRun();
 		}, delay);
-	}
-
-	private persist(): void {
-		try {
-			this.options.storage.setItem(this.options.storageKey, JSON.stringify(this.pending));
-		} catch {
-			// A full or unavailable store must not break grading. The events stay in memory and
-			// the drain still runs; only survival across a tab close is lost.
-		}
-	}
-
-	private load(): WireReviewEvent[] {
-		try {
-			const raw = this.options.storage.getItem(this.options.storageKey);
-			if (!raw) return [];
-			const parsed: unknown = JSON.parse(raw);
-			return Array.isArray(parsed) ? (parsed as WireReviewEvent[]) : [];
-		} catch {
-			return [];
-		}
 	}
 }
 

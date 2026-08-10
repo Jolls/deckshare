@@ -1,9 +1,9 @@
 /**
- * `CardState` <-> JSON. Isomorphic: the server encodes on the way out and decodes on the way
- * back in, and the client round-trips through `localStorage` in between.
+ * `CardState` <-> JSON. Isomorphic: the server encodes the session batch on the way out and
+ * decodes the write queue's events on the way back in.
  */
 import type { CardState, Grade } from '$lib/fsrs';
-import type { WireCardState, WireReviewEvent } from './types';
+import type { WireCardState, WirePrediction, WireReviewEvent } from './types';
 
 export function toWireCardState(state: CardState): WireCardState {
 	return {
@@ -58,13 +58,29 @@ function isWireCardState(value: unknown): value is WireCardState {
 	return FINITE_NUMBER_KEYS.every((key) => typeof s[key] === 'number' && Number.isFinite(s[key]));
 }
 
+function isWirePrediction(value: unknown): value is WirePrediction {
+	if (typeof value !== 'object' || value === null) return false;
+	const p = value as Record<string, unknown>;
+	return Number.isInteger(p.fsrsVersion) && isWireCardState(p.state);
+}
+
 /**
  * Validates one entry of a `/api/reviews/batch` body.
  *
- * This is the boundary where `review_log` — unrecoverable training data (CLAUDE.md §2.5) —
- * stops being the client's word for it. A malformed number that reached the table would be
- * invisible until an optimiser fit came out wrong, so nothing is coerced: it parses or it is
- * rejected.
+ * Nothing here is coerced: it parses or it is rejected. Under CLAUDE.md §2.7 none of it is
+ * *stored* — the server recomputes the scheduling state itself — but `rating` and
+ * `reviewedAt` are still inputs to that recompute, and they feed `review_log`, which is
+ * unrecoverable training data (§2.5).
+ *
+ * `predicted` is required rather than optional on purpose: the client always has one (§2.6
+ * makes it compute locally anyway), and an optional field would let a caller opt out of the
+ * divergence check simply by omitting it.
+ *
+ * **Shape only.** Whether a well-formed event is *believable* — that its `reviewedAt` is not
+ * in the future, that the caller may review that card — is a trust decision measured against
+ * server state and a server clock, and it lives with the other trust checks in the route
+ * handler and `applyReviewBatch`. This module is imported by the client too and has no
+ * business holding either.
  */
 export function parseWireReviewEvent(value: unknown): WireReviewEvent | null {
 	if (typeof value !== 'object' || value === null) return null;
@@ -78,7 +94,7 @@ export function parseWireReviewEvent(value: unknown): WireReviewEvent | null {
 			return null;
 		}
 	}
-	if (!isWireCardState(e.stateBefore) || !isWireCardState(e.stateAfter)) return null;
+	if (!isWirePrediction(e.predicted)) return null;
 
 	return {
 		id: e.id,
@@ -86,7 +102,6 @@ export function parseWireReviewEvent(value: unknown): WireReviewEvent | null {
 		rating: e.rating as Grade,
 		reviewedAt: e.reviewedAt,
 		durationMs: typeof e.durationMs === 'number' ? e.durationMs : null,
-		stateBefore: e.stateBefore,
-		stateAfter: e.stateAfter
+		predicted: e.predicted
 	};
 }
