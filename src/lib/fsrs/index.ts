@@ -1,4 +1,10 @@
-export { defaultFsrsParams, newCardState, replayReviews, scheduleReview } from './schedule';
+export {
+	defaultFsrsParams,
+	newCardState,
+	replayReviews,
+	replayReviewSteps,
+	scheduleReview
+} from './schedule';
 export { Rating, State } from './types';
 export type {
 	CardState,

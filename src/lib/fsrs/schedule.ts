@@ -72,24 +72,46 @@ export function scheduleReview(
 }
 
 /**
- * The server replay path: rebuild `user_card_state` from `review_log` alone. Needed
- * for `.apkg` import backfill, for repairing a client bug, and after a parameter
- * refit (CLAUDE.md §6). `events` must be in ascending `reviewed_at` order.
+ * The server replay path: fold a run of answers from `initial`, returning the result of
+ * *every* step. Needed for `.apkg` import backfill, for repairing a client bug, after a
+ * parameter refit, and by the live grading path, which needs each step's `log` to write the
+ * `review_log` row it produced (CLAUDE.md §6). `events` must be in ascending `reviewed_at`
+ * order.
  *
- * Deliberately a fold over the same `applyReview` the client uses — a second
- * scheduling implementation is exactly the divergence this module exists to prevent.
+ * Deliberately a fold over the same `applyReview` the client uses — a second scheduling
+ * implementation is exactly the divergence this module exists to prevent. The scheduler is
+ * built once for the whole run: `fsrs()` revalidates the whole parameter array, and a caller
+ * replaying a long history should not pay for that per answer.
  */
+export function replayReviewSteps(
+	events: readonly ReviewEvent[],
+	params: FsrsParams,
+	initial: CardState
+): ScheduleResult[] {
+	const scheduler = schedulerFor(params);
+	const results: ScheduleResult[] = [];
+	let state = initial;
+	for (const event of events) {
+		const result = applyReview(
+			scheduler,
+			state,
+			event.rating,
+			event.reviewedAt,
+			params.fsrsVersion
+		);
+		results.push(result);
+		state = result.state;
+	}
+	return results;
+}
+
+/** `replayReviewSteps` when only the final state matters. */
 export function replayReviews(
 	events: readonly ReviewEvent[],
 	params: FsrsParams,
 	initial: CardState
 ): CardState {
-	const scheduler = schedulerFor(params);
-	let state = initial;
-	for (const event of events) {
-		state = applyReview(scheduler, state, event.rating, event.reviewedAt, params.fsrsVersion).state;
-	}
-	return state;
+	return replayReviewSteps(events, params, initial).at(-1)?.state ?? initial;
 }
 
 function applyReview(

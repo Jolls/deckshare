@@ -1,29 +1,41 @@
 /**
- * Write-queue idempotency — CLAUDE.md §10.3, the third-highest testing priority in the repo
- * and the one property that makes a retrying client queue safe:
+ * Two properties, in priority order:
  *
- *   replaying a batch, reordering it, and interleaving it with a later review all converge to
- *   the same `user_card_state`.
+ * - **CLAUDE.md §10.1, the top testing priority in the repo: the client cannot write
+ *   scheduling state.** A grade whose `predicted` block claims a stability, difficulty or
+ *   `due` other than what the server computes stores the *server's* value and raises a
+ *   divergence — including when `predicted` is hostile rather than merely stale.
+ * - **§10.4, send idempotency:** replaying a batch and reordering it converge to the same
+ *   `user_card_state`, and a redelivered earlier batch never overwrites a later review.
  *
  * Runs against a real, freshly migrated Postgres database — skipped when `DATABASE_URL` is
  * unset, matching `migrations.test.ts` and `access.test.ts`.
  *
  * Events are produced by the *real* client path (`$lib/review`'s `grade`, which calls
- * `$lib/fsrs`), not by hand-written fixtures: the whole point of §6 is that what the client
- * computed is what the server stores.
+ * `$lib/fsrs`), not by hand-written fixtures — except where a test needs a dishonest one.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import { and, eq } from 'drizzle-orm';
 import * as schema from '../schema';
 import { uuidv7 } from '$lib/uuid';
-import { defaultFsrsParams, Rating, State, type Grade } from '$lib/fsrs';
+import {
+	defaultFsrsParams,
+	newCardState,
+	Rating,
+	scheduleReview,
+	State,
+	type CardState,
+	type Grade,
+	type ScheduleResult
+} from '$lib/fsrs';
 import { grade, startSession, toWireCardState } from '$lib/review';
 import type { WireReviewEvent, WireReviewSession } from '$lib/review/types';
+import { divergenceCount } from '$lib/server/fsrs/divergence';
 import { DeckAccessError } from './access';
-import { applyReviewBatch, getReviewSession, recomputeUserCardState } from './review';
+import { applyReviewBatch, getReviewSession, recomputeUserCardState, stateFromRow } from './review';
 
 const url = process.env.DATABASE_URL;
 const testDbName = `enshu_test_review_${Date.now().toString(36)}`;
@@ -114,31 +126,20 @@ const stateOf = (userId: string, cardId: string) =>
 		.where(and(eq(schema.userCardState.userId, userId), eq(schema.userCardState.cardId, cardId)))
 		.then((rows) => rows[0] ?? null);
 
-const NEW_STATE = (start: Date) =>
-	toWireCardState({
-		due: start,
-		stability: 0,
-		difficulty: 0,
-		state: State.New,
-		reps: 0,
-		lapses: 0,
-		elapsedDays: 0,
-		scheduledDays: 0,
-		learningSteps: 0,
-		lastReview: null
-	});
+/** The instants `clientGrade` and `serverChain` both grade at: 10 minutes apart. */
+const at = (start: Date, i: number) => new Date(start.getTime() + i * 600_000);
 
 /**
- * Grades one card `ratings.length` times through the real client path, 10 minutes apart, and
- * returns the events the write queue would be holding.
+ * Grades one card `ratings.length` times through the real client path and returns the events
+ * the write queue would be holding.
  *
- * Each grade runs through a one-card session seeded with the previous grade's `stateAfter`,
+ * Each grade runs through a one-card session seeded with the previous grade's prediction,
  * which is exactly the threading the reviewer does in memory. Deterministic: fuzz is off, so
  * the same ratings at the same instants always produce the same states — that is what lets the
  * scenarios below compare separate decks against each other.
  */
 function clientGrade(cardId: string, ratings: Grade[], start: Date): WireReviewEvent[] {
-	let state = NEW_STATE(start);
+	let state = toWireCardState(newCardState(start));
 	const events: WireReviewEvent[] = [];
 
 	ratings.forEach((rating, i) => {
@@ -150,41 +151,163 @@ function clientGrade(cardId: string, ratings: Grade[], start: Date): WireReviewE
 			studyDayEnd: start.toISOString(),
 			cards: [{ cardId, noteId: 'note', ordinal: 0, front: 'f', back: 'b', state }]
 		};
-		const result = grade(
-			startSession(payload),
-			rating,
-			new Date(start.getTime() + i * 600_000),
-			1000
-		);
+		const result = grade(startSession(payload), rating, at(start, i), 1000);
 		if (!result) throw new Error('ran out of cards');
 		events.push(result.event);
-		state = result.event.stateAfter;
+		state = result.event.predicted.state;
 	});
 
 	return events;
 }
 
-/** The columns the write queue is responsible for. `applied` counts are not compared. */
+/**
+ * The same sequence scheduled the way the *server* schedules it: from a new card, forward
+ * through `$lib/fsrs`, with no client input at all. This is the authority the stored rows are
+ * checked against — deriving the expectation from the events would only prove the server
+ * copied them, which is the thing §2.7 forbids.
+ */
+function serverChain(ratings: Grade[], start: Date): ScheduleResult[] {
+	const params = defaultFsrsParams();
+	let state: CardState = newCardState(start);
+	return ratings.map((rating, i) => {
+		const result = scheduleReview(state, rating, at(start, i), params);
+		state = result.state;
+		return result;
+	});
+}
+
+/**
+ * The scheduling columns, as the wire shape. Routed through the production `stateFromRow` +
+ * `toWireCardState` rather than listed here, so a column added to `user_card_state` joins
+ * every assertion below instead of quietly dropping out of all of them.
+ */
 const scheduling = (row: Awaited<ReturnType<typeof stateOf>>) =>
-	row && {
-		due: row.due.toISOString(),
-		stability: row.stability,
-		difficulty: row.difficulty,
-		state: row.state,
-		reps: row.reps,
-		lapses: row.lapses,
-		elapsedDays: row.elapsedDays,
-		scheduledDays: row.scheduledDays,
-		learningSteps: row.learningSteps,
-		lastReview: row.lastReview?.toISOString() ?? null
-	};
+	row && toWireCardState(stateFromRow(row));
 
 const START = new Date('2026-08-08T09:00:00.000Z');
 
 /** The rating sequence every idempotency scenario replays. */
 const RATINGS: Grade[] = [Rating.Good, Rating.Again, Rating.Good];
 
-describe.skipIf(!url)('write-queue idempotency (CLAUDE.md §10.3)', () => {
+describe.skipIf(!url)('the client cannot write scheduling state (CLAUDE.md §10.1, §2.7)', () => {
+	/** A `predicted` block that is not stale but a lie: every field moved somewhere flattering. */
+	function tamper(event: WireReviewEvent): WireReviewEvent {
+		return {
+			...event,
+			predicted: {
+				fsrsVersion: 4,
+				state: {
+					...event.predicted.state,
+					due: '2030-01-01T00:00:00.000Z',
+					stability: 9_999,
+					difficulty: 1,
+					state: State.Review,
+					reps: 500,
+					lapses: 0
+				}
+			}
+		};
+	}
+
+	it('stores the server’s state and raises a divergence for a hostile prediction', async () => {
+		const honest = await makeDeck('hostile-honest', 1);
+		const hostile = await makeDeck('hostile', 1);
+		const honestCard = honest.cardIds[0];
+		const hostileCard = hostile.cardIds[0];
+		if (!honestCard || !hostileCard) throw new Error('no card');
+
+		await applyReviewBatch(honest.userId, clientGrade(honestCard, RATINGS, START), db);
+		const truth = scheduling(await stateOf(honest.userId, honestCard));
+
+		const before = divergenceCount();
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		let lines: string[];
+		try {
+			await applyReviewBatch(
+				hostile.userId,
+				clientGrade(hostileCard, RATINGS, START).map(tamper),
+				db
+			);
+			lines = warn.mock.calls.map((call) => String(call[0]));
+		} finally {
+			warn.mockRestore();
+		}
+
+		// Byte for byte the honest result: nothing the client claimed reached a column.
+		expect(scheduling(await stateOf(hostile.userId, hostileCard))).toEqual(truth);
+		// One divergence per tampered event, each naming both fsrs_versions.
+		expect(divergenceCount()).toBe(before + RATINGS.length);
+		expect(lines).toHaveLength(RATINGS.length);
+		expect(JSON.parse(lines[0] ?? '{}')).toMatchObject({
+			event: 'fsrs_divergence',
+			cardId: hostileCard,
+			serverFsrsVersion: defaultFsrsParams().fsrsVersion,
+			clientFsrsVersion: 4
+		});
+	});
+
+	it('keeps review_log free of the hostile numbers too', async () => {
+		const deck = await makeDeck('hostile-log', 1);
+		const cardId = deck.cardIds[0];
+		if (!cardId) throw new Error('no card');
+
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		try {
+			await applyReviewBatch(deck.userId, clientGrade(cardId, RATINGS, START).map(tamper), db);
+		} finally {
+			warn.mockRestore();
+		}
+
+		const rows = await db
+			.select()
+			.from(schema.reviewLog)
+			.where(eq(schema.reviewLog.cardId, cardId))
+			.orderBy(schema.reviewLog.reviewedAt);
+
+		const expected = serverChain(RATINGS, START);
+		expect(rows).toHaveLength(RATINGS.length);
+		for (const [i, row] of rows.entries()) {
+			const log = expected[i]?.log;
+			if (!log) throw new Error('missing expectation');
+			expect(row.stateBefore).toBe(log.stateBefore);
+			expect(row.stabilityBefore).toBe(log.stabilityBefore);
+			expect(row.difficultyBefore).toBe(log.difficultyBefore);
+			expect(row.learningStepsBefore).toBe(log.learningStepsBefore);
+			expect(row.elapsedDaysBefore).toBe(log.elapsedDaysBefore);
+			expect(row.scheduledDaysAfter).toBe(log.scheduledDaysAfter);
+			// The client's `fsrs_version` is diagnostic only — the stored one is the server's.
+			expect(row.fsrsVersion).toBe(defaultFsrsParams().fsrsVersion);
+		}
+	});
+
+	it('an honest client raises no divergence at all', async () => {
+		const deck = await makeDeck('honest', 1);
+		const cardId = deck.cardIds[0];
+		if (!cardId) throw new Error('no card');
+
+		const before = divergenceCount();
+		await applyReviewBatch(deck.userId, clientGrade(cardId, RATINGS, START), db);
+		// Never firing is the point (CLAUDE.md §17): if this ever fails, client and server
+		// have stopped scheduling identically and every user is seeing wrong predictions.
+		expect(divergenceCount()).toBe(before);
+	});
+
+	it('responds with the server’s state so the client can reconcile', async () => {
+		const deck = await makeDeck('reconcile', 1);
+		const cardId = deck.cardIds[0];
+		if (!cardId) throw new Error('no card');
+
+		const events = clientGrade(cardId, [Rating.Good], START);
+		const { applied, results } = await applyReviewBatch(deck.userId, events, db);
+
+		expect(applied).toBe(1);
+		expect(results).toHaveLength(1);
+		expect(results[0]).toMatchObject({ id: events[0]?.id, cardId });
+		expect(results[0]?.state).toEqual(toWireCardState(serverChain([Rating.Good], START)[0]!.state));
+	});
+});
+
+describe.skipIf(!url)('write-queue idempotency (CLAUDE.md §10.4)', () => {
 	/**
 	 * A fresh user, deck, card, and the three events the client would have queued for grading
 	 * it. Every scenario gets its own — event ids are the idempotency key, so reusing one
@@ -253,8 +376,9 @@ describe.skipIf(!url)('write-queue idempotency (CLAUDE.md §10.3)', () => {
 	it('REORDER: every permutation converges on the ordered result', async () => {
 		const expected = await expectedState('reorder');
 
-		// The `last_review <` guard is what makes this order-independent: an older review can
-		// never overwrite a newer one, whatever order the batch arrives in.
+		// `applyReviewBatch` sorts by review time before scheduling, so a shuffled batch is
+		// applied in the order the reviews actually happened. That sort is load-bearing now
+		// that the server threads state forward itself rather than reading it off the events.
 		const permutations = [
 			[2, 1, 0],
 			[1, 0, 2],
@@ -276,6 +400,30 @@ describe.skipIf(!url)('write-queue idempotency (CLAUDE.md §10.3)', () => {
 		}
 	});
 
+	it('INTERLEAVE: a redelivered earlier batch never overwrites a later review', async () => {
+		const expected = await expectedState('interleave');
+		const { deck, cardId, events } = await scenario('interleave');
+		const [e0, e1, e2] = events;
+		if (!e0 || !e1 || !e2) throw new Error('missing events');
+
+		// The realistic failure: a batch is acknowledged, its response is lost, the client
+		// keeps retrying it, and the retries land after later reviews have been accepted.
+		await applyReviewBatch(deck.userId, [e0, e1], db);
+		await applyReviewBatch(deck.userId, [e2], db);
+		await applyReviewBatch(deck.userId, [e0, e1], db);
+		await applyReviewBatch(deck.userId, [e1, e2, e0], db);
+
+		expect(scheduling(await stateOf(deck.userId, cardId))).toEqual(expected);
+		expect(await logCount(cardId)).toBe(3);
+	});
+
+	/**
+	 * The case that forces the replay path. Scheduling server-side makes each grade depend on
+	 * the one before it, so an event arriving *ahead* of its predecessor cannot be folded onto
+	 * the stored row — the server would have to invent a `before` that never existed, and a
+	 * fabricated `*_before` in `review_log` is training data no later recompute repairs (§2.5).
+	 * Rebuilding the card's history instead is what keeps this convergent.
+	 */
 	it('REORDER: split into per-event batches, delivered backwards', async () => {
 		const expected = await expectedState('split');
 		const { deck, cardId, events } = await scenario('split-backwards');
@@ -288,21 +436,35 @@ describe.skipIf(!url)('write-queue idempotency (CLAUDE.md §10.3)', () => {
 		expect(await logCount(cardId)).toBe(3);
 	});
 
-	it('INTERLEAVE: a redelivered earlier batch never overwrites a later review', async () => {
-		const expected = await expectedState('interleave');
-		const { deck, cardId, events } = await scenario('interleave');
-		const [e0, e1, e2] = events;
-		if (!e0 || !e1 || !e2) throw new Error('missing events');
+	/**
+	 * What backwards delivery must leave behind: a `review_log` whose *primary* columns — the
+	 * answer and its instant — are complete and correct, so a replay reproduces the state.
+	 * Those are what an optimiser fits against (§2.5).
+	 *
+	 * The derived `*_before` columns are a different matter, and this is the honest limit: a
+	 * row written *before* the server had any way to know a review was missing records the
+	 * state it genuinely held at that moment, and nothing retro-corrects it — `review_log` is
+	 * append-only (§17). Rows written once the disorder is visible are correct, which is the
+	 * part that stops wrong data accumulating.
+	 */
+	it('REORDER: backwards delivery leaves a review_log that replays to the same state', async () => {
+		const expected = await expectedState('split-replay');
+		const { deck, cardId, events } = await scenario('split-columns');
+		for (const e of [...events].reverse()) {
+			await applyReviewBatch(deck.userId, [e], db);
+		}
 
-		// The realistic failure: a stalled retry of the first two events lands *after* the third
-		// has already been accepted, and then the whole lot is redelivered again.
-		await applyReviewBatch(deck.userId, [e0], db);
-		await applyReviewBatch(deck.userId, [e2], db);
-		await applyReviewBatch(deck.userId, [e0, e1], db);
-		await applyReviewBatch(deck.userId, [e1, e2, e0], db);
+		const rows = await db
+			.select()
+			.from(schema.reviewLog)
+			.where(eq(schema.reviewLog.cardId, cardId))
+			.orderBy(schema.reviewLog.reviewedAt);
+		expect(rows.map((r) => [r.rating, r.reviewedAt.toISOString()])).toEqual(
+			events.map((e) => [e.rating, e.reviewedAt])
+		);
 
+		await recomputeUserCardState(deck.userId, cardId, db);
 		expect(scheduling(await stateOf(deck.userId, cardId))).toEqual(expected);
-		expect(await logCount(cardId)).toBe(3);
 	});
 
 	it('records the review_log columns the optimiser and the replay path need', async () => {
@@ -324,16 +486,17 @@ describe.skipIf(!url)('write-queue idempotency (CLAUDE.md §10.3)', () => {
 			fsrsVersion: defaultFsrsParams().fsrsVersion,
 			durationMs: 1000
 		});
-		// The `*_before` columns are projections of the event's `stateBefore` / `stateAfter`.
+		// Every FSRS column comes off `ts-fsrs`' own review log on the server, not off the event.
+		const expectedChain = serverChain(RATINGS, START);
 		for (const [i, row] of rows.entries()) {
-			const event = events[i];
-			if (!event) throw new Error('missing event');
-			expect(row.stateBefore).toBe(event.stateBefore.state);
-			expect(row.stabilityBefore).toBe(event.stateBefore.stability);
-			expect(row.difficultyBefore).toBe(event.stateBefore.difficulty);
-			expect(row.learningStepsBefore).toBe(event.stateBefore.learningSteps);
-			expect(row.elapsedDaysBefore).toBe(event.stateAfter.elapsedDays);
-			expect(row.scheduledDaysAfter).toBe(event.stateAfter.scheduledDays);
+			const log = expectedChain[i]?.log;
+			if (!log) throw new Error('missing expectation');
+			expect(row.stateBefore).toBe(log.stateBefore);
+			expect(row.stabilityBefore).toBe(log.stabilityBefore);
+			expect(row.difficultyBefore).toBe(log.difficultyBefore);
+			expect(row.learningStepsBefore).toBe(log.learningStepsBefore);
+			expect(row.elapsedDaysBefore).toBe(log.elapsedDaysBefore);
+			expect(row.scheduledDaysAfter).toBe(log.scheduledDaysAfter);
 		}
 	});
 });
@@ -384,7 +547,7 @@ describe.skipIf(!url)('write-queue access control (CLAUDE.md §9)', () => {
 });
 
 describe.skipIf(!url)('server-side recompute path (CLAUDE.md §6, §17)', () => {
-	it('replays review_log to exactly the state the client computed', async () => {
+	it('replays review_log to exactly the state the live path wrote', async () => {
 		const deck = await makeDeck('recompute', 1);
 		const cardId = deck.cardIds[0];
 		if (!cardId) throw new Error('no card');
@@ -395,9 +558,10 @@ describe.skipIf(!url)('server-side recompute path (CLAUDE.md §6, §17)', () => 
 			START
 		);
 		await applyReviewBatch(deck.userId, events, db);
-		const fromClient = scheduling(await stateOf(deck.userId, cardId));
+		const fromLivePath = scheduling(await stateOf(deck.userId, cardId));
 
-		// Corrupt the row the way a client bug would, then rebuild it from the log alone.
+		// Corrupt the row the way a bad migration or a bulk repair would, then rebuild it from
+		// the log alone. The live path and the bulk path must agree — they are the same fold.
 		await db
 			.update(schema.userCardState)
 			.set({ stability: 999, difficulty: 1, reps: 0, state: State.New })
@@ -405,7 +569,7 @@ describe.skipIf(!url)('server-side recompute path (CLAUDE.md §6, §17)', () => 
 
 		const rebuilt = await recomputeUserCardState(deck.userId, cardId, db);
 		expect(rebuilt).not.toBeNull();
-		expect(scheduling(await stateOf(deck.userId, cardId))).toEqual(fromClient);
+		expect(scheduling(await stateOf(deck.userId, cardId))).toEqual(fromLivePath);
 	});
 
 	it('returns null for a card with no reviews', async () => {
@@ -529,8 +693,10 @@ describe.skipIf(!url)('session start (CLAUDE.md §6)', () => {
 		// Easy on a new card schedules days out, so the next session is empty.
 		const second = await getReviewSession(deck.userId, deck.deckId, 100, db);
 		expect(second.cards).toEqual([]);
+		// The client and the server agreed, so the stored `due` is also the one the reviewer
+		// showed — but it is stored because the server computed it, not because the client sent it.
 		expect(scheduling(await stateOf(deck.userId, deck.cardIds[0]!))?.due).toBe(
-			result.event.stateAfter.due
+			result.event.predicted.state.due
 		);
 	});
 });

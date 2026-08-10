@@ -1,9 +1,8 @@
 /**
  * The wire shapes shared by the reviewer (client) and `/api/reviews/*` (server).
  *
- * Everything here is JSON — `Date`s are ISO 8601 strings, because these values also sit in
- * `localStorage` between a tab close and the next drain (CLAUDE.md §6). `wire.ts` converts
- * to and from the `CardState` that `$lib/fsrs` actually schedules with.
+ * Everything here is JSON — `Date`s are ISO 8601 strings. `wire.ts` converts to and from the
+ * `CardState` that `$lib/fsrs` actually schedules with.
  */
 import type { FsrsParams, Grade, State } from '$lib/fsrs';
 
@@ -49,7 +48,23 @@ export interface WireReviewSession {
 	studyDayEnd: string;
 }
 
-/** One entry of the write queue's POST body. The shape is fixed by CLAUDE.md §6. */
+/**
+ * The client's own FSRS result for one grade. Compared against what the server computes,
+ * never stored and never authoritative (CLAUDE.md §2.7).
+ */
+export interface WirePrediction {
+	/** The client's `user_fsrs_params.fsrs_version`. Named in the divergence log line (§6). */
+	fsrsVersion: number;
+	state: WireCardState;
+}
+
+/**
+ * One entry of the write queue's POST body. The shape is fixed by CLAUDE.md §6.
+ *
+ * `id`, `cardId`, `rating`, `reviewedAt` and `durationMs` are the only fields the client is
+ * entitled to assert — *which card, which rating, when*. Everything written to `review_log`
+ * and `user_card_state` is derived server-side from state the server already holds.
+ */
 export interface WireReviewEvent {
 	/** Client-generated UUIDv7. The idempotency key: `ON CONFLICT (id) DO NOTHING`. */
 	id: string;
@@ -57,10 +72,22 @@ export interface WireReviewEvent {
 	rating: Grade;
 	reviewedAt: string;
 	durationMs: number | null;
-	stateBefore: WireCardState;
-	stateAfter: WireCardState;
+	predicted: WirePrediction;
 }
 
 export interface WireReviewBatch {
 	events: WireReviewEvent[];
+}
+
+/** One event's authoritative outcome, echoed back so the client can reconcile its queue. */
+export interface WireReviewResult {
+	id: string;
+	cardId: string;
+	state: WireCardState;
+}
+
+export interface WireReviewBatchResult {
+	/** Events applied by this call. A pure retry applies nothing and is still a 200. */
+	applied: number;
+	results: WireReviewResult[];
 }
