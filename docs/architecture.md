@@ -92,6 +92,7 @@ enshu/
 ├─ CLAUDE.md              working rules, invariants, process
 ├─ README.md              public rationale
 ├─ enshu.md               personal notes digest
+├─ HANDOFF.md             what to pick up next; links every open issue
 ├─ .claude/
 │  ├─ memory/             agent memory — repo-local, gitignored, see CLAUDE.md §19
 │  └─ skills/
