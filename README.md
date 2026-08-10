@@ -2,7 +2,10 @@
 
 > Multiuser, web-based, Anki-compatible spaced repetition — built for classrooms and teams.
 
-**Status:** pre-alpha. Design doc only; no code yet.
+**Status:** pre-alpha, and not yet usable. Phase 1 is largely built — accounts, decks, note
+types, template rendering, the reviewer, and `.apkg` reading — but deck import isn't wired end
+to end, export doesn't exist, and there are no users. Interfaces and storage may still change
+without a migration path.
 
 Enshu is a self-hostable spaced repetition server and web reviewer. It imports and exports
 Anki deck files, uses the same FSRS scheduling algorithm, and — unlike Anki — is multiuser
@@ -74,31 +77,40 @@ would mean:
 The migration case that sync would have served is covered by one-way import. Someone brings
 their collection in once and is done.
 
-**What this costs us:** offline study on a phone via AnkiDroid. Devices are connected most of
-the time, so full offline study is a nice-to-have, not a launch blocker — see below.
+**What this costs us:** offline study on a phone via AnkiDroid. Enshu is a server, and
+studying against it needs a connection — see below.
 
 ### Offline vs. network-independent
 
-These get conflated. They have very different costs.
+These get conflated. They are different things and we want exactly one of them.
 
-**Network-independent review is a Phase 1 requirement.** Not because of offline, but because
-of latency. Reviewing is a tight repetitive loop — show, grade, next — and a UI that blocks
-on a round trip is unusable on any connection worse than perfect. So:
+**Network-independent *grading* is a Phase 1 requirement.** Not for offline's sake, but for
+latency. Reviewing is a tight repetitive loop — show, grade, next — and a UI that blocks on a
+round trip is unusable on any connection worse than perfect. So the client runs `ts-fsrs`
+itself, computes the next interval the instant you press a key, and advances. Nothing in that
+path waits for the network.
 
-- FSRS runs client-side (`ts-fsrs`), computing the next interval locally
-- Grading updates the UI optimistically and enqueues the write
-- The queue drains in the background, batched, with retry
+But the client's answer is a *prediction*, not a decision. The grade goes to the server, the
+server recomputes it independently, and the server's result is what gets stored:
 
-That is just correct architecture for this kind of app, it's cheap, and it happens to make
-brief connection drops invisible. It is also the piece that is **painful to retrofit** — it
-determines the shape of the entire client data flow.
+- **The client never waits** — it schedules locally and moves on.
+- **The client is never believed** — it may assert which card, which rating, and when. Every
+  number that follows is derived server-side.
 
-**Full offline study is deferred.** Pre-caching whole decks and their media, persisting to
-IndexedDB, and resolving multi-device conflicts is where the real cost lives, and it buys
-comparatively little. Worth revisiting for the classroom case specifically — students on
-transit, patchy school wifi, capped data plans — but not before there are users.
+That second rule is what makes the classroom layer worth building. An instructor's view of
+which students are struggling is a report on stored scheduling state; if a browser could write
+that state directly, the report would be self-assessment with extra steps. The server compares
+its answer to the client's on every grade, so a stale tab or a version skew surfaces as a
+logged divergence instead of quietly wrong intervals.
 
-Because scheduling is client-side from day one, the door stays open at near-zero cost.
+**Full offline study is not planned.** Pre-caching whole decks and their media, persisting to
+IndexedDB, and reconciling multi-device conflicts is most of a sync implementation wearing a
+different hat — which is the cost this project already decided not to pay. Local grading is a
+latency property, not a first step toward it.
+
+Nothing about that is a one-way door: review history is the source of truth and the server can
+already rebuild scheduling state by replaying it. If offline ever earns its keep, it can be
+built then, against a foundation that didn't compromise for it.
 
 ---
 
@@ -142,14 +154,15 @@ Two consequences for this codebase:
 | Layer | Choice | Why |
 |---|---|---|
 | Web app | SvelteKit + TypeScript | The reviewer is the product. Keyboard-driven, sub-100ms card flips. Leaves a clean path to a full PWA later without committing to one now. |
-| Scheduling | [`ts-fsrs`](https://github.com/open-spaced-repetition/ts-fsrs) | Runs client-side so grading never blocks on the network; writes are queued and batched. |
+| Scheduling | [`ts-fsrs`](https://github.com/open-spaced-repetition/ts-fsrs) | Runs client-side so grading never blocks on the network, and again server-side, which is where the stored answer comes from. |
 | Database | PostgreSQL + Drizzle | Row-level tenancy, real relational integrity across users/decks/progress. |
 | Deck I/O | Own `.apkg` reader/writer (`sql.js` / `better-sqlite3`) | Full control over the mapping into our schema. |
 
-**Why TypeScript end to end.** Scheduling has to run in the browser for latency and offline.
-That means an FSRS implementation in JS regardless of backend language. Picking Python or Go
-for the server means maintaining two FSRS implementations and keeping them in agreement — a
-correctness hazard for the one thing that must not be wrong.
+**Why TypeScript end to end.** Scheduling runs in the browser for latency, so an FSRS
+implementation in JS exists regardless of backend language. It also runs on the server, which
+is the copy that decides. Picking Python or Go for the server means two implementations of the
+same algorithm kept in agreement by hand — a correctness hazard for the one thing that must
+not be wrong. One language, one `ts-fsrs`, one set of semantics.
 
 Dropping sync also removes the only justification for Rust anywhere in the stack. The whole
 system is now one language, one deployable, one database.
@@ -166,8 +179,9 @@ notes           id, guid, note_type_id, deck_id, fields[], tags[], created, modi
 cards           id, note_id, template_id, ordinal
                 -- content only; NO scheduling state on this row
 
-decks           id, owner_id, name, visibility, forked_from_deck_id
+decks           id, owner_id, name
 deck_access     deck_id, user_id, role (owner|editor|viewer)
+                -- the ONLY way a deck reaches a second user
 
 user_card_state user_id, card_id, due, stability, difficulty,
                 state, reps, lapses, elapsed_days, scheduled_days
@@ -186,41 +200,53 @@ user_fsrs_params user_id, deck_id NULL, fsrs_version, params JSONB,
 > ships. The version column also lets old fitted parameters stay readable after an upgrade.
 
 Everything multiuser follows from `user_card_state` being keyed on `(user_id, card_id)`
-rather than scheduling living on `cards`. Shared decks, classroom cohorts, and deck forking
-that preserves your own progress all fall out of that one choice.
+rather than scheduling living on `cards`. Shared decks, co-authoring with separate histories,
+and classroom cohorts all fall out of that one choice.
 
 Import maps an Anki collection *into* this shape; export flattens it back out for the
 importing user. Both are lossy in one direction only, and both are our code.
 
-### Two things to get right from day one
+### Three things to get right from day one
 
 - **Store Anki's note `guid` on every note.** It is what makes import and re-import
   idempotent. Retrofitting it means every early user's decks duplicate when they re-import.
 - **FSRS parameters are per-user, not global.** Optimised parameters are personal. A
   classroom-wide parameter set is wrong for every individual in it. Optionally scope per
   `(user, deck)` — memory behaviour differs by material.
+- **The server decides what gets stored.** A client may report which card, which rating, and
+  when; scheduling state is derived from that, server-side, every time. This is the one that
+  cannot be added later — state written on a client's word stays unverifiable forever, and the
+  classroom layer is a report on exactly that state.
 
 ---
 
 ## Roadmap
 
 **Phase 1 — Single-user core**
-Accounts, deck CRUD, note types and templates, the reviewer, client-side FSRS with a queued
-write path, `.apkg` import/export. Ship this before anything else. It is a complete product
-for one user.
+Accounts, deck CRUD, note types and templates, the reviewer, local grading against
+server-derived state, `.apkg` import/export. Ship this before anything else. It is a complete
+product for one user.
 
 **Phase 2 — Multiuser**
-Shared decks with `deck_access` roles. Classroom layer: instructor assigns a deck to a
-cohort, sees per-student retention, due counts, and lapse hotspots. Deck forking that
-preserves the fork's `user_card_state`. Public deck directory.
-
-**Deferred, revisit with users**
-Full offline study (deck + media pre-caching, IndexedDB, multi-device conflict resolution).
-Most relevant to the classroom case; cheap to add later because scheduling is already local.
+Shared decks with `deck_access` roles, so two people can co-author a deck while each keeps a
+private review history. Classroom layer: instructor assigns a deck to a cohort, sees
+per-student retention, due counts, and lapse hotspots.
 
 **Explicitly not doing**
-Anki sync protocol. Native mobile apps (the web app is the mobile story). Plugin system.
-LLM-generated cards.
+Each of these is a decision rather than a backlog item:
+
+- **Anki sync protocol** — see above.
+- **Full offline study** (deck + media pre-caching, IndexedDB, multi-device conflict
+  resolution). Enshu is a server. Local grading is a latency property, not a step toward this.
+- **Deck forking** and a **public deck directory**. `deck_access` already covers co-authoring
+  and the classroom, and anyone wanting an outside deck can import its `.apkg`. Worth being
+  precise: export-then-reimport is *not* forking — reimport creates new cards, and your
+  progress is keyed to the old ones, so it doesn't come with you.
+- **Native mobile apps** (the web app is the mobile story).
+- **Plugin system.**
+- **LLM-generated cards**, as a feature that calls a model API on your behalf. A documented
+  paste-in text format, filled by whatever model you already use, is fair game — no API key,
+  no per-token cost, no third party in your study data.
 
 ---
 
@@ -240,9 +266,13 @@ some organisations have blanket policies against AGPL, which can limit instituti
 adoption — a real consideration for something aimed at schools, and a cost we accepted
 knowingly rather than one we missed.
 
-Deck content is a separate matter from code. Shared decks on AnkiWeb carry their own licence
-terms, and redistributing them without permission is something Ankitects has publicly
-objected to. The public deck directory must record and display a licence per deck.
+Deck content is a separate matter from code, and Enshu never redistributes any. Publicly
+shared decks carry their own licence terms, and redistributing them without permission is
+something Ankitects has publicly objected to — so there is no deck catalogue, no directory,
+and no republication. A deck reaches a second person through a `deck_access` row on the
+instance it already lives on, or through a file its owner passed along. Should any
+deck-sharing surface ever cross instances, per-deck licence metadata becomes a prerequisite,
+not an afterthought.
 
 *Not legal advice.*
 

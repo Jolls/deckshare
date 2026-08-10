@@ -1,6 +1,6 @@
 # Data model
 
-Extracted from [CLAUDE.md](../CLAUDE.md) §5. Read this before any schema change, new table,
+Extracted from [architecture.md](architecture.md) §5. Read this before any schema change, new table,
 or query that crosses the content/per-user-state boundary.
 
 Drizzle schema in `src/lib/server/db/schema.ts` is the source of truth; the SQL here is the
@@ -19,8 +19,11 @@ multiuser feature is a consequence of that. See CLAUDE.md §2.
 **UUIDv7 for everything, generated client-side where possible.** Not `serial`, not Anki's
 epoch-millis ints. Rationale:
 
-- The client generates `review_log` rows *before* they reach the server. A client-generated
-  id makes retry idempotent (`ON CONFLICT (id) DO NOTHING`) with no dedup logic.
+- The client generates the *id* of a `review_log` row before it reaches the server, which
+  makes retry idempotent (`ON CONFLICT (id) DO NOTHING`) with no dedup logic. Only the id: the
+  row's contents are derived server-side (CLAUDE.md §2.7), so an id is the one part of a
+  review a client is trusted with — and it is trusted with it precisely because a forged or
+  repeated one can only cause the server to discard a duplicate.
 - Time-ordered, so it indexes like a sequence rather than random UUIDv4.
 - No enumeration of other users' resources from an integer id.
 
@@ -32,9 +35,8 @@ round-trip export fidelity, never used as a key.
 timestamps unique only within one profile. `UNIQUE (owner_id, anki_id)` would therefore
 assert "one user can only ever own one deck with Anki id 1", and the second import would
 silently upsert into the first import's deck — merging two unrelated collections
-unrecoverably. It would also reject a same-owner fork, and merge two genuinely different note
-types, which renders every field into the wrong slot (`notes.fields` is positional, indexed
-by `fields.ordinal`).
+unrecoverably. It would also merge two genuinely different note types, which renders every
+field into the wrong slot (`notes.fields` is positional, indexed by `fields.ordinal`).
 
 So the keys are:
 
@@ -47,7 +49,9 @@ So the keys are:
 
 `notes.owner_id` is denormalised from `decks.owner_id` because a unique index can't span a
 join. It must not drift: moving a note between decks sets it to the new deck's owner. A no-op
-in Phase 1, load-bearing once decks are shared or forked.
+in Phase 1, load-bearing once decks are shared. Nothing enforces the equality at the database
+level today — it holds by convention in the query layer, which is weaker than it should be for
+an import key.
 
 `anki_id` is nullable everywhere and NULLs stay distinct, so rows authored here rather than
 imported collide on nothing — including every row the live write-queue path
@@ -78,12 +82,12 @@ cards       id, note_id, template_id, ordinal, deck_id, anki_id
             -- content addressing ONLY. No due, no ivl, no factor, no state.
             -- UNIQUE (note_id, ordinal)
 
-decks       id, owner_id, name, description, visibility, forked_from_deck_id,
+decks       id, owner_id, name, description,
             preset jsonb, created_at, modified_at, anki_id
-            -- visibility: 'private' | 'public'
             -- UNIQUE (owner_id, name)   <- re-import reuses the owner's deck of that name
 deck_access deck_id, user_id, role, created_at   -- role: 'owner' | 'editor' | 'viewer'
             -- PRIMARY KEY (deck_id, user_id)
+            -- the ONLY thing that makes a deck reachable by a second user
 ```
 
 `notes.fields` as `jsonb` (ordered array of strings) rather than a `note_fields` table:
@@ -115,7 +119,8 @@ user_card_state  user_id, card_id,
                  -- PRIMARY KEY (user_id, card_id)
                  -- INDEX (user_id, due) WHERE NOT suspended   <- the queue query
 
-review_log       id uuid,                  -- client-generated UUIDv7
+review_log       id uuid,                  -- client-generated UUIDv7; every OTHER column is
+                                           -- computed server-side (CLAUDE.md §2.7)
                  user_id, card_id, rating smallint,
                  reviewed_at timestamptz, duration_ms int,
                  state_before smallint, learning_steps_before smallint,
@@ -162,7 +167,8 @@ trailing columns also serve the per-card replay path. `cards.template_id` and
 **`stability` and `difficulty` are `double precision`, not `real`.** `ts-fsrs` rounds them to
 8 decimal places and clamps stability to 36500; `real` holds ~7 significant digits, so a
 value round-tripped through it would not byte-match what the replay path computes in memory.
-That is precisely the silent client/server interval disagreement CLAUDE.md §3 warns about.
+`real` would also put the storage error above the `1e-6` threshold the divergence check uses
+(architecture.md §6), so every grade would report a client/server mismatch that wasn't one.
 
 `user_card_state.learning_steps` mirrors `ts-fsrs`'s `Card.learning_steps`. FSRS-6 short-term
 scheduling reads it, so it has to survive a reload or a `review_log` replay.
@@ -188,7 +194,7 @@ of it.
 Content-addressed and deduplicated across all users:
 
 ```sql
-media_blobs  sha256 pk, size_bytes, mime, created_at    -- bytes on disk/S3 at sha256 path
+media_blobs  sha256 pk, size_bytes, mime, created_at    -- metadata only; bytes live on disk
 media_refs   deck_id, filename, sha256                  -- PRIMARY KEY (deck_id, filename)
 ```
 
@@ -196,8 +202,11 @@ Anki references media by filename inside note fields (`<img src="x.jpg">`), so t
 `(deck_id, filename)` mapping is what rendering resolves against. Two decks shipping an
 identical image store one blob.
 
-Storage backend for self-hosters (filesystem vs S3-compatible) is undecided; content
-addressing makes it swappable, so it can wait.
+**Storage backend is settled: the filesystem**, content-addressed, at
+`${MEDIA_ROOT}/<sha[0:2]>/<sha>`. The database holds metadata rows only and never a `bytea`
+column. S3-compatible stays a drop-in later — the metadata-row-plus-external-bytes shape is
+identical, only "external" changes. See architecture.md §12; the store itself is not built yet
+([#34](https://github.com/Jolls/enshu/issues/34)).
 
 ---
 
@@ -221,9 +230,13 @@ Every query touching a deck takes a `user_id` and joins `deck_access`. Route gua
 sufficient — a shared deck means "readable by some users" is the normal case, not the
 exception.
 
-No cross-user reads without a `deck_access` row. The only exception is
-`decks.visibility = 'public'`, and that grants read of *content*, never of another user's
-`user_card_state`.
+**No cross-user reads without a `deck_access` row, and there are no exceptions.** There is no
+visibility flag and no public-deck carve-out: a deck is reachable by exactly the users holding
+a row, and no role on that row ever grants read of another user's `user_card_state`. One
+authorisation path means one thing to get right and one thing to test.
+
+`user_card_state` and `review_log` are per-user throughout. A deck's content is shared; nobody's
+progress on it ever is.
 
 ---
 

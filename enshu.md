@@ -35,8 +35,9 @@ the other meaning — users actually sharing things.
 
 The load-bearing one. Do **not** adopt Anki's schema. Split content from per-user scheduling
 state, with `user_card_state` keyed on `(user_id, card_id)` rather than scheduling living on
-the `cards` row. Shared decks, cohorts, and progress-preserving deck forks all fall out of
-that single choice. Adopting Anki's schema now and bolting multiuser on later is a rewrite.
+the `cards` row. Shared decks, co-authoring with separate histories, and classroom cohorts all
+fall out of that single choice. Adopting Anki's schema now and bolting multiuser on later is a
+rewrite.
 
 ### Why sync was dropped
 
@@ -53,18 +54,28 @@ offline mobile study via AnkiDroid.
 
 ### Offline vs. network-independent
 
-Deliberately separated, because they get conflated and have very different costs.
+Deliberately separated, because they get conflated and we want exactly one of them.
 
-**Network-independent review is Phase 1** — not for offline's sake but for latency. Reviewing
-is a tight show/grade/next loop, and a UI that blocks on a round trip is unusable on any
-imperfect connection. So FSRS runs client-side, grading updates optimistically, and writes
-queue and drain in the background. Cheap, correct anyway, and painful to retrofit because it
-dictates the whole client data flow.
+**Network-independent *grading* is Phase 1** — not for offline's sake but for latency.
+Reviewing is a tight show/grade/next loop, and a UI that blocks on a round trip is unusable on
+any imperfect connection. So FSRS runs client-side and the UI advances the instant you press a
+key. Painful to retrofit, because it dictates the whole client data flow.
 
-**Full offline study is deferred** — deck and media pre-caching, IndexedDB, multi-device
-conflict resolution. That's where the real cost is, and devices are connected most of the
-time. Worth revisiting for the classroom case (transit, school wifi, capped data), but not
-before there are users. Because scheduling is already local, the door stays open cheaply.
+**But the client's answer is a prediction, not a decision.** Two rules, and they don't fight:
+the client never waits, and the client is never believed. It may assert which card, which
+rating, and when; the server recomputes everything downstream of that and stores its own
+result, comparing the two and logging any divergence.
+
+That second rule is what makes the classroom layer mean anything — an instructor's view of who
+is struggling is a report on stored scheduling state, and if a browser could write that state
+the report would be self-assessment with extra steps. It also can't be added later: state
+written on a client's word is unverifiable forever after.
+
+**Full offline study is not planned** — deck and media pre-caching, IndexedDB, multi-device
+conflict resolution is most of a sync implementation in a different hat, which is the cost
+already declined. Local grading is a latency property, not a first step toward it. Not a
+one-way door either: `review_log` is the source of truth and the server can already rebuild
+state by replaying it.
 
 ### Naming
 
@@ -84,20 +95,26 @@ pun died with the feature, and the romanisation reads cutesy), **Fukushu** (homo
 
 ## Roadmap
 
-- **Phase 1 — single-user core.** Accounts, decks, note types, the reviewer, client-side FSRS
-  with a queued write path, `.apkg` import/export. Complete product for one user.
-- **Phase 2 — multiuser.** Shared decks with roles, classroom cohorts and progress reporting,
-  deck forking, public deck directory.
+- **Phase 1 — single-user core.** Accounts, decks, note types, the reviewer, local grading
+  against server-derived state, `.apkg` import/export. Complete product for one user.
+- **Phase 2 — multiuser.** Shared decks with roles, co-authoring with separate histories,
+  classroom cohorts and progress reporting.
 
-Deferred: full offline study. Explicitly not doing: sync protocol, native mobile apps, plugin
-system, LLM-generated cards.
+Explicitly not doing — decisions, not backlog: sync protocol, full offline study, deck forking,
+a public deck directory, native mobile apps, a plugin system, and LLM-generated cards as a
+feature that calls a model API (a paste-in text format is fine).
+
+Note that export-then-reimport is *not* a substitute for forking: reimport mints new cards and
+progress is keyed to the old ones, so it doesn't survive the trip.
 
 ## Open questions
 
 - Licence: AGPLv3 vs MIT/Apache-2.0. AGPL suits the ecosystem and blocks closed hosted forks,
   but institutional AGPL bans could hurt school adoption. Settle before outside contributions.
 - Native-speaker check on "Enshu".
-- Deck-content licensing for the public directory — AnkiWeb shared decks carry their own terms.
+- ~~Deck-content licensing~~ — closed with the public directory. Enshu never redistributes deck
+  content, so there's no catalogue to attach per-deck licence metadata to. Reopen if any
+  deck-sharing surface ever crosses instances.
 
 ## Links
 

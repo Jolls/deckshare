@@ -1,6 +1,6 @@
 # `.apkg` / `.colpkg` format and mapping
 
-Extracted from [CLAUDE.md](../CLAUDE.md) §7. Read this before touching
+Extracted from [architecture.md](architecture.md) §7. Read this before touching
 `src/lib/server/apkg/`. Companion to the fixtures in `tests/fixtures/apkg/`.
 
 > [!warning]
@@ -67,7 +67,7 @@ whose first four bytes happen to be the zstd magic would be mangled or rejected.
 members are compressed is itself unverified — if a real export turns out to compress media
 too, this is the line to change.)*
 
-**Packages are untrusted input** (shared decks are other users' bytes, CLAUDE.md §8), so the
+**Packages are untrusted input** (shared decks are other users' bytes, architecture.md §8), so the
 reader enforces ceilings on member count, per-member decompressed size and total decompressed
 size, and checks a zstd frame's declared `Frame_Content_Size` *before* decompressing — the
 native decompress call is one uninterruptible allocation, so a post-hoc check is too late.
@@ -193,7 +193,7 @@ Added 2026-08-07 while writing the reader, same unverified status as the rest:
   under `odid`, keeps `did` only as `filteredDeckAnkiId`, and resolves the due date from
   `odue`. See the `cards.due` correction above.
 - **A note's cards can span several decks.** Anki scopes decks to cards; we scope them to notes
-  (`UNIQUE (deck_id, guid)`), so the reader must pick one. Policy: the resolved home deck of
+  (`notes.deck_id` is a single column), so the reader must pick one. Policy: the resolved home deck of
   the note's **lowest-numbered card** — deterministic across re-imports, which a
   majority-of-cards or first-row rule is not. See `IrNote.primaryDeckAnkiId`.
 - **`cards.flags`**: only the low three bits are the flag colour.
@@ -233,8 +233,32 @@ database code runs.
   through `ts-fsrs`, which is better and should be preferred when the log is present.
 - `revlog` becomes `review_log`. It is the user's training data, and importing it is the
   difference between a cold start and a warm one.
-- Re-import matches on `(deck_id, guid)` and **updates rather than inserting**. This is what
+- Re-import matches on `(owner_id, guid)` and **updates rather than inserting**. This is what
   makes re-import idempotent, and it only works because `guid` is stored on every note.
+
+### Anki keeps both current state and full history
+
+Worth being explicit, because it is what makes a warm import possible at all. Anki does **not**
+roll history into a running state and discard it — it keeps two things:
+
+- **Current scheduling state**, on the `cards` row (`due`, `ivl`, `factor`, `reps`, `lapses`,
+  `queue`, `type`, and FSRS memory state inside `cards.data`).
+- **A complete append-only `revlog`**, one row per answer, holding the button pressed, the
+  interval before and after, the answer duration, and the review type.
+
+`revlog` is not pruned in normal use, which is exactly why the FSRS optimiser can fit
+parameters against a collection someone has been using for years. Our split is the same idea
+with the multiuser seam cut through it: their `cards` row becomes our `user_card_state`
+(per user), and their `revlog` becomes our `review_log` (per user, append-only, CLAUDE.md
+§2.5).
+
+> [!warning]
+> **Whether a given export carries `revlog` is a separate question from whether Anki stores
+> it.** A `.colpkg` collection backup includes it; a `.apkg` deck export includes scheduling
+> only when the user ticks the option, and the one real export inspected so far had **0 revlog
+> rows** (see below). So the importer must treat an absent or empty `revlog` as the normal
+> case and fall back to seeding from `cards.data`, not as a malformed package. Exactly which
+> export options produce which tables is unverified — confirm it against fixtures.
 
 ---
 
@@ -251,7 +275,7 @@ represented in an Anki collection. That's fine and expected, but the UI should s
 
 Inspected 2026-08-07 (a widely distributed community geography deck, v53, exported ~2025-04).
 The deck itself is not committed — it is third-party content under its own licence, which is
-exactly the open question in CLAUDE.md §12.
+exactly the open question in architecture.md §12.
 
 Shape: schema 11, legacy container, `meta` = version 2, 1 note type (8 fields, 4 templates),
 2 decks, 319 notes, 978 cards, 0 revlog rows, 546 media files.

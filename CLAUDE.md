@@ -1,11 +1,45 @@
 # CLAUDE.md — Enshu foundation
 
-Working context for agent sessions on this repo. [README.md](README.md) is the public
-rationale ("why these decisions"); [enshu.md](enshu.md) is the personal-notes digest of it.
-**This file is the build spec** — layout, schema, protocols, conventions, and order of work.
+Working context for agent sessions on this repo. **This file is how to work here** — the rules,
+the invariants you must not break, and the process. [docs/architecture.md](docs/architecture.md)
+is what the system *is*: state, stack, layout, protocols, roadmap, glossary. Read it when you
+need the shape of the thing; read this before you touch it.
 
-If a decision here contradicts the README, the README wins on *rationale* and this file wins
-on *mechanics*. If you change a decision, update both.
+[README.md](README.md) is the public rationale ("why these decisions"); [enshu.md](enshu.md) is
+the personal-notes digest of it. If a decision here contradicts the README, the README wins on
+*rationale* and this file wins on *mechanics*. If you change a decision, update both.
+
+**New to the repo?** Start with [architecture.md §1](docs/architecture.md#1-current-state), then §2 — nothing else will make sense before the
+invariants do.
+
+### Section map
+
+Section numbers are a single space split across two files, so a `§N` reference anywhere in the
+codebase resolves to exactly one place. Numbers are stable; they do not get renumbered when a
+section moves.
+
+| | CLAUDE.md — how to work here | | docs/architecture.md — what this is |
+|---|---|---|---|
+| **§2** | [Invariants](#2-invariants--do-not-violate-without-an-explicit-decision) | **§1** | [Current state](docs/architecture.md#1-current-state) |
+| **§9** | [Conventions](#9-conventions) | **§3** | [Stack](docs/architecture.md#3-stack) |
+| **§10** | [Testing](#10-testing) | **§4** | [Repo layout](docs/architecture.md#4-repo-layout) |
+| **§13** | [Trademark guardrail](#13-trademark-guardrail) | **§5** | [Data model](docs/architecture.md#5-data-model) |
+| **§14** | [Branching, commits, releases](#14-branching-commits-releases) | **§6** | [The review loop](docs/architecture.md#6-the-review-loop) |
+| **§15** | [Issue workflow](#15-issue-workflow) | **§7** | [`.apkg` mapping](docs/architecture.md#7-apkg--colpkg-mapping) |
+| **§16** | [Environment and tooling](#16-environment-and-tooling) | **§8** | [Note-type rendering](docs/architecture.md#8-note-type-rendering) |
+| **§17** | [What NOT to touch](#17-what-not-to-touch) | **§11** | [Build order](docs/architecture.md#11-build-order) |
+| **§19** | [Agent memory](#19-agent-memory) | **§12** | [Open questions](docs/architecture.md#12-open-questions) |
+| | | **§18** | [Glossary](docs/architecture.md#18-glossary) |
+| | | **§20** | [Deviations from Anki](docs/architecture.md#20-deviations-from-anki) |
+
+Deeper reference lives one level further out — **ours** in
+[docs/schema.md](docs/schema.md) (full DDL) and
+[docs/schema-diagram.md](docs/schema-diagram.md) (ER diagrams); **Anki's** in
+[docs/anki-schema.md](docs/anki-schema.md) (their tables and columns),
+[docs/anki-schema-diagram.md](docs/anki-schema-diagram.md) (their ER diagrams), and
+[docs/apkg-format.md](docs/apkg-format.md) (the container, and the encoding traps that make
+reading those columns correctly hard). Rule of thumb: *where a value lives* is the schema docs,
+*how to interpret it* is `apkg-format.md`.
 
 ---
 
@@ -47,23 +81,13 @@ on *mechanics*. If you change a decision, update both.
 
 ---
 
-## 1. Current state
-
-**Design phase. Zero lines of code.** No `package.json`, no framework scaffold, no CI.
-
-The next session that writes code is doing greenfield setup. Nothing below is legacy —
-it is all still cheap to change *except* the items in §2, which are expensive by the time
-there are users.
-
----
-
 ## 2. Invariants — do not violate without an explicit decision
 
 These are the load-bearing choices. Each one is cheap now and a rewrite later.
 
 1. **Scheduling state never lives on the `cards` row.** It lives in
    `user_card_state`, primary-keyed `(user_id, card_id)`. Every multiuser feature — shared
-   decks, cohorts, forking with preserved progress — is a consequence of this one fact.
+   decks, co-authoring, classroom cohorts — is a consequence of this one fact.
    Adopting Anki's schema and bolting multiuser on afterwards is a rewrite.
 2. **Every note carries Anki's `guid`, unique per owner.** `UNIQUE (owner_id, guid)` is what
    makes import and re-import idempotent. Retrofitting it duplicates every early user's decks
@@ -78,215 +102,39 @@ These are the load-bearing choices. Each one is cheap now and a rewrite later.
    changes upstream: 17 in FSRS-4.5, 19 in FSRS-5, 21 in FSRS-6.
 4. **Never fit one parameter set across a cohort.** Memory behaviour is individual; a
    class-wide fit is wrong for every member of it.
-5. **`review_log` is training data, not an audit trail.** The optimiser fits against it.
-   It is per-user and it cannot be pruned casually. No `DELETE` paths without a written
-   decision.
-6. **Grading never blocks on the network.** FSRS runs client-side; the UI advances
-   optimistically; writes queue and drain in the background. This shapes the entire client
-   data flow and is the single most painful thing to retrofit.
-7. **No Anki-derived code.** File formats are not copyrightable; the reader/writer is ours.
+5. **`review_log` is training data, not an audit trail.** Append-only, one row per answer,
+   never rolled up into a running total — the same thing Anki's `revlog` is, and for the same
+   reason: the optimiser fits against the full history, so a collection years old can still be
+   refitted. It is per-user and it cannot be pruned casually. No `DELETE` paths without a
+   written decision.
+6. **Grading never blocks on the network.** The client computes FSRS locally and advances the
+   UI immediately — no `await` between the keypress and the next card. This shapes the entire
+   client data flow and is the single most painful thing to retrofit.
+7. **The client asserts what the user did; the server derives what follows.** A grade is a
+   claim about *which card, which rating, when* — nothing more. The server independently
+   recomputes the resulting state and **what the server computes is what gets stored**, in
+   both `user_card_state` and `review_log`. The client's own result drives its UI and is
+   compared, never trusted. See [architecture.md §6](docs/architecture.md#6-the-review-loop).
+   Why this is an invariant and not a preference: trust cannot be retrofitted. State written
+   under a client's authority stays unverifiable forever, and Phase 2's instructor dashboard
+   is a report on exactly that data. A student who can POST their own `stability` is a
+   student whose retention chart means nothing.
+8. **No Anki-derived code.** File formats are not copyrightable; the reader/writer is ours.
    Copying Anki source (AGPLv3) would make the licence question permanent and irreversible.
    Read the format spec and other clean-room parsers, never `ankitects/anki` source.
-8. **No sync protocol.** Settled and closed. Re-opening it re-imports every cost listed in
+9. **No sync protocol.** Settled and closed. Re-opening it re-imports every cost listed in
    the README.
-
----
-
-## 3. Stack
-
-| Concern | Choice | Pinned version | Notes |
-|---|---|---|---|
-| App framework | SvelteKit + TypeScript (strict) | `@sveltejs/kit@^2.63.0`, `svelte@^5.56.1`, `typescript@^6.0.3` | SSR for everything except the reviewer; the reviewer is client-driven. |
-| Scheduler | `ts-fsrs` | `5.4.1` (exact) | Runs on **both** client and server. |
-| Database | PostgreSQL | `postgres:16` (Docker image) | Row-level tenancy via `user_id` columns and explicit query scoping. |
-| ORM / migrations | Drizzle + `drizzle-kit` | `drizzle-orm@^0.45.2`, `drizzle-kit@^0.31.10` | Schema is TypeScript-first; migrations are generated SQL, committed, never edited after merge. |
-| `.apkg` read/write | `better-sqlite3` (server) | `better-sqlite3@13.0.3`, `fflate@0.8.3`, `zstd-napi@0.0.13` (all exact) | `fflate` for zip; `zstd-napi` for zstd-compressed schema 18+ exports — native binding, chosen over `@bokuweb/zstd-wasm` for active maintenance (see git history for the comparison). |
-| Tests | Vitest + Playwright | `vitest@^4.1.8`, `@playwright/test@^1.60.0` | See §10. |
-| Auth | Hand-rolled sessions (Lucia-style) | `@node-rs/argon2@2.0.2` (exact) for password hashing | See §12 for rationale. Lives entirely behind `src/lib/server/auth/`. |
-
-Versions pinned at scaffold time (`feature/3-scaffold`, 2026-08-07). Non-critical-path
-devDependencies (SvelteKit, Drizzle, Vitest, Playwright, ESLint, Prettier) use caret ranges,
-per `package.json`; `ts-fsrs`, the `.apkg` codec deps, and `@node-rs/argon2` are pinned exact
-since a silent version drift there is the correctness/security hazard this file keeps warning
-about.
-
-**One language, end to end.** Scheduling must run in the browser, so an FSRS implementation
-in JS exists regardless of backend language. A Python or Go server would mean two FSRS
-implementations kept in agreement — a correctness hazard for the one thing that must not
-be wrong. Hence TypeScript everywhere.
-
-> **`ts-fsrs` must be the exact same version on client and server.** Record it in
-> `user_fsrs_params.fsrs_version`. A client and server disagreeing about intervals is the
-> worst failure mode this system has, because it is silent.
-
----
-
-## 4. Repo layout
-
-```
-enshu/
-├─ CLAUDE.md              this file
-├─ README.md              public rationale
-├─ enshu.md               personal notes digest
-├─ .claude/
-│  ├─ memory/             agent memory — repo-local, gitignored, see §19
-│  └─ skills/
-├─ docs/
-│  ├─ schema.md           full DDL + rationale (§5 lives here)
-│  ├─ apkg-format.md      Anki format reference (§7 lives here)
-│  └─ plans/              implementation plans, <issue-id>-<slug>.md
-├─ drizzle/               generated migrations (committed, immutable once merged)
-├─ src/
-│  ├─ lib/
-│  │  ├─ server/          NEVER imported by client code — SvelteKit enforces this
-│  │  │  ├─ db/
-│  │  │  │  ├─ schema.ts      Drizzle table definitions (source of truth)
-│  │  │  │  ├─ index.ts       connection/pool
-│  │  │  │  └─ queries/       one module per aggregate: decks, notes, review, access
-│  │  │  ├─ auth/
-│  │  │  ├─ apkg/
-│  │  │  │  ├─ read.ts        .apkg/.colpkg -> IR
-│  │  │  │  ├─ write.ts       IR -> .apkg
-│  │  │  │  ├─ anki-schema.ts Anki's SQLite shapes, schema 11 and 18
-│  │  │  │  └─ media.ts       media map + content-addressed blob store
-│  │  │  └─ fsrs/             server-side scheduling: import backfill, recompute, optimise
-│  │  ├─ fsrs/               ISOMORPHIC scheduling wrappers — used by client and server
-│  │  ├─ review/             review queue, write queue, session state (client)
-│  │  ├─ render/             note-type template rendering ({{Field}}, cloze, conditionals)
-│  │  └─ components/
-│  ├─ routes/
-│  │  ├─ (app)/             authenticated shell
-│  │  │  ├─ decks/
-│  │  │  ├─ study/[deckId]/ the reviewer
-│  │  │  └─ manage/
-│  │  ├─ (auth)/
-│  │  └─ api/               JSON endpoints for the write queue and batch fetches
-│  └─ app.d.ts
-├─ tests/
-│  ├─ fixtures/apkg/      real exports from multiple Anki versions — see §10
-│  └─ e2e/
-└─ scripts/
-```
-
-**Boundary rules**
-
-- **Unit tests are colocated with source** (`foo.ts` + `foo.spec.ts` / `foo.test.ts` in the
-  same directory), not under `tests/unit/`. The scaffold's Vitest project and
-  `.svelte-kit/tsconfig.json` only glob `src/**`, so colocated is what actually runs and
-  typechecks. `tests/` holds only what genuinely lives outside `src/`: apkg fixtures and
-  Playwright e2e specs.
-
-- `src/lib/fsrs/` is isomorphic: pure functions, no DB, no `fetch`, no browser globals. This
-  is what guarantees client and server schedule identically.
-- `src/lib/server/**` is server-only. SvelteKit fails the build if a client module imports it.
-- `src/lib/server/apkg/` produces and consumes an **intermediate representation**, never
-  Drizzle rows directly. Import is `apkg -> IR -> db`, export is `db -> IR -> apkg`. The IR
-  is where format quirks are normalised, and it is what unit tests assert against.
-- Route handlers stay thin: parse, authorise, delegate to `lib/server/db/queries/`, respond.
-
----
-
-## 5. Data model
-
-**Full DDL, rationale, and the migration checklist: [docs/schema.md](docs/schema.md).**
-Read it before any schema change or query crossing the content/per-user-state boundary.
-
-The parts you need without opening it:
-
-- Content tables (`note_types`, `fields`, `templates`, `notes`, `cards`, `decks`,
-  `deck_access`) hold **no scheduling state**. Per-user state is `user_card_state`,
-  PK `(user_id, card_id)`.
-- **UUIDv7 ids, client-generated where possible.** `review_log` rows are created on the
-  client, so a client-generated id makes retry idempotent for free. Anki's numeric ids are
-  kept as `anki_id` columns for export fidelity, never as keys.
-- `notes.guid` + `UNIQUE (owner_id, guid)` is what makes re-import idempotent; decks and note
-  types dedup on `UNIQUE (owner_id, name)`.
-- `review_log` is append-only training data. `user_fsrs_params.params` is a JSON array plus
-  an explicit `fsrs_version`.
-- **The day boundary is not midnight UTC.** It's a per-user rollover hour (default 04:00
-  local, `users.timezone` + `users.day_start_hour`), and it's computed in the query, not the
-  client.
-
----
-
-## 6. The review loop and write queue
-
-This is the part that dictates the client architecture (invariant §2.6). Build it first, and
-build it correctly, because everything else in the client is downstream of it.
-
-**Session start.** One request fetches a batch of due cards — rendered content, media URLs,
-and current `user_card_state` — plus the user's FSRS params. Prefetch the next N cards while
-the current one is displayed. Never fetch per card.
-
-**Grading, synchronously and locally:**
-
-1. `ts-fsrs` computes the next state from the current card state + rating + `now`.
-2. Apply the new state to the in-memory queue and advance the UI immediately.
-3. Append a `ReviewEvent` (client-generated UUIDv7) to a durable local queue.
-4. Return. No `await` on the network anywhere in this path.
-
-**Draining.** A background worker POSTs batches to `/api/reviews/batch` with exponential
-backoff. On success, drop the entries. The queue persists to `localStorage` (or IndexedDB
-once volume warrants) so a tab close mid-session doesn't lose reviews.
-
-**Server contract — must be idempotent.** Same batch twice is a no-op:
-
-```
-POST /api/reviews/batch
-  { events: [{ id, cardId, rating, reviewedAt, durationMs,
-               stateBefore: {...}, stateAfter: {...} }] }
-
-for each event:
-  INSERT INTO review_log (...) ON CONFLICT (id) DO NOTHING
-  UPDATE user_card_state SET <stateAfter>
-    WHERE user_id=$u AND card_id=$c
-      AND (last_review IS NULL OR last_review < $reviewedAt)
-```
-
-The `last_review <` guard makes application order-independent and last-write-wins by *review
-time*, not arrival time — the correctness property that makes a retrying queue safe.
-
-**The server is not the scheduler authority in Phase 1, but it must be able to be.** Keep a
-server-side recompute path that replays `review_log` through `ts-fsrs` to rebuild
-`user_card_state`. It is needed for import backfill, for repairing a client bug, and for
-parameter refits. Never delete it as "unused."
-
----
-
-## 7. `.apkg` / `.colpkg` mapping
-
-**Container layout, both collection schemas, field-level gotchas, and the fixture plan:
-[docs/apkg-format.md](docs/apkg-format.md).** Read it before touching
-`src/lib/server/apkg/`.
-
-The parts you need without opening it:
-
-- `.apkg` is a zip: a SQLite collection, a `media` JSON index-to-filename map, and media
-  files named by index. Two collection schemas must both be readable — 11 (note types and
-  decks as JSON blobs in `col`) and 18+ (real tables).
-- Everything goes through an **IR**: `apkg -> IR -> db`, `db -> IR -> apkg`. Never Drizzle
-  rows directly.
-- Import is idempotent on `(owner_id, guid)`; `revlog` becomes `review_log`, which is the
-  difference between a cold start and a warm one.
-- Two traps that silently produce plausible-looking wrong data: **`cards.due` is
-  days-since-`col.crt` for review cards but a position integer for new ones**, and
-  **`cards.ivl` is days when positive, seconds when negative**.
-- That doc's contents are unverified against a real Anki build. Treat it as a map, not a
-  contract, and correct it in place as fixtures are inspected.
-
----
-
-## 8. Note-type rendering
-
-Anki templates are their own small language, and this is more work than it looks:
-`{{Field}}`, `{{#Field}}…{{/Field}}` and `{{^Field}}` conditionals, `{{FrontSide}}`,
-filters (`{{text:Field}}`, `{{furigana:Field}}`, `{{type:Field}}`), and cloze deletion
-(`{{c1::hidden::hint}}`) where one note generates N cards by cloze ordinal.
-
-Keep it in `src/lib/render/`, isomorphic, pure `(template, fields) -> html`, with a golden-
-file test per construct. **Sanitise on render** — note content is user-authored HTML and
-shared decks mean it is *other users'* HTML. Card content is untrusted input in the
-multiuser model, unlike in Anki where it is always your own.
+10. **Follow Anki's model unless multiuser forces a change.** Anki's shapes are twenty years
+    of a working product, and we have to read and write its files anyway — so matching it is
+    the cheap path *and* the compatible one. Divergence is the thing that needs justifying,
+    not conformance.
+    The test, applied to any difference: **does it trace to the content/progress seam (§2.1)?**
+    Almost every legitimate one does — splitting scheduling off the card row, scoping identity
+    per owner, making the server the scheduling authority, sanitising other people's HTML.
+    A difference that *doesn't* trace back to multiuser is a wheel being reinvented, and it
+    needs its own written reason or it should be changed back. The register of what we do
+    differently, and why, is [architecture.md §20](docs/architecture.md#20-deviations-from-anki)
+    — add a row when you diverge, and do not diverge silently.
 
 ---
 
@@ -295,14 +143,16 @@ multiuser model, unlike in Anki where it is always your own.
 - **TypeScript strict**, `noUncheckedIndexedAccess` on. No `any` in `lib/fsrs/` or
   `lib/server/apkg/` — these are the correctness-critical modules.
 - **Time is `timestamptz`, always UTC in the DB.** Local-time reasoning happens only at the
-  day-boundary calculation (§5) and in display formatting.
+  day-boundary calculation (architecture.md §5) and in display formatting.
 - **Migrations are generated by `drizzle-kit`, committed, and immutable once merged.** Fix
   forward with a new migration; never edit an applied one.
 - **Authorisation is explicit at the query layer.** Every query touching a deck takes a
   `user_id` and joins `deck_access`. Do not rely on route guards alone — a shared deck means
   "readable by some users" is the normal case, not the exception.
-- **No cross-user reads without a `deck_access` row.** The only exception is `visibility =
-  'public'`, and that grants read of *content*, never of another user's `user_card_state`.
+- **No cross-user reads without a `deck_access` row. No exceptions.** There is no public-deck
+  carve-out and no visibility flag — a deck is reachable by exactly the users with a row, and
+  a `deck_access` row never grants read of another user's `user_card_state` regardless of
+  role. One authorisation path, so there is only one thing to get right and one thing to test.
 - Naming: `snake_case` in SQL, `camelCase` in TS, Drizzle handles the mapping.
 - Comment density matches surrounding code. The `apkg` modules earn comments (they encode
   external format facts); route handlers do not.
@@ -313,92 +163,29 @@ multiuser model, unlike in Anki where it is always your own.
 
 Priority order, highest first — this reflects where silent wrongness is most expensive:
 
-1. **FSRS wrapper parity.** The same card + rating + timestamp produces byte-identical state
-   through the client path and the server recompute path. Property-based over random review
-   sequences. If this ever fails, stop and fix it before anything else.
-2. **`.apkg` round-trip.** `import(export(import(f))) == import(f)` for fixture files from
+1. **The client cannot write scheduling state.** A grade whose `predicted` block claims a
+   stability, difficulty, or `due` other than what the server computes must store the
+   server's value and raise a divergence — including when `predicted` is hostile rather than
+   merely stale. This is invariant §2.7, and it is the test that keeps Phase 2's instructor
+   dashboard meaningful. If it ever fails, stop and fix it before anything else.
+2. **FSRS wrapper parity.** The same card + rating + timestamp produces byte-identical state
+   through the client path and the server path. Property-based over random review sequences.
+   Under §2.7 a failure here is a *caught* divergence rather than silent corruption, which is
+   why it now sits below the test that does the catching — but a parity break still means
+   every user is seeing wrong predictions, so treat it as urgent.
+3. **`.apkg` round-trip.** `import(export(import(f))) == import(f)` for fixture files from
    several Anki versions (schema 11 and 18+, with and without FSRS data, with media, with
    cloze, with non-ASCII filenames). **Collect these fixtures early** — they are the hardest
    test asset to produce later and the format is where the unknown-unknowns live.
-3. **Write-queue idempotency.** Replaying a batch, reordering it, and interleaving it with a
-   later review all converge to the same `user_card_state`.
-4. **Access control.** Table-driven: for each (role, resource, operation), assert allow/deny.
+4. **Send idempotency.** Replaying a batch, reordering it, and interleaving it with a later
+   review all converge to the same `user_card_state`.
+5. **Access control.** Table-driven: for each (role, resource, operation), assert allow/deny.
    Add a row on every new endpoint.
-5. **E2E reviewer** (Playwright): keyboard grading, optimistic advance, queue drains, and a
-   session survives the network being cut mid-review.
+6. **E2E reviewer** (Playwright): keyboard grading, optimistic advance, events sent, and a
+   session survives a transient network failure mid-review.
 
 Fixtures go in `tests/fixtures/apkg/` with a README recording which Anki version produced
 each and what it exercises.
-
----
-
-## 11. Build order
-
-**Phase 1 — single-user core.** A complete product for one user; ship before anything else.
-
-1. Scaffold: SvelteKit, TS strict, Postgres, Drizzle, CI running lint + unit tests.
-2. Schema §5 in full — *including* `deck_access` and the `user_id` in `user_card_state`,
-   even though Phase 1 has one user per deck. The columns are free now and structural later.
-3. Auth + accounts.
-4. `lib/fsrs/` isomorphic wrapper + parity tests (§10.1).
-5. Deck / note-type / note / card CRUD.
-6. Template rendering (§8).
-7. **The reviewer and the write queue (§6)** — the piece everything else is downstream of.
-8. `.apkg` import, then export.
-9. Per-user parameter optimisation + desired-retention setting.
-
-**Phase 2 — multiuser.** `deck_access` roles enforced; deck forking that preserves the
-fork's `user_card_state`; classroom cohorts with per-student retention, due counts, and
-lapse hotspots; public deck directory with per-deck licence display.
-
-**Deferred:** full offline study — deck and media pre-caching, IndexedDB, multi-device
-conflict resolution. Cheap to add later precisely because scheduling is already local.
-Revisit when there are classroom users, not before.
-
-**Explicitly not doing:** Anki sync protocol. Native mobile apps. Plugin system.
-LLM-generated cards.
-
----
-
-## 12. Open questions
-
-Unresolved. Do not silently pick one — surface it.
-
-- ~~**Licence.**~~ Settled: AGPL-3.0-or-later. See `LICENSE` and the README's Licensing
-  section.
-- **Parameter optimisation implementation.** `ts-fsrs` schedules but the reference optimiser
-  is Rust (`fsrs-rs`, exposed via `fsrs-rs-nodejs`). Using it reintroduces a native
-  dependency — as a *prebuilt binary*, not a forked codebase, so it costs deployment
-  complexity rather than the maintenance burden that sync would have. Slightly qualifies the
-  README's "no Rust anywhere." Alternatives: pure-TS optimiser (slow, and a correctness
-  surface we said we wouldn't own) or an out-of-process optimiser job. **Decide before step
-  9 of Phase 1** — and step 8 (`.apkg` import) is in flight, so this is the *next* gate, and
-  the only open question left that blocks implementation rather than copy or policy.
-- ~~**Auth library.**~~ Settled: hand-rolled sessions, Lucia-style. Auth.js's value is its
-  OAuth provider ecosystem and adapter abstraction — neither earns its weight here. Phase 1
-  is email/password only (invariant §2.8 rules out any federated-identity-shaped sync
-  surface), and Auth.js's Drizzle adapter is community-maintained and fights our
-  already-decided schema conventions (UUIDv7 ids, the `lower(email)` functional unique
-  index) rather than matching them. Lucia the *package* is archived upstream in favour of a
-  "copy this pattern" guide, so "Lucia-style" means exactly that: a `sessions` table keyed by
-  the SHA-256 hash of a random token (the raw token lives only in the cookie, so a DB read
-  never discloses a usable session), `argon2id` via `@node-rs/argon2` for password hashing,
-  and an explicit `Origin`-header check on state-changing requests for CSRF. Full control,
-  consistent with this project owning its own schema and `.apkg` codec rather than adopting
-  someone else's shape. Kept behind `src/lib/server/auth/` regardless, so it stays
-  reversible.
-- **Native-speaker check on "Enshu."** Connotation is where non-native judgement is least
-  reliable. Renaming a repo is cheap; renaming a product with users and inbound links is not.
-- **Deck-content licensing** for the public directory. Shared decks carry their own terms and
-  Ankitects has objected publicly to redistribution. The directory must record and display a
-  per-deck licence.
-- ~~**Media storage backend.**~~ Settled: **filesystem**, content-addressed, for self-hosted
-  deployment. Bytes live at `${MEDIA_ROOT}/<sha[0:2]>/<sha>`; the database holds metadata rows
-  only (`media_blobs.sha256`/`size_bytes`/`mime`) and never a `bytea` column. This is what Anki
-  itself does, one step further: content-addressed rather than filename-addressed, because two
-  users' decks can each carry a different `image.jpg`. S3-compatible remains a drop-in later —
-  the metadata-row-plus-external-bytes shape is identical, only "external" changes. Implemented
-  in `src/lib/server/media/store.ts` ([#34](https://github.com/Jolls/enshu/issues/34)).
 
 ---
 
@@ -407,9 +194,18 @@ Unresolved. Do not silently pick one — surface it.
 `ANKI` is a registered trademark of Ankitects Pty Ltd and is actively enforced. When writing
 any user-facing copy, docs, or repo metadata:
 
+The line is **descriptive use versus brand use**, not the presence of the word:
+
 - ✅ Descriptive: "Enshu imports Anki decks." Nominative fair use.
 - ⚠️ Never brand anything `Anki<something>`.
-- ❌ Never use `AnkiWeb` — it names the official service and implies affiliation.
+- ❌ Never put `AnkiWeb` in anything that *names us* — repo, product, package, domain, GitHub
+  topics, headings. It is the official service's name, so wearing it implies affiliation
+  outright. `ankiweb-multiuser` was rejected as a project name for exactly this reason.
+- ✅ But naming the service in prose is fine, and sometimes required: contrasting it with
+  Enshu ("AnkiWeb hosts many separate collections; Enshu targets sharing between them"),
+  listing it under prior art, or stating this very rule. That is the same nominative use as
+  "imports Anki decks" — and a rule that forbade it would forbid the README's own trademark
+  section from naming what it is about.
 
 Keep the non-affiliation notice in the README. Findability comes from the GitHub description
 and topics (`anki`, `spaced-repetition`, `fsrs`, `flashcards`, `srs`, `self-hosted`,
@@ -525,31 +321,18 @@ Windows 11, PowerShell primary (Bash tool also available — each takes its own 
 - The invariants in §2 — not without an explicit, recorded decision.
 - Applied migrations in `drizzle/` — immutable once merged. Fix forward.
 - `review_log` — append-only. No `DELETE` path without a written decision (§2.5).
-- `ankitects/anki` source — never read it into this codebase (§2.7). Format specs and
+- `ankitects/anki` source — never read it into this codebase (§2.8). Format specs and
   clean-room parsers only.
-- The server-side recompute path — needed for import backfill, client-bug repair, and
-  parameter refits. Never delete it as "unused" (§6).
-- `lib/fsrs/` must stay isomorphic: no DB, no `fetch`, no browser globals. It is what
-  guarantees client and server schedule identically.
-
----
-
-## 18. Glossary
-
-| Term | Meaning |
-|---|---|
-| **Note** | The content unit a user authors. Has typed fields. |
-| **Card** | One question/answer view generated from a note by a template. A note makes N cards. |
-| **Note type** | Field definitions + templates + CSS. Anki calls this a "model" (`mid`). |
-| **Cloze** | A note type where `{{c1::…}}` markers generate one card per ordinal. |
-| **DSR** | FSRS's memory model: Difficulty, Stability, Retrievability. |
-| **Stability** | Days until recall probability falls to 90%. The memory half-life for a card. |
-| **Retrievability** | Probability of recall right now. Decays with elapsed time. |
-| **Desired retention** | User-set target (e.g. 0.9). The dial that trades workload against recall. |
-| **Lapse** | A review of a `review`-state card rated Again. |
-| **`guid`** | Anki's stable per-note identifier. The idempotency key for import. |
-| **`.apkg` / `.colpkg`** | Anki's deck / full-collection export. Zip of SQLite + media. |
-| **IR** | The intermediate representation between `.apkg` and our schema (§4). |
+- The server-side recompute path — it is the live grading path (§2.7), and it is what import
+  backfill, client-bug repair, and parameter refits all call in bulk. Never delete it as
+  "unused" (architecture.md §6).
+- The divergence check and its counter (architecture.md §6). It is the only thing standing between a stale
+  client and quietly wrong training data, and it is worthless the moment someone "cleans up"
+  the comparison because it never fires. Never firing is the point.
+- `lib/fsrs/` must stay pure: no DB, no `fetch`, no browser globals. Both the client's
+  prediction and the server's authoritative answer come from it, so it has to run in either
+  place — and it must never become the *client's* module with a server copy, or §2.7 quietly
+  stops being enforceable.
 
 ---
 
