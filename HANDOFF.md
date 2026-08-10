@@ -1,8 +1,9 @@
 # Handoff
 
-Where the work stands and what to pick up next. An index, not a narrative — the reasoning
-lives in [CLAUDE.md](CLAUDE.md) and [docs/architecture.md](docs/architecture.md), and the
-detail lives in the issues.
+Scratch notes for starting a fresh session — where the work stands and what to pick up next.
+**Not project documentation**: nothing references this file, nothing depends on it, and it can
+go stale or be deleted without consequence. The reasoning lives in [CLAUDE.md](CLAUDE.md) and
+[docs/architecture.md](docs/architecture.md); the detail lives in the issues.
 
 _Last updated 2026-08-09, after [#38](https://github.com/Jolls/enshu/pull/38)._
 
