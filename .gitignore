@@ -1,13 +1,6 @@
-node_modules
-
-# Output
-.output
-.vercel
-.netlify
-.wrangler
-/.svelte-kit
-/build
-*.local/*
+# Local scratch — also where a real (copyrighted, non-redistributable) .apkg fixture lives
+# during manual inspection; see docs/apkg-format.md. Must never be committed.
+.local/
 
 # OS
 .DS_Store
@@ -17,13 +10,6 @@ Thumbs.db
 .env
 .env.*
 !.env.example
-!.env.test
-
-# Vite
-vite.config.js.timestamp-*
-vite.config.ts.timestamp-*
-# Playwright
-test-results
 
 # Claude Code local settings (machine-specific permissions)
 .claude/settings.local.json

@@ -1,7 +1,7 @@
 # `.apkg` / `.colpkg` format and mapping
 
 Extracted from [architecture.md](architecture.md) §7. Read this before touching
-`src/lib/server/apkg/`. Companion to the fixtures in `tests/fixtures/apkg/`.
+`internal/apkg/` (architecture.md §4). Companion to the fixtures in `tests/fixtures/apkg/`.
 
 > [!warning]
 > **Everything below started as memory, unchecked against a live Anki build.** Treat an
@@ -39,7 +39,7 @@ codebase.
 ✅ **A package can carry more than one collection, and the extra one is a trap.** The verified
 export contains *both* `collection.anki21` (319 notes — the real deck) and `collection.anki2`
 (**1 note**, a "please upgrade" placeholder for pre-2.1 Anki). Picking the wrong member imports
-one note out of hundreds and reports success. `read.ts` prefers `collection.anki21b`, then
+one note out of hundreds and reports success. `read.go` prefers `collection.anki21b`, then
 `collection.anki21`, then `collection.anki2` — newest first — and that order is load-bearing,
 not cosmetic. Regression test: `buildDowngradeStubPackage()`.
 
@@ -55,7 +55,7 @@ legacy container ✅. In the modern (`meta`-carrying, zstd) container it is a **
 ❓, where an entry's *position* in the list is the zip member name that the legacy JSON spelled
 as an object key.
 
-`src/lib/server/apkg/read.ts` therefore does not branch on the package version at all: it
+`internal/apkg/read.go` therefore does not branch on the package version at all: it
 sniffs the zstd frame magic (`28 B5 2F FD`) and sniffs `{` versus a protobuf tag byte for the
 media index. That is deliberate while this document is unverified — deriving the container
 shape from the bytes cannot be wrong about a version number's meaning.
@@ -71,7 +71,7 @@ too, this is the line to change.)*
 reader enforces ceilings on member count, per-member decompressed size and total decompressed
 size, and checks a zstd frame's declared `Frame_Content_Size` *before* decompressing — the
 native decompress call is one uninterruptible allocation, so a post-hoc check is too late.
-See `ArchiveLimits` in `read.ts`.
+See `ArchiveLimits` in `read.go`.
 
 ---
 
@@ -96,8 +96,8 @@ of it has been checked against a real file:
 - Schema 18's configuration columns — `notetypes.config`, `fields.config`,
   `templates.config`, `decks.common`, `decks.kind` — are **protobuf BLOBs, not JSON**. Reading
   a schema-18 collection needs a protobuf decoder, which is why
-  `src/lib/server/apkg/protobuf.ts` exists. The field numbers it is driven by are recorded in
-  `anki-schema.ts` and are themselves unverified.
+  `internal/apkg/protobuf.go` exists. The field numbers it is driven by are recorded in
+  `ankischema.go` and are themselves unverified.
 - **Deck names spell their hierarchy differently in each schema**: schema 11's JSON name uses
   `::`, schema 18's `decks.name` column uses `\x1f`. The IR normalises both to `::`. Missing
   this silently flattens or mangles a deck tree.
@@ -111,14 +111,16 @@ of it has been checked against a real file:
   as real rows. `notes.flds` is indexed by `ord`, so a reader trusting array order maps every
   field value onto the wrong field name — and the two schema readers silently disagree.
 - Real schema-18 collections declare `COLLATE unicase` on the name columns. `better-sqlite3`
-  cannot register that collation, so any query that would *use* it fails. Our readers order by
-  integer id only, which avoids it — but do not add `ORDER BY name`.
+  (the old TypeScript reader's driver) could not register that collation, so any query that
+  would *use* it failed. Whether `modernc.org/sqlite` (the Go reader's driver, architecture.md
+  §4) can register it is unchecked — until verified, keep ordering by integer id only, same as
+  before, and do not add `ORDER BY name`.
 
 ---
 
 ## Field-level gotchas
 
-Handle each of these explicitly in `read.ts`. They are the ones that produce plausible-
+Handle each of these explicitly in `read.go`. They are the ones that produce plausible-
 looking but wrong output if missed:
 
 - `cards.due` means **days since `col.crt`** for review cards, but a **new-card position
@@ -164,7 +166,7 @@ looking but wrong output if missed:
 
   A hold is the one genuinely ambiguous case, because the negative `queue` has replaced the
   queue the card came from. `type = 0` still means a position; otherwise the magnitude is the
-  only signal, and `read.ts` treats `due ≥ 1_000_000_000` as epoch seconds (day offsets are
+  only signal, and `read.go` treats `due ≥ 1_000_000_000` as epoch seconds (day offsets are
   counted from collection creation and stay in the thousands).
 
 - `cards.ivl` is days when positive, **seconds when negative**.
@@ -204,14 +206,14 @@ Added 2026-08-07 while writing the reader, same unverified status as the rest:
   note field it belongs to.
 - **`cards.data`** is JSON with short keys — `pos` (preserved new-card position), `s`, `d`,
   `dr` (FSRS stability, difficulty, desired retention). These key names are among the least
-  verified claims here; `read.ts` treats an unparseable or unrecognised `data` as absent rather
+  verified claims here; `read.go` treats an unparseable or unrecognised `data` as absent rather
   than failing the import.
 
 ---
 
 ## The intermediate representation
 
-`src/lib/server/apkg/` produces and consumes an **IR**, never Drizzle rows directly:
+`internal/apkg/` produces and consumes an **IR**, never `sqlc`-generated rows directly:
 
 ```
 import:  apkg -> IR -> db
@@ -230,7 +232,7 @@ database code runs.
 
 - Cards with FSRS state in `cards.data` map straight into `user_card_state`.
 - Cards with only SM-2 state get seeded — either FSRS defaults, or a replay of `revlog`
-  through `ts-fsrs`, which is better and should be preferred when the log is present.
+  through `go-fsrs`, which is better and should be preferred when the log is present.
 - `revlog` becomes `review_log`. It is the user's training data, and importing it is the
   difference between a cold start and a warm one.
 - Re-import matches on `(owner_id, guid)` and **updates rather than inserting**. This is what

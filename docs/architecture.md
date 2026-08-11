@@ -16,70 +16,101 @@ on *rationale* and this file wins on *mechanics*. If you change a decision, upda
 
 ## 1. Current state
 
-**Phase 1 is most of the way built, and this document is deliberately ahead of the code.**
+**The stack decision changed; the previously-merged code predates it and is superseded.**
 
-Merged: scaffold (#3), schema (#4), `lib/fsrs/` (#5), `lib/render/` + sanitisation (#12, #6),
-auth (#7), CRUD (#8), `.apkg` reader (#9), the reviewer (#13), auth and deck UI (#28, #29),
-re-import dedup keys (#32), server-authoritative grading (#39). Still open: `.apkg`
-import-to-database and export (#33, #10), media (#34), parameter optimisation (#11).
+An earlier TypeScript/SvelteKit/Postgres/Drizzle implementation reached most of Phase 1: scaffold
+(#3), schema (#4), an isomorphic FSRS wrapper (#5), template rendering + sanitisation (#12, #6),
+auth (#7), CRUD (#8), an `.apkg` reader (#9), the reviewer (#13), auth and deck UI (#28, #29),
+re-import dedup keys (#32), and server-authoritative grading (#39). A ground-up re-evaluation of
+the stack (recorded in [docs/plans/architecture-reconsidered.md](plans/architecture-reconsidered.md))
+found that the reasoning which picked TypeScript end-to-end — "FSRS must run in the browser for
+latency, so the server has to share its language" — doesn't hold once the server precomputes all
+four rating outcomes per card at batch-fetch time instead of the client computing them. Once the
+client doesn't need a scheduler, the server language reopens on its own merits, and the
+conclusion is Go, no client-side FSRS, PostgreSQL retained, parameter optimisation deferred out
+of MVP. This file and CLAUDE.md now describe that decision, not the merged TypeScript code.
 
-**The gaps you need to know about.** Where this file and the code disagree, **this file is
-right and the code is stale** — the difference is a recorded decision to change the code, not
-drift to reconcile in the other direction.
+**Nothing here is a migration.** Zero users, and the TypeScript code predates the decision by
+days — there is no reason to carry any of it forward for its own sake.
 
-Specifically, as of 2026-08-10:
-
-- The session loader fetches 100 cards once and never refills — §6 now specifies 20, refilling
-  at 10 unseen remaining.
-- `src/lib/server/db/schema.ts` still defines `deckVisibility`, `visibility` and
-  `forkedFromDeckId`, and `queries/access.ts` still has the `visibility === 'public'` branch
-  that CLAUDE.md §9 says must not exist. A `0005` migration is owed.
-- `src/lib/server/apkg/ir.ts` justifies `IrNote.primaryDeckAnkiId` with `UNIQUE (deck_id, guid)`,
-  a key #32 replaced. See §20 — the fix belongs to #33 and needs no migration.
-- Invariant references in code comments are off by one past §2.6 (old §2.7 → §2.8, §2.8 → §2.9),
-  and §10's testing priorities gained a new #1, so every `§10.N` shifted. A comment reading
-  "CLAUDE.md §6" now names the wrong file, though the number itself is still right.
-
-Zero users, and the project is days old. Everything is cheap to change, so nothing here is
-kept because it is already written — least of all the parts that are (see [CLAUDE.md §14](../CLAUDE.md#14-branching-commits-releases)'s review step,
-and prefer deleting a wrong abstraction to preserving it).
+**The old code is deleted.** `git log` on this repo's history has the full TypeScript
+implementation if anything below turns out to need double-checking against it. Before deletion,
+this file, `schema.md`, and `apkg-format.md` were re-checked against it for anything load-bearing
+that hadn't already made it into the docs — session-cookie hardening, timing-safe login/signup,
+the sanitisation allowlist's XSS-defense rationale, the advisory-lock deadlock-avoidance rule,
+and a card-regeneration data-loss trap among them — and folded in where found. No Go code exists
+yet — the stack table and repo layout below describe the target, not something already
+scaffolded.
 
 ---
 
 ## 3. Stack
 
-| Concern | Choice | Pinned version | Notes |
-|---|---|---|---|
-| App framework | SvelteKit + TypeScript (strict) | `@sveltejs/kit@^2.63.0`, `svelte@^5.56.1`, `typescript@^6.0.3` | SSR for everything except the reviewer; the reviewer is client-driven. |
-| Scheduler | `ts-fsrs` | `5.4.1` (exact) | Runs on **both** client and server. |
-| Database | PostgreSQL | `postgres:16` (Docker image) | Row-level tenancy via `user_id` columns and explicit query scoping. |
-| ORM / migrations | Drizzle + `drizzle-kit` | `drizzle-orm@^0.45.2`, `drizzle-kit@^0.31.10` | Schema is TypeScript-first; migrations are generated SQL, committed, never edited after merge. |
-| `.apkg` read/write | `better-sqlite3` (server) | `better-sqlite3@13.0.3`, `fflate@0.8.3`, `zstd-napi@0.0.13` (all exact) | `fflate` for zip; `zstd-napi` for zstd-compressed schema 18+ exports — native binding, chosen over `@bokuweb/zstd-wasm` for active maintenance (see git history for the comparison). |
-| Tests | Vitest + Playwright | `vitest@^4.1.8`, `@playwright/test@^1.60.0` | See [CLAUDE.md §10](../CLAUDE.md#10-testing). |
-| Auth | Hand-rolled sessions (Lucia-style) | `@node-rs/argon2@2.0.2` (exact) for password hashing | See §12 for rationale. Lives entirely behind `src/lib/server/auth/`. |
+Not yet scaffolded — no Go code exists yet (§1). This table describes the target, decided in
+[docs/plans/architecture-reconsidered.md](plans/architecture-reconsidered.md); the pinned
+versions column fills in once the scaffold session picks them.
 
-Versions pinned at scaffold time (`feature/3-scaffold`, 2026-08-07). Non-critical-path
-devDependencies (SvelteKit, Drizzle, Vitest, Playwright, ESLint, Prettier) use caret ranges,
-per `package.json`; `ts-fsrs`, the `.apkg` codec deps, and `@node-rs/argon2` are pinned exact
-since a silent version drift there is the correctness/security hazard this file keeps warning
-about.
+| Concern | Choice | Notes |
+|---|---|---|
+| Server + HTTP | Go, stdlib `net/http` | No web framework required — most of the app is CRUD over forms and tables. |
+| HTML rendering | `html/template` | Server-rendered; auto-escapes by default, which is most of §8's sanitise-on-render requirement for free. Settled over `templ` — see §12: no meaningful runtime/UX difference either way (the reviewer's felt latency is a client-side JS property, not a rendering one — §6), so the deciding factors were dependency count, no codegen step, and contributor accessibility for a project courting outside contributors. |
+| CSS / interactivity | Pico CSS + htmx | Pico is classless — ships no JS of its own, so there's nothing to conflict with htmx's attribute-driven behaviour (unlike a component library such as Bootstrap, which ships its own JS for modals/dropdowns and can fight a swap that pulls the rug out from under it). htmx drives the CRUD shell entirely: `hx-*` attributes on plain HTML, handlers return HTML fragments instead of JSON, no client-side templating layer to keep in sync with the server's. The reviewer is the one exception — see §6. |
+| Scheduler | `go-fsrs` (targets FSRS v6) | Runs **server-side only.** No client-side FSRS implementation exists — see §6. |
+| Database | PostgreSQL | Row-level tenancy via `user_id` columns and explicit query scoping. Unchanged from the original stack decision — this was never a TypeScript-specific choice. |
+| Typed SQL | `sqlc` | Generates Go structs/queries from real SQL, checked against the schema at compile time. |
+| Migrations | `goose` | Plain SQL up/down files, checked in under `migrations/` — matches CLAUDE.md §9's "committed, generated SQL, immutable once merged, fix forward" convention directly, with no separate declarative-state layer to keep in sync. See §12. |
+| `.apkg` read/write | `modernc.org/sqlite` (pure Go, no cgo), stdlib `archive/zip`, `klauspost/compress/zstd` | No native-binary-per-platform concern, and moot either way since deployment is prebuilt Docker images. |
+| Auth | Hand-rolled sessions | Session token SHA-256-hashed at rest, `argon2id` for password hashing via `alexedwards/argon2id` (a thin wrapper over `golang.org/x/crypto/argon2` with sensible parameter defaults — see §12), `Origin`-header CSRF check. |
+| Tests | Go's `testing` + Playwright | Playwright still applies unchanged — it drives a real browser and doesn't care what rendered the page. See [CLAUDE.md §10](../CLAUDE.md#10-testing). |
+| Lint | `golangci-lint` v2, `linters.default: standard` | Start with the standard set, not `all` — add specific linters as a real gap shows up rather than fighting seventy opinions on day one. See §12. |
+| CI | GitHub Actions | Single workflow: `go build`, `go vet`, `golangci-lint run`, `go test ./...` on push and PR. See §12. |
+| Deploy | Single Go binary + Postgres, Docker / StartOS | Multi-arch Docker builds cross-compile rather than build per-host. Go 1.26 (current stable) — see §12. |
 
-**One language, end to end.** The client schedules locally for its own UI (CLAUDE.md §2.6), so an FSRS
-implementation in JS exists regardless of backend language. A Python or Go server would mean
-two implementations of the same algorithm kept in agreement by hand. Since the server's answer
-is the authoritative one (CLAUDE.md §2.7), that disagreement would be a *scheduling* bug rather than a
-display one. Hence TypeScript everywhere — one `ts-fsrs`, one set of semantics.
+**No FSRS implementation runs in the browser, ever.** A card's outcome under each of the four
+possible ratings is a pure function of its state as of the batch fetch, so the server computes
+all four branches up front and ships them down as data (§6) — the client only looks one up. That
+removed the reasoning that originally picked TypeScript end-to-end ("the client needs a
+scheduler too, so pick one language to avoid two implementations kept in sync by hand"), which is
+why the server language reopened and landed on Go instead: contributor accessibility for an AGPL
+project (Go's learning curve is shallower than Rust's ownership/lifetime model), a clean
+subprocess boundary to `fsrs-rs` if parameter optimisation ever needs it (§12) rather than Go's
+`cgo` FFI story, and a good fit for what most of the app is — boring CRUD rendered server-side.
+Rust end-to-end and Elixir/Phoenix were both seriously considered and are not wrong choices; the
+full evaluation, including the direct check of the `go-fsrs` ecosystem's health and its optimizer
+gap, is in [docs/plans/architecture-reconsidered.md](plans/architecture-reconsidered.md).
 
-> **Run the exact same `ts-fsrs` version on client and server**, and record it in
-> `user_fsrs_params.fsrs_version`. This used to be the system's worst failure mode because it
-> was silent. Under CLAUDE.md §2.7 it isn't silent any more — the server recomputes every grade and a
-> mismatch shows up as a divergence (§6) rather than as quietly wrong intervals. Keep the
-> versions pinned together anyway: the divergence counter is a smoke alarm, not a reason to
-> leave the stove on.
+Dropping client-side FSRS also removes the version-skew failure mode the old callout here warned
+about: there was never a second implementation to drift out of sync with, so there is nothing to
+pin two ways. `user_fsrs_params.fsrs_version` still matters (invariant §2.3) — it's what makes a
+historical `review_log` replay-able after `go-fsrs` upgrades — just not for this reason.
+
+**Don't trust an FSRS library's own parameter validation; check explicitly before calling it.**
+The TypeScript prototype's scheduler (`ts-fsrs`) coerced rather than rejected a bad weight —
+clamping a `NaN` to `0` instead of refusing it, silently substituting a default for a falsy
+`request_retention` — which is exactly the "plausible but wrong, forever" failure invariant §2.3
+exists to prevent: a corrupt optimiser fit or a hand-edited `user_fsrs_params` row would schedule
+happily and wrongly with nothing raised. Verify `go-fsrs`'s validation behaviour before relying
+on it, and if it's similarly permissive, reject explicitly before calling it: wrong parameter
+count for the declared `fsrs_version`, any non-finite weight, `desired_retention` outside `(0,
+1]`.
+
+**Verify `go-fsrs`'s fuzz behaviour and force it off (or deterministic) before relying on
+batch-precompute/grade-time parity.** FSRS's optional "fuzz" randomises an interval slightly; if
+`go-fsrs` seeds it from wall-clock time or another non-reproducible source rather than
+deterministically from the card, the four-branch preview computed at batch-fetch time and the
+same `Repeat()` call re-run at grade time would legitimately disagree — which is precisely the
+drift CLAUDE.md §10.2's consistency test exists to catch, and a random source would make that
+test flaky rather than meaningful. The historical-replay path (`replayReviews`, above) needs the
+same determinism for a different reason: replaying one `review_log` twice must produce the same
+`user_card_state`, or `recomputeUserCardState` isn't actually idempotent.
 
 ---
 
 ## 4. Repo layout
+
+**Provisional — nothing here is scaffolded yet.** Exact package names are open (§12); what
+follows is the shape the layout needs to have, illustrated with placeholder names so the
+boundary rules below have something concrete to refer to.
 
 ```
 enshu/
@@ -96,55 +127,47 @@ enshu/
 │  ├─ anki-schema.md      ANKI's tables and columns — where a value lives
 │  ├─ anki-schema-diagram.md  ANKI's ER diagrams
 │  ├─ apkg-format.md      the .apkg container + encoding traps (§7 lives here)
-│  └─ plans/              implementation plans, <issue-id>-<slug>.md
-├─ drizzle/               generated migrations (committed, immutable once merged)
-├─ src/
-│  ├─ lib/
-│  │  ├─ server/          NEVER imported by client code — SvelteKit enforces this
-│  │  │  ├─ db/
-│  │  │  │  ├─ schema.ts      Drizzle table definitions (source of truth)
-│  │  │  │  ├─ index.ts       connection/pool
-│  │  │  │  └─ queries/       one module per aggregate: decks, notes, review, access
-│  │  │  ├─ auth/
-│  │  │  ├─ apkg/
-│  │  │  │  ├─ read.ts        .apkg/.colpkg -> IR
-│  │  │  │  ├─ write.ts       IR -> .apkg
-│  │  │  │  ├─ anki-schema.ts Anki's SQLite shapes, schema 11 and 18
-│  │  │  │  └─ media.ts       media map + content-addressed blob store
-│  │  │  └─ fsrs/             server-side scheduling: divergence check, import backfill, optimise
-│  │  ├─ fsrs/               ISOMORPHIC scheduling wrappers — used by client and server
-│  │  ├─ review/             review queue, write queue, session state (client)
-│  │  ├─ render/             note-type template rendering ({{Field}}, cloze, conditionals)
-│  │  └─ components/
-│  ├─ routes/
-│  │  ├─ (app)/             authenticated shell
-│  │  │  ├─ decks/
-│  │  │  ├─ study/[deckId]/ the reviewer
-│  │  │  └─ manage/
-│  │  ├─ (auth)/
-│  │  └─ api/               JSON endpoints for the write queue and batch fetches
-│  └─ app.d.ts
+│  └─ plans/              implementation plans and decision records, <slug>.md
+├─ migrations/            generated SQL (committed, immutable once merged)
+├─ cmd/enshu/             main package: wiring, config, server startup
+├─ internal/
+│  ├─ db/                 sqlc-generated queries + a hand-written pool/connection setup
+│  ├─ auth/
+│  ├─ apkg/
+│  │  ├─ read.go           .apkg/.colpkg -> IR
+│  │  ├─ write.go          IR -> .apkg
+│  │  ├─ ankischema.go     Anki's SQLite shapes, schema 11 and 18
+│  │  └─ media.go          media map + content-addressed blob store
+│  ├─ fsrs/                pure scheduling package: wraps go-fsrs, no DB/HTTP/IO
+│  ├─ review/              batch-preview construction, grading, replay
+│  ├─ render/               note-type template rendering ({{Field}}, cloze, conditionals)
+│  └─ http/                 handlers, one file per aggregate: decks, notes, review, access
+├─ web/
+│  └─ templates/           html/template source
 ├─ tests/
-│  ├─ fixtures/apkg/      real exports from multiple Anki versions — see CLAUDE.md §10
-│  └─ e2e/
+│  └─ fixtures/apkg/       real exports from multiple Anki versions — see CLAUDE.md §10
 └─ scripts/
 ```
 
 **Boundary rules**
 
-- **Unit tests are colocated with source** (`foo.ts` + `foo.spec.ts` / `foo.test.ts` in the
-  same directory), not under `tests/unit/`. The scaffold's Vitest project and
-  `.svelte-kit/tsconfig.json` only glob `src/**`, so colocated is what actually runs and
-  typechecks. `tests/` holds only what genuinely lives outside `src/`: apkg fixtures and
-  Playwright e2e specs.
-
-- `src/lib/fsrs/` is isomorphic: pure functions, no DB, no `fetch`, no browser globals. This
-  is what guarantees client and server schedule identically.
-- `src/lib/server/**` is server-only. SvelteKit fails the build if a client module imports it.
-- `src/lib/server/apkg/` produces and consumes an **intermediate representation**, never
-  Drizzle rows directly. Import is `apkg -> IR -> db`, export is `db -> IR -> apkg`. The IR
-  is where format quirks are normalised, and it is what unit tests assert against.
-- Route handlers stay thin: parse, authorise, delegate to `lib/server/db/queries/`, respond.
+- **Unit tests are colocated with source** (`foo.go` + `foo_test.go` in the same package
+  directory), which is Go's own convention, not a repo-specific choice. `tests/` holds only
+  what genuinely lives outside any one package: apkg fixtures and (once the reviewer exists)
+  browser-driven e2e specs.
+- `internal/fsrs/` is pure: no DB, no HTTP, no I/O. This is what lets it be called from every
+  server-side context that needs scheduling — live grading, batch-preview precompute, and
+  history replay — without any of them able to disagree with each other (CLAUDE.md §17).
+- **There is no client/server import boundary to enforce.** The reviewer's client-side code is
+  a small vanilla-JS island, a different language entirely from the Go server — the language
+  barrier itself makes "a client module imports server code" impossible, unlike the old
+  SvelteKit setup where that boundary had to be enforced by the framework.
+- `internal/apkg/` produces and consumes an **intermediate representation**, never
+  `sqlc`-generated rows directly. Import is `apkg -> IR -> db`, export is `db -> IR -> apkg`.
+  The IR is where format quirks are normalised, and it is what unit tests assert against.
+- HTTP handlers stay thin: parse, authorise, delegate to `internal/db` queries, respond. The
+  full planned route surface is [docs/routes.md](routes.md) — update it alongside any handler
+  that adds, renames, or removes a route.
 
 ---
 
@@ -181,9 +204,19 @@ Two rules, and they are not in tension:
 - **The client never waits.** It computes locally, shows the answer, advances (CLAUDE.md §2.6).
 - **The client is never believed.** The server recomputes and stores its own answer (CLAUDE.md §2.7).
 
-The client's copy of `ts-fsrs` exists to make the interface instant. It is a *prediction* of
-what the server will conclude, and it is almost always right — which is exactly why the rare
-case where it isn't must be caught rather than trusted.
+**There is no client-side FSRS implementation.** The server precomputes all four rating outcomes
+for every card in a batch at fetch time and ships them down as data; the client's entire job is
+to look up whichever branch matches the pressed rating and advance instantly. This makes the
+interface just as instant as a client-side scheduler would, without there being a second
+implementation anywhere to keep in agreement with the first — see §3 for why that stopped being
+necessary.
+
+Anki's short-term "learning steps" (e.g. show again in 10 minutes) are a separate, small state
+machine, not FSRS — even in real Anki. Deciding whether a card resurfaces later in *this*
+session needs only the card's already-known state plus the step config, so the client runs a
+lightweight local heuristic for that. It is cosmetic, not authoritative: worst case it's wrong
+by one card's position in a session the user is still sitting in, and nothing about it is ever
+written to `review_log` or `user_card_state`.
 
 ### Fetching cards
 
@@ -191,12 +224,13 @@ case where it isn't must be caught rather than trusted.
 starting values, but the *shape* is not arbitrary and the reasoning is recorded so anyone
 retuning them can tell which way is safe.
 
-**Session start: the first batch rides along with the page load.** The reviewer is a SvelteKit
-route with a `+page.server.ts`, so the batch is part of the document response. There is no
+**Session start: the first batch rides along with the page load.** The reviewer's page handler
+renders the first batch server-side and includes it in the document response. There is no
 separate request for the first card, and therefore nothing to make faster by fetching card 1
 on its own — a card already in the HTML beats any round trip you could shorten. The payload is
-rendered, sanitised card content, each card's `user_card_state`, the user's FSRS params, and
-the study-day end.
+rendered, sanitised card content, each card's `user_card_state`, **the precomputed outcome under
+all four ratings** (`go-fsrs`'s `Repeat()`, one call per card), the user's FSRS params, and the
+study-day end.
 
 | | Value | Why |
 |---|---|---|
@@ -221,12 +255,30 @@ not, and prefetching 20 cards' images is a different problem from prefetching 20
 Until #34 wires the blob store to live decks, the session payload carries no media URLs. When
 it does, prefetch media for the next two or three cards only — not for the batch.
 
+**Client-side shape: hidden cards, htmx for the wire.** Every card in a batch — the initial one
+inline in the page response, every refill — renders as a hidden HTML node (e.g.
+`<article hidden data-card-id>`), each carrying its four precomputed rating branches, not a
+client-side template driven by JSON. A small local JS/TS module owns the in-session queue on top
+of that: which card is current, the local learning-steps requeue decision, unseen-count
+tracking, and toggling `hidden`/revealing the answer. It never touches the network itself.
+Instead it dispatches plain DOM events (`refill-needed`, `card-graded`) at the right moments,
+and htmx attributes listen for those: a hidden element with
+`hx-trigger="refill-needed from:body" hx-get="/reviews/refill" hx-swap="beforeend"` appends the
+next batch's hidden cards, and `hx-post hx-swap="none"` on each rating button sends the graded
+event in the background. htmx owns the two network-touching pieces; the queue module owns
+everything that doesn't touch the wire, and nothing about it waits on a request completing
+before the UI advances (CLAUDE.md §2.6).
+
 **Grading, synchronously and locally:**
 
-1. `ts-fsrs` computes the next state from the current card state + rating + `now`.
-2. Apply the new state to the in-memory queue and advance the UI immediately.
-3. Hand a `ReviewEvent` (client-generated UUIDv7) to the sender.
-4. Return. No `await` on the network anywhere in this path.
+1. Look up the precomputed branch for the pressed rating — no computation, it was already
+   done server-side at batch-fetch time.
+2. Apply it to the in-memory queue; the local learning-steps heuristic above decides whether
+   and where the card resurfaces later this session.
+3. Advance the UI immediately.
+4. Hand a `ReviewEvent` — `{id (client-generated UUIDv7), cardId, rating, reviewedAt,
+   durationMs}` — to the sender.
+5. Return. No `await` on the network anywhere in this path.
 
 **Sending.** Events go out as they are produced, batched only to be kind to mobile radios —
 never to build a durable offline log (§11 rules out offline study). Retry transient failures
@@ -234,20 +286,18 @@ with backoff; the endpoint is idempotent, so a retry after an ambiguous failure 
 safe. Losing a handful of unsent events to a hard crash is acceptable; **storing a wrong one
 is not** — missing rows weaken an optimiser fit, wrong rows corrupt it (CLAUDE.md §2.5).
 
-**Server contract — recompute, compare, store.** Idempotent: the same batch twice is a no-op.
+**Server contract — recompute and store.** Idempotent: the same batch twice is a no-op.
 
 ```
 POST /api/reviews/batch
-  { events: [{ id, cardId, rating, reviewedAt, durationMs,
-               predicted: { fsrsVersion, state } }] }   <- the client's own result,
-                                                           for comparison only
+  { events: [{ id, cardId, rating, reviewedAt, durationMs }] }   <- exactly these fields;
+                                                                     nothing else is read
 
 for each event:
   authorise (user_id, card_id) via deck_access
-  before  := SELECT * FROM user_card_state WHERE user_id=$u AND card_id=$c
-  after   := ts-fsrs.next(before, rating, reviewedAt)     <- the authority
-
-  if diverges(after, event.predicted): log + count (see below). Never change `after`.
+  before   := SELECT * FROM user_card_state WHERE user_id=$u AND card_id=$c
+  outcomes := go-fsrs.Repeat(before, reviewedAt)   <- the same call the batch preview used
+  after    := outcomes[rating]                     <- the authority
 
   INSERT INTO review_log (...) VALUES (<before>, <after>) ON CONFLICT (id) DO NOTHING
   UPDATE user_card_state SET <after>
@@ -258,8 +308,17 @@ for each event:
 ```
 
 `rating`, `reviewedAt`, `durationMs` and `cardId` are the only fields the client is entitled
-to assert. Everything written to `review_log` and `user_card_state` is derived server-side
-from state the server already holds.
+to assert, and the only fields the server reads. Everything written to `review_log` and
+`user_card_state` is derived server-side from state the server already holds — there is no
+`predicted` field on the wire to trust or distrust, because the server is the only place `Repeat`
+ever runs.
+
+Being the only fields read doesn't make them trusted as sent. Parsing them strictly (reject a
+malformed event rather than coercing it) is necessary but not sufficient — `reviewedAt` in
+particular is a believability check against the server's own clock, not a shape check: a client
+clock can be wrong, and a review timestamped in the future would sort ahead of everything else in
+a replay and corrupt `review_log`'s ordering guarantee for that card. Clamp or reject it; don't
+take it on faith just because it parsed.
 
 The `last_review <` guard makes application last-write-wins by *review time*, not arrival
 time — the correctness property that makes a retrying sender safe.
@@ -272,13 +331,18 @@ client's `stateAfter` used to:
   tabs, a redelivered POST — would otherwise both read the same `before` under READ COMMITTED
   and one review would vanish. Advisory rather than `SELECT … FOR UPDATE`, because a card the
   user has never seen has no row to lock, and two concurrent first grades are exactly that case.
+  **Acquire the locks for a batch in a fixed sorted order** (sort the `(user, card)` keys before
+  taking any of them), not in whatever order the batch happens to list its cards — two batches
+  that share more than one card, locking in different orders, is a textbook deadlock, and it is
+  reachable in practice (two tabs open on the same deck, both about to send a batch that
+  overlaps).
 - **Sort the batch by `reviewed_at` before scheduling.** Two grades of the same card in one
   batch have to be applied in the order they happened, so a shuffled batch still converges.
 - **Skip an event whose id is already in `review_log`.** A pure retry must not be rescheduled
-  from the row it already advanced — that would both do nothing (the guard blocks it) and
-  disagree with its own prediction, alarming the divergence counter over normal traffic. The
-  lookup is *not* scoped to `user_id`: `review_log.id` is a global primary key, so an id taken
-  by anyone is taken here, or `ON CONFLICT` would drop the row while its state write landed.
+  from the row it already advanced — recomputing `Repeat()` against the *new* `before` would
+  silently apply the same rating twice. The lookup is *not* scoped to `user_id`:
+  `review_log.id` is a global primary key, so an id taken by anyone is taken here, or
+  `ON CONFLICT` would drop the row while its state write landed.
 - **Replay the card from `review_log` when a batch predates the stored `last_review`.** The
   server cannot derive a truthful `*_before` for a review it is seeing out of order, and
   fabricating one writes permanently wrong training data (§2.5) that no recompute repairs —
@@ -291,23 +355,19 @@ the `*_before` the server genuinely held at that moment, because `review_log` is
 Its `rating` and `reviewed_at` are still exact, which is what a replay and an optimiser fit
 need.
 
-**Divergence handling.** `predicted` is compared, never stored and never authoritative:
-
-- Compare `state`, `reps`, `lapses` exactly; `stability` and `difficulty` within `1e-6`
-  (`ts-fsrs` rounds to 8 decimal places, which is why those columns are `double precision`);
-  `due` to the second.
-- On mismatch: emit a structured log line with `user_id`, `card_id`, both values, and both
-  `fsrs_version`s, and increment a counter. **Do not add a table for this.** The expected rate
-  is zero, so it is an alert condition, not queryable data — a table would imply routine
-  divergence is normal.
-- A nonzero counter means a stale client bundle, a `ts-fsrs` version skew, parameters that
-  never reached the client after a refit, or tampering. All four are bugs to fix, and
-  `replayReviews` (below) repairs whatever they touched.
+**There is no divergence to catch.** The old design had the client submit a `predicted` block
+and the server compare it against its own answer, logging a mismatch. That machinery doesn't
+exist here: the client never computes an FSRS result, so it never asserts one, so there is
+nothing for the server to compare against — a stale tab or a version skew simply gets today's
+correct answer from the server, the same as a fresh one would. What replaces it as a correctness
+check is CLAUDE.md §10.2: the batch-time precompute and the grade-time recompute must agree,
+verified by test, because both call `go-fsrs.Repeat` and a drift between them would mean two
+implementations exist after all.
 
 **The server-side recompute path is load-bearing.** `replayReviews` replays `review_log`
-through `ts-fsrs` to rebuild `user_card_state`. It is what the live path above calls one event
-at a time, *and* what import backfill, parameter refits, and post-incident repair call in bulk.
-Never delete it as "unused."
+through `go-fsrs` to rebuild `user_card_state`. It is what the live path above calls one event
+at a time, what batch-fetch calls to build the four-branch preview, and what import backfill,
+parameter refits, and post-incident repair call in bulk. Never delete it as "unused."
 
 ---
 
@@ -322,15 +382,15 @@ before opening any of them:
 | *How do I interpret it?* — container layout, which schema ships in which export, and the encoding traps | [apkg-format.md](apkg-format.md) |
 | *Where does it go in our schema?* | [schema.md](schema.md) |
 
-Read `apkg-format.md` before touching `src/lib/server/apkg/`.
+Read `apkg-format.md` before touching the `.apkg` reader/writer package (`internal/apkg/` — §4).
 
 The parts you need without opening any of them:
 
 - `.apkg` is a zip: a SQLite collection, a `media` JSON index-to-filename map, and media
   files named by index. Two collection schemas must both be readable — 11 (note types and
   decks as JSON blobs in `col`) and 18+ (real tables).
-- Everything goes through an **IR**: `apkg -> IR -> db`, `db -> IR -> apkg`. Never Drizzle
-  rows directly.
+- Everything goes through an **IR**: `apkg -> IR -> db`, `db -> IR -> apkg`. Never
+  `sqlc`-generated rows directly.
 - Import is idempotent on `(owner_id, guid)`; `revlog` becomes `review_log`, which is the
   difference between a cold start and a warm one.
 - Two traps that silently produce plausible-looking wrong data: **`cards.due` is
@@ -348,10 +408,43 @@ Anki templates are their own small language, and this is more work than it looks
 filters (`{{text:Field}}`, `{{furigana:Field}}`, `{{type:Field}}`), and cloze deletion
 (`{{c1::hidden::hint}}`) where one note generates N cards by cloze ordinal.
 
-Keep it in `src/lib/render/`, isomorphic, pure `(template, fields) -> html`, with a golden-
-file test per construct. **Sanitise on render** — note content is user-authored HTML and
-shared decks mean it is *other users'* HTML. Card content is untrusted input in the
-multiuser model, unlike in Anki where it is always your own.
+Keep it in `internal/render/` (§4), a pure `(template, fields) -> html` package with a
+golden-file test per construct — rendering only ever happens server-side, so there's no
+isomorphism requirement to satisfy.
+
+**Template tags don't nest braces** — a cloze marker lives inside field *content*, not template
+text — so a single non-nested tokenising pass over `{{...}}` is enough; sections
+(`{{#Field}}`/`{{^Field}}`/`{{/Field}}`) are the one construct that needs a stack, matched by
+field name on close. Cloze rendering has a rule easy to get half-right: the active cloze number
+(the card's ordinal) blanks to `[...]` or `[hint]` on the front and reveals highlighted on the
+back, but *every other* cloze number in the field reveals as plain text on **both** sides —
+dropping the "other numbers" case makes a multi-cloze note's non-active clozes vanish instead of
+showing as context.
+
+**Sanitise on render** — note content is user-authored HTML and shared decks mean it is *other
+users'* HTML. Card content is untrusted input in the multiuser model, unlike in Anki where it is
+always your own. The allowlist design that mattered in the TypeScript prototype (`bluemonday` or
+equivalent is the Go analogue of `sanitize-html`) is worth carrying forward as a checklist, since
+each item closes a specific attack, not a generic one:
+
+- **No element with a non-HTML parsing mode** — no `<svg>`/`<math>` (foreign content), no
+  `<style>`/`<script>`/`<template>`/`<textarea>`/`<title>` (raw-text or escapable-raw-text
+  elements). A tokenising sanitiser and a browser's HTML parser disagree about *those* elements
+  specifically, and that disagreement is what mutation XSS exploits — leave them all out and
+  there's no context left where the browser re-parses sanitised text as markup.
+- **Scheme allowlist on URL-bearing attributes** (`http`/`https`/`mailto`) that excludes
+  `javascript:`, `data:`, `vbscript:`, and `file:` by omission — an allowlist that names what's
+  in, not a denylist that has to keep naming what's out.
+- **A CSS value grammar that admits no bare `(`** outside the four colour functions
+  (`rgb`/`rgba`/`hsl`/`hsla`), so `url(...)`, `expression(...)`, and `image-set(...)` stay out
+  even if a URL-accepting property is ever added to the allowed-properties list by mistake later.
+- **`{{type:Field}}`'s answer-input widget is not sanitisable card content.** It renders an
+  `<input>` carrying the expected answer for the reviewer to grade against — an interactive
+  element with no legitimate place in an allowlist built for static card markup. Treat it as a
+  separate insertion the reviewer performs after sanitisation, not as HTML that flows through
+  `sanitiseCardHtml`; conflating the two either lets an `<input>` sneak into the allowlist (attack
+  surface) or the sanitiser silently strips the answer widget (feature that quietly stops
+  working, the more likely outcome if this gets missed).
 
 ---
 
@@ -359,18 +452,21 @@ multiuser model, unlike in Anki where it is always your own.
 
 **Phase 1 — single-user core.** A complete product for one user; ship before anything else.
 
-1. Scaffold: SvelteKit, TS strict, Postgres, Drizzle, CI running lint + unit tests.
+1. Scaffold: Go, Postgres, `sqlc`, CI running `go vet`/lint + unit tests.
 2. Schema §5 in full — *including* `deck_access` and the `user_id` in `user_card_state`,
    even though Phase 1 has one user per deck. The columns are free now and structural later.
 3. Auth + accounts.
-4. `lib/fsrs/` shared wrapper + parity tests (CLAUDE.md §10.2).
+4. `internal/fsrs/` (`go-fsrs` wrapper) + batch-preview/grade-time consistency tests
+   (CLAUDE.md §10.2).
 5. Deck / note-type / note / card CRUD.
 6. Template rendering (§8).
 7. **The reviewer (§6)** — the piece everything else is downstream of.
 8. `.apkg` import, then export.
-9. Per-user parameter optimisation + desired-retention setting.
+9. Desired-retention setting — works against FSRS's default parameters, no fitting required.
+10. Per-user parameter optimisation — **deferred out of MVP** (§12). `review_log` accumulates
+    from day one regardless (invariant §2.5), so this is purely additive whenever it's built.
 
-**Phase 2 — multiuser.** `deck_access` roles enforced; co-authoring a deck while each author
+**Phase 2 — multiuser.** `deck_access` permissions enforced; co-authoring a deck while each author
 keeps a private review history; classroom cohorts with per-student retention, due counts, and
 lapse hotspots. The seam in CLAUDE.md §2.1 is what makes all of it possible, and §2.7 is what makes the
 per-student numbers worth showing.
@@ -403,27 +499,94 @@ Unresolved. Do not silently pick one — surface it.
 
 - ~~**Licence.**~~ Settled: AGPL-3.0-or-later. See `LICENSE` and the README's Licensing
   section.
-- **Parameter optimisation implementation.** `ts-fsrs` schedules but the reference optimiser
-  is Rust (`fsrs-rs`, exposed via `fsrs-rs-nodejs`). Using it reintroduces a native
-  dependency — as a *prebuilt binary*, not a forked codebase, so it costs deployment
-  complexity rather than the maintenance burden that sync would have. Slightly qualifies the
-  README's "no Rust anywhere." Alternatives: pure-TS optimiser (slow, and a correctness
-  surface we said we wouldn't own) or an out-of-process optimiser job. **Decide before step
-  9 of Phase 1** — and step 8 (`.apkg` import) is in flight, so this is the *next* gate, and
-  the only open question left that blocks implementation rather than copy or policy.
-- ~~**Auth library.**~~ Settled: hand-rolled sessions, Lucia-style. Auth.js's value is its
-  OAuth provider ecosystem and adapter abstraction — neither earns its weight here. Phase 1
-  is email/password only (CLAUDE.md invariant §2.9 rules out any federated-identity-shaped sync
-  surface), and Auth.js's Drizzle adapter is community-maintained and fights our
-  already-decided schema conventions (UUIDv7 ids, the `lower(email)` functional unique
-  index) rather than matching them. Lucia the *package* is archived upstream in favour of a
-  "copy this pattern" guide, so "Lucia-style" means exactly that: a `sessions` table keyed by
-  the SHA-256 hash of a random token (the raw token lives only in the cookie, so a DB read
-  never discloses a usable session), `argon2id` via `@node-rs/argon2` for password hashing,
-  and an explicit `Origin`-header check on state-changing requests for CSRF. Full control,
+- **Parameter optimisation implementation.** Settled for MVP: deferred entirely (§11 step 10)
+  — ship FSRS's default parameters. `fsrs-rs` (Rust, built on the `burn` tensor/autodiff
+  framework, what production Anki's own FSRS integration is built on) is the only mature
+  optimiser implementation in the ecosystem; the Python reference (`fsrs-optimizer`/`py-fsrs`)
+  is the only other one — despite the *scheduler* having ten-plus independent ports, nobody has
+  finished porting the optimiser. Not a Phase 1 blocker, but still open: which path to take when
+  it's time. `fsrs-rs` invoked as a subprocess/CLI call from Go is proven and available today;
+  `go-fsrs`'s own PR #34 (pure-Go v6 optimizer, unmerged as of 2026-08) would need zero FFI at
+  all if it matures — worth tracking, and possibly worth contributing to, since Enshu has a
+  direct stake in it landing. Full evaluation:
+  [docs/plans/architecture-reconsidered.md](plans/architecture-reconsidered.md).
+- ~~**Auth library.**~~ Settled: hand-rolled sessions. No OAuth/SSO requirement (Phase 1 is
+  email/password only, and CLAUDE.md invariant §2.9 rules out any federated-identity-shaped
+  sync surface), so a framework's adapter abstraction doesn't earn its weight — full control is
   consistent with this project owning its own schema and `.apkg` codec rather than adopting
-  someone else's shape. Kept behind `src/lib/server/auth/` regardless, so it stays
+  someone else's shape. A `sessions` table keyed by the SHA-256 hash of a random token (the raw
+  token lives only in the cookie, so a DB read never discloses a usable session), `argon2id` for
+  password hashing (`alexedwards/argon2id`, below), and an explicit `Origin`-header check on
+  state-changing requests for CSRF. Kept behind `internal/auth/` (§4) regardless, so it stays
   reversible.
+
+  The superseded TypeScript prototype worked out several mechanics below the "hand-rolled
+  sessions" headline that are easy to skip and cheap to get wrong; carry them into the Go
+  implementation rather than re-deriving them:
+
+  - **Session cookie name is `__Host-`-prefixed.** That prefix requires `Secure`, `Path=/`, and
+    no `Domain` attribute — the browser enforces all three, not just convention — which is what
+    stops a sibling subdomain (a future status page, a blog, anything with its own XSS bug) from
+    setting a same-named cookie that silently rides along to Enshu.
+  - **Sliding expiration, renewed only when it's close to expiring** (e.g. a 30-day lifetime,
+    renewed once under 15 days remain), so a `Set-Cookie` header — and the write it costs — only
+    goes out on the minority of requests that need one, not every request of an active session.
+  - **Login is timing-safe against account enumeration.** Verify a password hash unconditionally,
+    even when no account matches the email — against a fixed dummy `argon2id` hash computed once
+    at startup — so a wrong email and a wrong password take the same time. Any fast-reject (e.g.
+    an oversized input) must be deterministic on the *attacker's own input*, never on whether the
+    account exists, or the fast path itself becomes the oracle.
+  - **Signup is timing-safe the same way**, plus one more thing to get right: the existence check
+    and the password hash both run unconditionally and in parallel, so rejecting a duplicate
+    email costs the same wall-clock time as completing a real signup — skipping the hash on a
+    known duplicate is the ~tens-of-milliseconds gap that turns into an email-enumeration oracle.
+    The existence check is also not atomic with the insert, so a concurrent signup for the same
+    address can race past it — the `UNIQUE (lower(email))` index is the actual guarantee, and the
+    handler's job is only to turn that constraint violation into a clean 409 instead of a 500.
+  - **Login and signup are rate-limited per key** (e.g. per IP or per email) against
+    credential-stuffing and signup-flooding — both are otherwise unlimited-rate endpoints with
+    nothing else in front of them. An in-memory, per-process limiter is the right amount of
+    complexity for Phase 1's single-instance deployment (§3); revisit only if the deployment
+    target goes multi-instance.
+  - **CSRF and session population are enforced once, centrally**, wrapping every request before
+    it reaches a handler — never as a per-handler concern a new route could ship without by
+    forgetting to call it. See CLAUDE.md §9.
+- ~~**Go argon2id package.**~~ Settled (2026-08-11): `alexedwards/argon2id` — a thin wrapper
+  over `golang.org/x/crypto/argon2` (itself the lower-level option, also considered) that
+  enforces the argon2id variant and a cryptographically-secure salt, with sensible parameter
+  defaults. Less hand-written code around a security-critical primitive than building the same
+  wrapper over the raw stdlib-adjacent package would take.
+- ~~**`templ` vs. `html/template`.**~~ Settled (2026-08-11): `html/template`. Both auto-escape
+  by default, which is the property that matters for §8, and neither affects the reviewer's
+  felt latency — that property is entirely a client-side JS/DOM concern (§6), fully decoupled
+  from server rendering by design, so the templating engine only ever touches a one-time
+  initial-batch render and htmx refill fragments, both negligible next to DB/FSRS-compute and
+  network cost either way. The deciding factors were developer-facing, not user-facing: no
+  codegen step (`templ generate`) on top of the `sqlc` one already in the workflow, zero extra
+  dependency, and lower onboarding friction for outside contributors on an AGPL project —
+  against `templ`'s real advantages of compile-time-checked template calls and cleaner
+  component-style reuse of a card-rendering fragment across the initial batch and htmx refills
+  (§6). That reuse point is a genuine defect-surface argument for `templ` (a markup drift
+  between the two render paths is a user-visible bug — refilled cards missing a `data-*`
+  attribute the client's queue module reads), but it's closable with a golden-file test
+  (CLAUDE.md §10-style) regardless of engine, so it didn't tip the decision.
+- ~~**Migration tool.**~~ Settled (2026-08-11): `goose`. `sqlc` generates queries, not
+  migrations — something has to apply the committed SQL in `migrations/` (§4). Chosen over
+  `golang-migrate` (comparable, but goose's own migration files can carry Go functions
+  alongside SQL, which `schema.md`'s data-migration cases may eventually want) and `atlas`
+  (its declarative diff-and-plan model fights CLAUDE.md §9's "committed, generated SQL,
+  immutable once merged, fix forward" convention more than it serves it — Enshu wants
+  hand-authored, reviewable migration files, not an auto-planned diff).
+- ~~**Exact Go package layout.**~~ Settled (2026-08-11): §4's tree, as written, is the target —
+  `internal/db`, `internal/auth`, `internal/apkg`, `internal/fsrs`, `internal/review`,
+  `internal/render`, `internal/http`. Nothing about it was contested; adjust only if the
+  scaffold session hits a concrete reason to.
+- ~~**Go version, lint config, CI platform.**~~ Settled (2026-08-11): Go 1.26 (current stable as
+  of 2026-08, no legacy constraint on a greenfield project), `golangci-lint` v2 with
+  `linters.default: standard` as the starting set (add specific linters as a real gap shows up,
+  not `all` on day one), GitHub Actions running `go build`/`go vet`/`golangci-lint run`/
+  `go test ./...` on push and PR — the natural default given `gh` is already this project's
+  tool of choice.
 - **Native-speaker check on "Enshu."** Connotation is where non-native judgement is least
   reliable. Renaming a repo is cheap; renaming a product with users and inbound links is not.
 - ~~**Deck-content licensing.**~~ Closed by dropping the public deck directory (§11). Enshu
@@ -437,9 +600,10 @@ Unresolved. Do not silently pick one — surface it.
   itself does, one step further: content-addressed rather than filename-addressed, because two
   users' decks can each carry a different `image.jpg`. S3-compatible remains a drop-in later —
   the metadata-row-plus-external-bytes shape is identical, only "external" changes.
-  **The decision is settled; the store is not built** — [#34](https://github.com/Jolls/enshu/issues/34)
-  is still open, and the only media code that exists today is `src/lib/server/apkg/media.ts`,
-  which reads a package's media map during import. There is no `src/lib/server/media/`.
+  **The decision is settled; the store is not built** — [#60](https://github.com/Jolls/enshu/issues/60)
+  is still open, and no Go media code exists yet at all (§1). The superseded TypeScript
+  implementation had a media-map reader for import (`src/lib/server/apkg/media.ts`) but no
+  blob store; the Go equivalent (`internal/apkg/media.go` — §4) starts from the same gap.
 
 ---
 
@@ -477,7 +641,7 @@ seemed tidier."
 | | Anki | Enshu |
 |---|---|---|
 | Scheduling state | On the `cards` row, alongside the content pointer | `user_card_state`, keyed `(user_id, card_id)` (§2.1) |
-| Grading authority | No client/server boundary exists — it is a local app | Server recomputes and decides (§2.7). Anki never faced this question; multiuser creates it |
+| Grading authority | No client/server boundary exists — it is a local app | Server recomputes and decides (§2.7), and is the *only* place FSRS ever runs — there's no client copy to diverge from (§6). Anki never faced this question; multiuser creates it |
 | Note identity | `guid`, unique within the one collection | `UNIQUE (owner_id, guid)`. A collection *is* one user, so owner-scoping is the same rule restated under multiuser |
 | Row ids | Epoch-millis integers, unique per collection | UUIDv7; Anki's ids kept as `anki_id` for export fidelity. Per-collection ids cannot key across users — deck id 1 is `Default` in every collection ever made |
 | Card HTML | Trusted: it is always your own content | Sanitised on render (§8). A shared deck is *other users'* HTML |
@@ -492,6 +656,11 @@ seemed tidier."
 | Add-ons | Plugin API | No plugin system (§11) |
 
 ### Unforced — obsolete, and due for removal
+
+*The specific identifiers below (`IrNote.primaryDeckAnkiId`, `src/lib/server/apkg/ir.ts`) name
+the superseded TypeScript importer (§1). The data-model conclusion is language-independent and
+is the design the Go importer should follow: file `cards.deck_id` from each card's own home
+deck, never flattened to the note's deck.*
 
 **One note, one deck.** First, the cardinality, because it is easy to misread: **a card belongs
 to exactly one deck** — `cards.did` is a single column, and so is our `cards.deck_id`. We match

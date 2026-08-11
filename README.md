@@ -2,9 +2,11 @@
 
 > Multiuser, web-based, Anki-compatible spaced repetition — built for classrooms and teams.
 
-**Status:** pre-alpha, and not yet usable. Phase 1 is largely built — accounts, decks, note
-types, template rendering, the reviewer, and `.apkg` reading — but deck import isn't wired end
-to end, export doesn't exist, and there are no users. Interfaces and storage may still change
+**Status:** pre-alpha, restarting on a new stack. An earlier TypeScript/SvelteKit implementation
+reached most of Phase 1 — accounts, decks, note types, template rendering, the reviewer, `.apkg`
+reading — before a ground-up re-evaluation moved the server to Go and dropped client-side FSRS
+entirely (see [docs/plans/architecture-reconsidered.md](docs/plans/architecture-reconsidered.md)).
+No Go code has been written yet. There are no users. Interfaces and storage may still change
 without a migration path.
 
 Enshu is a self-hostable spaced repetition server and web reviewer. It imports and exports
@@ -86,22 +88,24 @@ These get conflated. They are different things and we want exactly one of them.
 
 **Network-independent *grading* is a Phase 1 requirement.** Not for offline's sake, but for
 latency. Reviewing is a tight repetitive loop — show, grade, next — and a UI that blocks on a
-round trip is unusable on any connection worse than perfect. So the client runs `ts-fsrs`
-itself, computes the next interval the instant you press a key, and advances. Nothing in that
-path waits for the network.
+round trip is unusable on any connection worse than perfect. So the server precomputes the
+outcome of every possible rating for each card up front, and the client looks up the one that
+matches the instant you press a key, and advances. Nothing in that path waits for the network,
+and nothing in it runs a scheduler either — there is no FSRS implementation in the browser.
 
-But the client's answer is a *prediction*, not a decision. The grade goes to the server, the
-server recomputes it independently, and the server's result is what gets stored:
+But the client's grade is an *assertion*, not a decision. It goes to the server, which
+recomputes the result independently, and the server's result is what gets stored:
 
-- **The client never waits** — it schedules locally and moves on.
+- **The client never waits** — it looks up a precomputed answer and moves on.
 - **The client is never believed** — it may assert which card, which rating, and when. Every
   number that follows is derived server-side.
 
 That second rule is what makes the classroom layer worth building. An instructor's view of
 which students are struggling is a report on stored scheduling state; if a browser could write
-that state directly, the report would be self-assessment with extra steps. The server compares
-its answer to the client's on every grade, so a stale tab or a version skew surfaces as a
-logged divergence instead of quietly wrong intervals.
+that state directly, the report would be self-assessment with extra steps. There's nothing for
+the server to compare against, either — the client never computed a result to submit, so a
+stale tab or a version skew just gets today's correct answer from the server, the same as a
+fresh one would.
 
 **Full offline study is not planned.** Pre-caching whole decks and their media, persisting to
 IndexedDB, and reconciling multi-device conflicts is most of a sync implementation wearing a
@@ -119,7 +123,7 @@ built then, against a foundation that didn't compromise for it.
 Enshu schedules with **FSRS** (Free Spaced Repetition Scheduler), the open-source algorithm
 developed by Jarrett Ye and the [open-spaced-repetition](https://github.com/open-spaced-repetition)
 group and integrated into Anki since 23.10. We use it as-is via
-[`ts-fsrs`](https://github.com/open-spaced-repetition/ts-fsrs).
+[`go-fsrs`](https://github.com/open-spaced-repetition/go-fsrs), server-side only.
 
 FSRS models each card with three variables (the DSR model):
 
@@ -153,19 +157,32 @@ Two consequences for this codebase:
 
 | Layer | Choice | Why |
 |---|---|---|
-| Web app | SvelteKit + TypeScript | The reviewer is the product. Keyboard-driven, sub-100ms card flips. Leaves a clean path to a full PWA later without committing to one now. |
-| Scheduling | [`ts-fsrs`](https://github.com/open-spaced-repetition/ts-fsrs) | Runs client-side so grading never blocks on the network, and again server-side, which is where the stored answer comes from. |
-| Database | PostgreSQL + Drizzle | Row-level tenancy, real relational integrity across users/decks/progress. |
-| Deck I/O | Own `.apkg` reader/writer (`sql.js` / `better-sqlite3`) | Full control over the mapping into our schema. |
+| Server | Go, server-rendered HTML | Most of the app is boring CRUD — decks, note types, rosters — not something that needs a SPA framework. A small vanilla-JS island drives the reviewer only. |
+| Scheduling | [`go-fsrs`](https://github.com/open-spaced-repetition/go-fsrs) | Server-side only — the server precomputes every rating's outcome for each card up front and ships the results down as data; the client looks one up, never computes. |
+| Database | PostgreSQL + `sqlc` | Row-level tenancy, real relational integrity across users/decks/progress, typed queries checked against the schema at compile time. |
+| Deck I/O | Own `.apkg` reader/writer (`modernc.org/sqlite`, pure Go) | Full control over the mapping into our schema; no native-binary-per-platform concern either way, since deployment is prebuilt Docker images. |
 
-**Why TypeScript end to end.** Scheduling runs in the browser for latency, so an FSRS
-implementation in JS exists regardless of backend language. It also runs on the server, which
-is the copy that decides. Picking Python or Go for the server means two implementations of the
-same algorithm kept in agreement by hand — a correctness hazard for the one thing that must
-not be wrong. One language, one `ts-fsrs`, one set of semantics.
+**Why Go.** A card's outcome under each of the four possible ratings depends only on its state
+as of the batch fetch — a pure function, nothing session-specific — so the server can compute
+all four up front and hand them down as plain data. That means **no FSRS implementation needs
+to run in the browser, ever**, which removes the reasoning that originally picked TypeScript
+end to end ("the client needs a scheduler too, so pick one language and avoid two
+implementations kept in sync by hand"). Once the client doesn't need a scheduler, the server
+language reopens on its own merits. Raw performance doesn't differentiate the choice — this is
+a self-hosted classroom tool, not something anyone will stress that hard — but three things do:
+contributor accessibility for an AGPL project that wants outside contributors (a shallower
+learning curve than Rust's ownership/lifetime model), a clean subprocess boundary to `fsrs-rs`
+if parameter optimisation ever needs it, rather than Go's `cgo` FFI story, and a good fit for
+an app that's mostly server-rendered forms and tables, where Go's `html/template` auto-escapes
+by default. Rust end to end and Elixir/Phoenix were both seriously considered and aren't wrong
+choices either — see
+[docs/plans/architecture-reconsidered.md](docs/plans/architecture-reconsidered.md) for the full
+evaluation, including a direct check of the FSRS ecosystem's implementation health.
 
-Dropping sync also removes the only justification for Rust anywhere in the stack. The whole
-system is now one language, one deployable, one database.
+Dropping client-side FSRS also drops the client/server divergence-comparison machinery this
+README used to describe: with only one implementation, there's nothing to diverge from. Rust
+stays out of the stack in the MVP either way — the optimiser (the one place it could enter, as
+an external `fsrs-rs` subprocess) is deferred out of scope for now; see the architecture doc.
 
 ### The schema decision
 
@@ -180,7 +197,10 @@ cards           id, note_id, template_id, ordinal
                 -- content only; NO scheduling state on this row
 
 decks           id, owner_id, name
-deck_access     deck_id, user_id, role (owner|editor|viewer)
+deck_access     deck_id, user_id,
+                can_view, can_study, can_edit_content,
+                can_edit_settings, can_manage_access, can_delete
+                -- six independent per-(user, deck) permissions, not a role enum
                 -- the ONLY way a deck reaches a second user
 
 user_card_state user_id, card_id, due, stability, difficulty,
@@ -228,9 +248,9 @@ server-derived state, `.apkg` import/export. Ship this before anything else. It 
 product for one user.
 
 **Phase 2 — Multiuser**
-Shared decks with `deck_access` roles, so two people can co-author a deck while each keeps a
-private review history. Classroom layer: instructor assigns a deck to a cohort, sees
-per-student retention, due counts, and lapse hotspots.
+Shared decks with per-user `deck_access` permissions, so two people can co-author a deck while
+each keeps a private review history. Classroom layer: instructor assigns a deck to a cohort,
+sees per-student retention, due counts, and lapse hotspots.
 
 **Explicitly not doing**
 Each of these is a decision rather than a backlog item:
@@ -305,7 +325,7 @@ Repo:        enshu
 Description: Multiuser, web-based spaced repetition for classrooms and teams.
              FSRS scheduling, Anki deck import/export.
 Topics:      anki, spaced-repetition, fsrs, flashcards, srs, self-hosted,
-             education, classroom, sveltekit
+             education, classroom, go
 ```
 
 ### Why Enshu, and what was rejected

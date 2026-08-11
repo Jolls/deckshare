@@ -33,8 +33,9 @@ section moves.
 | | | **§20** | [Deviations from Anki](docs/architecture.md#20-deviations-from-anki) |
 
 Deeper reference lives one level further out — **ours** in
-[docs/schema.md](docs/schema.md) (full DDL) and
-[docs/schema-diagram.md](docs/schema-diagram.md) (ER diagrams); **Anki's** in
+[docs/schema.md](docs/schema.md) (full DDL),
+[docs/schema-diagram.md](docs/schema-diagram.md) (ER diagrams), and
+[docs/routes.md](docs/routes.md) (the planned HTTP route surface); **Anki's** in
 [docs/anki-schema.md](docs/anki-schema.md) (their tables and columns),
 [docs/anki-schema-diagram.md](docs/anki-schema-diagram.md) (their ER diagrams), and
 [docs/apkg-format.md](docs/apkg-format.md) (the container, and the encoding traps that make
@@ -64,8 +65,8 @@ reading those columns correctly hard). Rule of thumb: *where a value lives* is t
 
 5. **Tests after bug fixes/features:** suggest a regression test when it'd meaningfully catch
    breakage (non-obvious edge cases, silent-break logic) — briefly, and only write if user
-   agrees. Skip for trivial/UI-only/well-covered changes. Exception: anything touching
-   `lib/fsrs/` or `lib/server/apkg/` always ships a test — see §10.
+   agrees. Skip for trivial/UI-only/well-covered changes. Exception: anything touching the
+   FSRS scheduling package or the `.apkg` reader/writer always ships a test — see §10.
 
 6. **Token-Efficient Messages:** terse, no preamble/restating/unrequested trailing summary,
    no just-in-case caveats. Alternatives welcome (standard/idiomatic ones) but skip esoteric
@@ -73,11 +74,11 @@ reading those columns correctly hard). Rule of thumb: *where a value lives* is t
    genuinely distinct parts. Bullet/Outline style communication is preferred.
 
 7. **Model Selection:** default Sonnet. Suggest Opus once (don't repeat if user stays on
-   Sonnet) for: schema changes, the FSRS wrapper or scheduling semantics, `.apkg`
+   Sonnet) for: schema changes, the FSRS scheduling package or scheduling semantics, `.apkg`
    reader/writer work, cross-cutting architecture (auth, DB layer, template rendering, the
-   write queue), security review (auth/CSRF/session/input validation/HTML sanitisation),
-   refactors spanning `lib/server/` + `lib/fsrs/` + `routes/`. Not for routine feature
-   work/bugfixes/UI/pattern-following handlers.
+   batch-preview/grading path), security review (auth/CSRF/session/input validation/HTML
+   sanitisation), refactors spanning the server package, the FSRS package, and HTTP handlers.
+   Not for routine feature work/bugfixes/UI/pattern-following handlers.
 
 ---
 
@@ -107,14 +108,18 @@ These are the load-bearing choices. Each one is cheap now and a rewrite later.
    reason: the optimiser fits against the full history, so a collection years old can still be
    refitted. It is per-user and it cannot be pruned casually. No `DELETE` paths without a
    written decision.
-6. **Grading never blocks on the network.** The client computes FSRS locally and advances the
-   UI immediately — no `await` between the keypress and the next card. This shapes the entire
-   client data flow and is the single most painful thing to retrofit.
+6. **Grading never blocks on the network.** The server precomputes the outcome of all four
+   ratings for every card in a batch at fetch time; the client looks up whichever branch
+   matches the pressed rating and advances the UI immediately — no `await` between the
+   keypress and the next card, and no FSRS computation ever runs in the browser. This shapes
+   the entire client data flow and is the single most painful thing to retrofit.
 7. **The client asserts what the user did; the server derives what follows.** A grade is a
    claim about *which card, which rating, when* — nothing more. The server independently
    recomputes the resulting state and **what the server computes is what gets stored**, in
-   both `user_card_state` and `review_log`. The client's own result drives its UI and is
-   compared, never trusted. See [architecture.md §6](docs/architecture.md#6-the-review-loop).
+   both `user_card_state` and `review_log`. The client's precomputed branch drives its UI only
+   — it is never submitted with the grade and there is nothing to compare it against, because
+   the server is the only place FSRS ever runs. See
+   [architecture.md §6](docs/architecture.md#6-the-review-loop).
    Why this is an invariant and not a preference: trust cannot be retrofitted. State written
    under a client's authority stays unverifiable forever, and Phase 2's instructor dashboard
    is a report on exactly that data. A student who can POST their own `stability` is a
@@ -140,22 +145,25 @@ These are the load-bearing choices. Each one is cheap now and a rewrite later.
 
 ## 9. Conventions
 
-- **TypeScript strict**, `noUncheckedIndexedAccess` on. No `any` in `lib/fsrs/` or
-  `lib/server/apkg/` — these are the correctness-critical modules.
+- **`go vet` and the linter clean, errors always checked.** No swallowed errors (`_ = err`) and
+  no `any`/`interface{}` escape hatches in the FSRS scheduling package or the `.apkg`
+  reader/writer — these are the correctness-critical packages.
 - **Time is `timestamptz`, always UTC in the DB.** Local-time reasoning happens only at the
   day-boundary calculation (architecture.md §5) and in display formatting.
-- **Migrations are generated by `drizzle-kit`, committed, and immutable once merged.** Fix
-  forward with a new migration; never edit an applied one.
+- **Migrations are committed, generated SQL, and immutable once merged.** Fix forward with a
+  new migration; never edit an applied one. Migration tool: `goose` — see architecture.md §12.
 - **Authorisation is explicit at the query layer.** Every query touching a deck takes a
-  `user_id` and joins `deck_access`. Do not rely on route guards alone — a shared deck means
-  "readable by some users" is the normal case, not the exception.
+  `user_id` and joins `deck_access`. Do not rely on handler-level guards alone — a shared deck
+  means "readable by some users" is the normal case, not the exception.
 - **No cross-user reads without a `deck_access` row. No exceptions.** There is no public-deck
   carve-out and no visibility flag — a deck is reachable by exactly the users with a row, and
-  a `deck_access` row never grants read of another user's `user_card_state` regardless of
-  role. One authorisation path, so there is only one thing to get right and one thing to test.
-- Naming: `snake_case` in SQL, `camelCase` in TS, Drizzle handles the mapping.
-- Comment density matches surrounding code. The `apkg` modules earn comments (they encode
-  external format facts); route handlers do not.
+  no combination of that row's permission flags ever grants read of another user's
+  `user_card_state`. One authorisation path, so there is only one thing to get right and one
+  thing to test.
+- Naming: `snake_case` in SQL, Go-idiomatic field casing in generated structs — `sqlc` handles
+  the mapping.
+- Comment density matches surrounding code. The `apkg` package earns comments (it encodes
+  external format facts); HTTP handlers do not.
 
 ---
 
@@ -163,24 +171,27 @@ These are the load-bearing choices. Each one is cheap now and a rewrite later.
 
 Priority order, highest first — this reflects where silent wrongness is most expensive:
 
-1. **The client cannot write scheduling state.** A grade whose `predicted` block claims a
-   stability, difficulty, or `due` other than what the server computes must store the
-   server's value and raise a divergence — including when `predicted` is hostile rather than
-   merely stale. This is invariant §2.7, and it is the test that keeps Phase 2's instructor
-   dashboard meaningful. If it ever fails, stop and fix it before anything else.
-2. **FSRS wrapper parity.** The same card + rating + timestamp produces byte-identical state
-   through the client path and the server path. Property-based over random review sequences.
-   Under §2.7 a failure here is a *caught* divergence rather than silent corruption, which is
-   why it now sits below the test that does the catching — but a parity break still means
-   every user is seeing wrong predictions, so treat it as urgent.
+1. **The client cannot write scheduling state.** The grade batch endpoint accepts exactly
+   `{id, cardId, rating, reviewedAt, durationMs}`; any other field in the request body
+   (a `stability`, a `due`, anything else) must be ignored, never read into
+   `user_card_state` or `review_log`. This is invariant §2.7, and it is the test that keeps
+   Phase 2's instructor dashboard meaningful. If it ever fails, stop and fix it before
+   anything else.
+2. **Batch-preview / grade-time consistency.** The four rating branches precomputed and shipped
+   at batch-fetch time match what the server independently recomputes at grade time for the
+   same prior state (property-based over random review sequences). Both call the same FSRS
+   package, so there is only one implementation to get right — a mismatch here means the
+   precompute path and the grading path have drifted apart, which is exactly the
+   two-implementations risk this design exists to avoid. A mismatch is a stale-preview UX bug,
+   not corrupted data, since the grade-time recompute is always what gets stored.
 3. **`.apkg` round-trip.** `import(export(import(f))) == import(f)` for fixture files from
    several Anki versions (schema 11 and 18+, with and without FSRS data, with media, with
    cloze, with non-ASCII filenames). **Collect these fixtures early** — they are the hardest
    test asset to produce later and the format is where the unknown-unknowns live.
 4. **Send idempotency.** Replaying a batch, reordering it, and interleaving it with a later
    review all converge to the same `user_card_state`.
-5. **Access control.** Table-driven: for each (role, resource, operation), assert allow/deny.
-   Add a row on every new endpoint.
+5. **Access control.** Table-driven: for each (permission, resource, operation), assert
+   allow/deny. Add a row on every new endpoint.
 6. **E2E reviewer** (Playwright): keyboard grading, optimistic advance, events sent, and a
    session survives a transient network failure mid-review.
 
@@ -209,7 +220,7 @@ The line is **descriptive use versus brand use**, not the presence of the word:
 
 Keep the non-affiliation notice in the README. Findability comes from the GitHub description
 and topics (`anki`, `spaced-repetition`, `fsrs`, `flashcards`, `srs`, `self-hosted`,
-`education`, `classroom`, `sveltekit`), not from the name.
+`education`, `classroom`, `go`), not from the name.
 
 ---
 
@@ -222,7 +233,8 @@ name. Naming: `feature/<issue-id>-<short-slug>` when the work maps to a GitHub i
 
 **Pre-commit sequence:**
 
-1. Typecheck, lint, and unit tests pass (`svelte-check`, ESLint, `vitest run`).
+1. Build, vet, lint, and unit tests pass (`go build ./...`, `go vet ./...`, `golangci-lint run`,
+   `go test ./...`).
 2. If the schema changed, the generated migration is committed and applies cleanly to a fresh
    database.
 3. Present a multi-select question for review passes to run (recommend based on diff risk,
@@ -313,26 +325,26 @@ Windows 11, PowerShell primary (Bash tool also available — each takes its own 
 - Line endings: set `.gitattributes` (`* text=auto eol=lf`) at scaffold time so this repo
   never develops the mixed CRLF/LF problem. Do it in the first commit — retrofitting it
   rewrites every file.
+- Go-specific, once the scaffold exists: `go generate` regenerates `sqlc` output — run it and
+  commit the result, don't hand-edit generated files. Docker images are multi-arch, so builds
+  cross-compile (`GOOS`/`GOARCH`), not just build for the host.
 
 ---
 
 ## 17. What NOT to touch
 
 - The invariants in §2 — not without an explicit, recorded decision.
-- Applied migrations in `drizzle/` — immutable once merged. Fix forward.
+- Applied migrations — immutable once merged. Fix forward.
 - `review_log` — append-only. No `DELETE` path without a written decision (§2.5).
 - `ankitects/anki` source — never read it into this codebase (§2.8). Format specs and
   clean-room parsers only.
-- The server-side recompute path — it is the live grading path (§2.7), and it is what import
-  backfill, client-bug repair, and parameter refits all call in bulk. Never delete it as
-  "unused" (architecture.md §6).
-- The divergence check and its counter (architecture.md §6). It is the only thing standing between a stale
-  client and quietly wrong training data, and it is worthless the moment someone "cleans up"
-  the comparison because it never fires. Never firing is the point.
-- `lib/fsrs/` must stay pure: no DB, no `fetch`, no browser globals. Both the client's
-  prediction and the server's authoritative answer come from it, so it has to run in either
-  place — and it must never become the *client's* module with a server copy, or §2.7 quietly
-  stops being enforceable.
+- The server-side recompute path — it is the live grading path (§2.7), and it is what
+  batch-preview generation, import backfill, client-bug repair, and parameter refits all call
+  in bulk. Never delete it as "unused" (architecture.md §6).
+- The FSRS scheduling package must stay pure: no DB, no HTTP, no I/O. It's called from every
+  server-side context that needs scheduling — live grading, batch-preview precompute,
+  history replay, and (later) parameter fitting — and it must never grow a dependency that
+  would make those call sites able to disagree with each other.
 
 ---
 

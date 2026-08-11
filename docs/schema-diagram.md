@@ -128,7 +128,12 @@ erDiagram
     DECK_ACCESS {
         uuid deck_id PK,FK
         uuid user_id PK,FK
-        text role "owner | editor | viewer"
+        bool can_view
+        bool can_study
+        bool can_edit_content
+        bool can_edit_settings
+        bool can_manage_access
+        bool can_delete
         timestamptz created_at
     }
 
@@ -365,7 +370,7 @@ deck_id)`, which is why it's absent from the edges above.
 ## Access & sharing
 
 `deck_access` as the join table between users and decks — the only way a deck reaches someone
-who doesn't own it. Small, but the shape Phase 2 multiuser work (roles, co-authoring,
+who doesn't own it. Small, but the shape Phase 2 multiuser work (permissions, co-authoring,
 classroom cohorts) builds on.
 
 ```mermaid
@@ -390,7 +395,12 @@ erDiagram
     DECK_ACCESS {
         uuid deck_id PK,FK
         uuid user_id PK,FK
-        text role "owner | editor | viewer"
+        bool can_view
+        bool can_study
+        bool can_edit_content
+        bool can_edit_settings
+        bool can_manage_access
+        bool can_delete
         timestamptz created_at
     }
 ```

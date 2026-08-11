@@ -3,6 +3,56 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.5] - 2026-08-10
+
+Documentation only. Reconciles the docs with a ground-up stack re-evaluation
+(`docs/plans/architecture-reconsidered.md`) that found FSRS never needs to run in the browser —
+a card's outcome under each rating is a pure function of its state at batch-fetch time, so the
+server can precompute all four and ship them as data — which removed the reasoning that
+originally picked TypeScript end to end. No Go code has been written; the previously-merged
+TypeScript/SvelteKit implementation is superseded, not migrated.
+
+### Changed
+- Server stack: TypeScript/SvelteKit/Drizzle → Go/`sqlc`, server-rendered HTML. PostgreSQL is
+  unchanged — it was never a TypeScript-specific choice
+- Scheduling: `ts-fsrs` (client + server) → `go-fsrs` (server-side only, via `Repeat()` for
+  batch-preview and grading alike)
+- CLAUDE.md invariants §2.6/§2.7 reworded: the client looks up a precomputed rating branch
+  instead of computing FSRS locally, and asserts only `{id, cardId, rating, reviewedAt,
+  durationMs}` — there is no `predicted` field to compare
+- `docs/architecture.md` §6 rewritten around the precompute-once/look-up-and-grade contract;
+  §1, §3, §4, §7, §8, §11, §12, §20 updated to match
+- README's stack table and "why TypeScript" section replaced with the Go rationale; `enshu.md`
+  follows
+- CLAUDE.md §9/§10/§14/§16/§17 updated for Go tooling and the new testing surface
+  (batch-preview/grade-time consistency replaces client/server FSRS parity)
+- Deeper-reference docs (`docs/schema.md`, `docs/apkg-format.md`, `docs/anki-schema.md`) no
+  longer cite `drizzle-kit`, `better-sqlite3`, or TypeScript file paths — pointed at the Go
+  repo layout instead, and the `better-sqlite3` collation caveat is marked unverified under
+  the new `modernc.org/sqlite` driver rather than restated as fact
+- architecture.md §12's remaining scaffold-blocking open questions settled: `html/template`
+  over `templ` (no runtime/UX difference — the reviewer's felt latency is a client-side JS
+  property, not a rendering one; decided on dependency count and contributor accessibility
+  instead), `goose` for migrations (plain SQL files fit CLAUDE.md §9's "committed, immutable,
+  fix forward" convention more directly than `atlas`'s declarative-diff model), and
+  `alexedwards/argon2id` for password hashing. Also newly recorded: Go 1.26, `golangci-lint`
+  v2 with the `standard` linter set, and GitHub Actions for CI. §4's package layout confirmed
+  as the scaffold target rather than illustrative
+- Filed 15 Go-track issues (#49–#63) against architecture.md §11's Phase 1 build order, plus a
+  tracking issue (#64), now that all TS-era issues are closed as superseded. `architecture.md`,
+  `routes.md`, and `schema.md` repointed from the closed #15/#34 to their live replacements
+  (#51, #60)
+- `tests/fixtures/apkg/README.md`: replaced the vague "collect fixtures early" reminder with a
+  concrete four-export plan covering every dimension `apkg-format.md`'s Fixtures section asks
+  for from one small hand-built Anki collection, and reframed the synthetic-fixture builder as
+  Go test-helper code belonging to #58, not a standalone script producing committed binaries —
+  a synthetic schema-18 fixture built ahead of a real one would just bake today's unverified
+  spec guesses into something that looks authoritative
+
+### Removed
+- The `predicted`-field / divergence-counter design (architecture.md §6, CLAUDE.md §17) — with
+  a single server-side FSRS implementation there is nothing to diverge from
+
 ## [0.1.4] - 2026-08-10
 
 ### Changed

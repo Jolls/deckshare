@@ -26,54 +26,56 @@ architecture.md §12. Findings are recorded in words in
 confirmed", and the two real-world traps it exposed are now covered by synthetic regression
 tests (`buildDowngradeStubPackage()`).
 
-**Still wanted: any schema-18 export** — a `.colpkg`, or an `.apkg` exported with "support
-older Anki versions" turned *off*. That is the one fixture that would close issue #25. A
-self-made deck of two notes is enough; it does not need to be anyone's real collection, which
-also sidesteps the licensing problem entirely.
+**Nothing is committed yet — zero fixtures of any kind, real or synthetic.** Even the schema-11
+findings folded into `docs/apkg-format.md` came from the geography deck above, which can never be
+committed. The repo currently has no fixture it's actually allowed to test against.
+
+### What to export, and why this specific set
+
+One small hand-built collection, four exports, covers every dimension `docs/apkg-format.md`'s
+Fixtures section asks for (schema 11 and 18+; with and without FSRS data; media; cloze; non-ASCII
+filenames; `.colpkg` as well as `.apkg`) without a combinatorial number of files:
+
+1. Build a tiny test collection in Anki: a **Basic** note type with 2–3 notes (attach an image to
+   one, and rename another media file to something non-ASCII, e.g. `café.png` or `画像.png`,
+   before attaching it), a **Cloze** note type with at least one note carrying `{{c1::}}` and
+   `{{c2::}}` in the same field (exercises the "other cloze numbers show as plain text" rule in
+   architecture.md §8), and a handful of real reviews on some of them (press Again/Good a few
+   times) so `revlog` and `cards.data` carry real FSRS state — Anki defaults to FSRS since 23.10,
+   so this falls out naturally.
+2. Export four ways from that one collection:
+   - `.apkg`, **"Support older Anki versions" checked** (schema 11, legacy container), **scheduling
+     checked** → schema 11 + FSRS + cloze + media + non-ASCII, one file.
+   - `.apkg`, **"Support older Anki versions" unchecked** (schema 18+, modern/zstd container),
+     scheduling checked → the fixture that closes [#61](https://github.com/Jolls/enshu/issues/61)
+     (verifying the protobuf field numbers `apkg-format.md` currently marks ❓).
+   - Same as above, **scheduling unchecked** → covers "without FSRS data" for schema 18.
+   - Full collection **`.colpkg`** export → always carries `revlog`; exercises the `.colpkg`
+     container path specifically, which nothing else here does.
+3. Drop all four in this directory, fill in the table above, and correct `docs/apkg-format.md` in
+   place wherever a fixture disagrees with what it currently guesses.
 
 ---
 
-## Synthetic fixtures — `synthetic.ts`
+## Synthetic fixtures
 
-> **These are not real Anki exports.** No Anki build was available when the reader was written
-> (`feature/9-apkg-reader`), so `synthetic.ts` builds packages **to the description in
-> [`docs/apkg-format.md`](../../../docs/apkg-format.md)**, which is itself explicitly
-> unverified (architecture.md §7). Every claim they encode — table DDL, JSON member names, protobuf
-> field numbers, `cards.data` key names — is that document's claim, written by the same hands
-> that wrote the reader.
+The superseded TypeScript reader had a `synthetic.ts` that built packages to the description in
+[`docs/apkg-format.md`](../../../docs/apkg-format.md) — schema 11 and schema 18 variants of the
+same logical collection, plus adversarial cases (out-of-`ord`-order field/template arrays, a
+filtered-deck card with `due`/`odue` far enough apart that reading the wrong column can't pass by
+coincidence). It was removed with the rest of that implementation (architecture.md §1).
 
-What they can prove: the reader is self-consistent with the documented format. Both schemas
-converge on one IR, the `due` and `ivl` encodings are normalised, media is deduplicated and
-NFC-normalised, and the zstd/protobuf container unwraps.
+**Rebuild its equivalent in Go, as test-helper code inside [#58](https://github.com/Jolls/enshu/issues/58)
+(`.apkg` import), not as a standalone script producing committed binaries.** A synthetic fixture
+is only as trustworthy as the spec it's built from, and `apkg-format.md` marks most of schema 18
+❓ — unverified against a real export. Hand-building a synthetic schema-18 fixture ahead of a real
+one risks baking today's guess into a "fixture" that looks authoritative but just tests itself.
+The real exports above are what actually close those ❓ marks; synthetic fixtures are for the
+adversarial cases no real export will conveniently contain (malformed `ord` arrays, `due`/`odue`
+far enough apart to catch a column mix-up), which is exactly what makes them worth building as
+parameterizable Go code rather than a handful of static files. See `docs/apkg-format.md`'s
+Fixtures section for what made the TS-era fixtures worth having and the two properties worth
+keeping adversarial.
 
-What they cannot prove: that the documented format is right. **The protobuf field numbers in
-`src/lib/server/apkg/anki-schema.ts` are the sharpest edge** — a synthetic fixture writes them
-with the same constants it reads them with, so a wrong number passes every test here and
-produces an empty or garbled note type against a real export.
-
-Both builders encode the *same* logical collection, which is what makes the schema-convergence
-test meaningful.
-
-| Builder | Schema | Container | Exercises |
-|---|---|---|---|
-| `buildSchema11Package()` | 11 | plain zip, JSON media index | note types/decks as `col` JSON blobs, `::` deck names |
-| `buildSchema18Package()` | 18 | zstd collection + media index, uncompressed media, `meta`, protobuf media index | `notetypes`/`fields`/`templates`/`decks` tables, protobuf configs, `\x1f` deck names |
-| `buildSchema18ClaimWithoutTablesPackage()` | claims 18, has none | plain zip | `col.ver` lying about the layout — the reader must decide from table presence |
-| `buildDowngradeStubPackage()` | 11 | plain zip, two collections | `collection.anki21` (full) beside a one-note `collection.anki2` downgrade stub — **modelled on a real export**, not invented |
-
-Shared content: two note types (one standard with three fields and three templates, one
-cloze), three decks including a filtered one and a subdeck, two notes (one with non-ASCII
-content, empty trailing field and surrounding-space tags; one cloze), eight cards covering
-every `cards.due` and `cards.ivl` case, two `revlog` rows with positive and negative
-intervals, FSRS state in `cards.data`, and three media files — one duplicated by content under
-two names, one with an NFD non-ASCII filename.
-
-Two details are deliberately adversarial and should stay that way:
-
-- The filtered-deck card's `due` (`-12345`) and `odue` (`7`) are far apart, so a reader that
-  takes the wrong column cannot pass by coincidence.
-- One note type's `flds` and one note type's `tmpls` are listed **out of `ord` order**. Without
-  that, the schema-convergence test cannot notice a reader that trusts array order.
-
-**Replace these with real exports as soon as one is available**, and correct
+**Replace synthetic fixtures with real exports as soon as one is available**, and correct
 `docs/apkg-format.md` in place wherever the two disagree.
