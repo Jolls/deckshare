@@ -53,15 +53,18 @@ versions column fills in once the scaffold session picks them.
 | Concern | Choice | Notes |
 |---|---|---|
 | Server + HTTP | Go, stdlib `net/http` | No web framework required — most of the app is CRUD over forms and tables. |
-| HTML rendering | `html/template` or `templ` | Server-rendered; auto-escapes by default, which is most of §8's sanitise-on-render requirement for free. Choice between the two is open — §12. |
+| HTML rendering | `html/template` | Server-rendered; auto-escapes by default, which is most of §8's sanitise-on-render requirement for free. Settled over `templ` — see §12: no meaningful runtime/UX difference either way (the reviewer's felt latency is a client-side JS property, not a rendering one — §6), so the deciding factors were dependency count, no codegen step, and contributor accessibility for a project courting outside contributors. |
 | CSS / interactivity | Pico CSS + htmx | Pico is classless — ships no JS of its own, so there's nothing to conflict with htmx's attribute-driven behaviour (unlike a component library such as Bootstrap, which ships its own JS for modals/dropdowns and can fight a swap that pulls the rug out from under it). htmx drives the CRUD shell entirely: `hx-*` attributes on plain HTML, handlers return HTML fragments instead of JSON, no client-side templating layer to keep in sync with the server's. The reviewer is the one exception — see §6. |
 | Scheduler | `go-fsrs` (targets FSRS v6) | Runs **server-side only.** No client-side FSRS implementation exists — see §6. |
 | Database | PostgreSQL | Row-level tenancy via `user_id` columns and explicit query scoping. Unchanged from the original stack decision — this was never a TypeScript-specific choice. |
-| Typed SQL | `sqlc` | Generates Go structs/queries from real SQL, checked against the schema at compile time. Migration tool (to pair with it) is open — §12. |
+| Typed SQL | `sqlc` | Generates Go structs/queries from real SQL, checked against the schema at compile time. |
+| Migrations | `goose` | Plain SQL up/down files, checked in under `migrations/` — matches CLAUDE.md §9's "committed, generated SQL, immutable once merged, fix forward" convention directly, with no separate declarative-state layer to keep in sync. See §12. |
 | `.apkg` read/write | `modernc.org/sqlite` (pure Go, no cgo), stdlib `archive/zip`, `klauspost/compress/zstd` | No native-binary-per-platform concern, and moot either way since deployment is prebuilt Docker images. |
-| Auth | Hand-rolled sessions | Session token SHA-256-hashed at rest, `argon2id` for password hashing (specific Go package open — §12), `Origin`-header CSRF check. See §12 for the full rationale — unchanged in substance from the original decision, just no longer tied to a `@node-rs/argon2`-shaped implementation. |
+| Auth | Hand-rolled sessions | Session token SHA-256-hashed at rest, `argon2id` for password hashing via `alexedwards/argon2id` (a thin wrapper over `golang.org/x/crypto/argon2` with sensible parameter defaults — see §12), `Origin`-header CSRF check. |
 | Tests | Go's `testing` + Playwright | Playwright still applies unchanged — it drives a real browser and doesn't care what rendered the page. See [CLAUDE.md §10](../CLAUDE.md#10-testing). |
-| Deploy | Single Go binary + Postgres, Docker / StartOS | Multi-arch Docker builds cross-compile rather than build per-host. |
+| Lint | `golangci-lint` v2, `linters.default: standard` | Start with the standard set, not `all` — add specific linters as a real gap shows up rather than fighting seventy opinions on day one. See §12. |
+| CI | GitHub Actions | Single workflow: `go build`, `go vet`, `golangci-lint run`, `go test ./...` on push and PR. See §12. |
+| Deploy | Single Go binary + Postgres, Docker / StartOS | Multi-arch Docker builds cross-compile rather than build per-host. Go 1.26 (current stable) — see §12. |
 
 **No FSRS implementation runs in the browser, ever.** A card's outcome under each of the four
 possible ratings is a pure function of its state as of the batch fetch, so the server computes
@@ -140,7 +143,7 @@ enshu/
 │  ├─ render/               note-type template rendering ({{Field}}, cloze, conditionals)
 │  └─ http/                 handlers, one file per aggregate: decks, notes, review, access
 ├─ web/
-│  └─ templates/           html/template or templ source (§12)
+│  └─ templates/           html/template source
 ├─ tests/
 │  └─ fixtures/apkg/       real exports from multiple Anki versions — see CLAUDE.md §10
 └─ scripts/
@@ -513,7 +516,7 @@ Unresolved. Do not silently pick one — surface it.
   consistent with this project owning its own schema and `.apkg` codec rather than adopting
   someone else's shape. A `sessions` table keyed by the SHA-256 hash of a random token (the raw
   token lives only in the cookie, so a DB read never discloses a usable session), `argon2id` for
-  password hashing (specific Go package: open, below), and an explicit `Origin`-header check on
+  password hashing (`alexedwards/argon2id`, below), and an explicit `Origin`-header check on
   state-changing requests for CSRF. Kept behind `internal/auth/` (§4) regardless, so it stays
   reversible.
 
@@ -548,19 +551,42 @@ Unresolved. Do not silently pick one — surface it.
   - **CSRF and session population are enforced once, centrally**, wrapping every request before
     it reaches a handler — never as a per-handler concern a new route could ship without by
     forgetting to call it. See CLAUDE.md §9.
-- **Go argon2id package.** Not yet picked — candidates include `golang.org/x/crypto/argon2`
-  (stdlib-adjacent, lower-level) and higher-level wrappers like `alexedwards/argon2id`. Decide
-  when auth is scaffolded (§11 step 3).
-- **`templ` vs. `html/template`.** Both auto-escape by default, which is the property that
-  matters for §8. `html/template` is stdlib, zero extra dependency; `templ` gives compile-time-
-  checked, component-shaped templates at the cost of a code-generation step. Decide when
-  rendering is scaffolded (§11 step 6).
-- **Migration tool.** `sqlc` generates queries, not migrations — something has to apply the
-  committed SQL in `migrations/` (§4). Not yet picked. Decide when the schema is scaffolded
-  (§11 step 2).
-- **Exact Go package layout.** §4's tree is illustrative, not decided — `internal/` package
-  boundaries, whether `review/` and `http/` split the way shown, and where the batch-preview
-  construction actually lives are all open until the scaffold session settles them.
+- ~~**Go argon2id package.**~~ Settled (2026-08-11): `alexedwards/argon2id` — a thin wrapper
+  over `golang.org/x/crypto/argon2` (itself the lower-level option, also considered) that
+  enforces the argon2id variant and a cryptographically-secure salt, with sensible parameter
+  defaults. Less hand-written code around a security-critical primitive than building the same
+  wrapper over the raw stdlib-adjacent package would take.
+- ~~**`templ` vs. `html/template`.**~~ Settled (2026-08-11): `html/template`. Both auto-escape
+  by default, which is the property that matters for §8, and neither affects the reviewer's
+  felt latency — that property is entirely a client-side JS/DOM concern (§6), fully decoupled
+  from server rendering by design, so the templating engine only ever touches a one-time
+  initial-batch render and htmx refill fragments, both negligible next to DB/FSRS-compute and
+  network cost either way. The deciding factors were developer-facing, not user-facing: no
+  codegen step (`templ generate`) on top of the `sqlc` one already in the workflow, zero extra
+  dependency, and lower onboarding friction for outside contributors on an AGPL project —
+  against `templ`'s real advantages of compile-time-checked template calls and cleaner
+  component-style reuse of a card-rendering fragment across the initial batch and htmx refills
+  (§6). That reuse point is a genuine defect-surface argument for `templ` (a markup drift
+  between the two render paths is a user-visible bug — refilled cards missing a `data-*`
+  attribute the client's queue module reads), but it's closable with a golden-file test
+  (CLAUDE.md §10-style) regardless of engine, so it didn't tip the decision.
+- ~~**Migration tool.**~~ Settled (2026-08-11): `goose`. `sqlc` generates queries, not
+  migrations — something has to apply the committed SQL in `migrations/` (§4). Chosen over
+  `golang-migrate` (comparable, but goose's own migration files can carry Go functions
+  alongside SQL, which `schema.md`'s data-migration cases may eventually want) and `atlas`
+  (its declarative diff-and-plan model fights CLAUDE.md §9's "committed, generated SQL,
+  immutable once merged, fix forward" convention more than it serves it — Enshu wants
+  hand-authored, reviewable migration files, not an auto-planned diff).
+- ~~**Exact Go package layout.**~~ Settled (2026-08-11): §4's tree, as written, is the target —
+  `internal/db`, `internal/auth`, `internal/apkg`, `internal/fsrs`, `internal/review`,
+  `internal/render`, `internal/http`. Nothing about it was contested; adjust only if the
+  scaffold session hits a concrete reason to.
+- ~~**Go version, lint config, CI platform.**~~ Settled (2026-08-11): Go 1.26 (current stable as
+  of 2026-08, no legacy constraint on a greenfield project), `golangci-lint` v2 with
+  `linters.default: standard` as the starting set (add specific linters as a real gap shows up,
+  not `all` on day one), GitHub Actions running `go build`/`go vet`/`golangci-lint run`/
+  `go test ./...` on push and PR — the natural default given `gh` is already this project's
+  tool of choice.
 - **Native-speaker check on "Enshu."** Connotation is where non-native judgement is least
   reliable. Renaming a repo is cheap; renaming a product with users and inbound links is not.
 - ~~**Deck-content licensing.**~~ Closed by dropping the public deck directory (§11). Enshu
@@ -574,7 +600,7 @@ Unresolved. Do not silently pick one — surface it.
   itself does, one step further: content-addressed rather than filename-addressed, because two
   users' decks can each carry a different `image.jpg`. S3-compatible remains a drop-in later —
   the metadata-row-plus-external-bytes shape is identical, only "external" changes.
-  **The decision is settled; the store is not built** — [#34](https://github.com/Jolls/enshu/issues/34)
+  **The decision is settled; the store is not built** — [#60](https://github.com/Jolls/enshu/issues/60)
   is still open, and no Go media code exists yet at all (§1). The superseded TypeScript
   implementation had a media-map reader for import (`src/lib/server/apkg/media.ts`) but no
   blob store; the Go equivalent (`internal/apkg/media.go` — §4) starts from the same gap.

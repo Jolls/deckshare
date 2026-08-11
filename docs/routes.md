@@ -53,7 +53,7 @@ contract for `POST /api/reviews/batch` is pinned down there in full and is not r
 | GET | `/decks/{id}` | `can_view` | Detail: notes list, card/due counts |
 | GET | `/decks/{id}/edit` | `can_edit_settings` | Edit form (name, description, preset) |
 | POST | `/decks/{id}/edit` | `can_edit_settings` | Update |
-| POST | `/decks/{id}/delete` | `can_delete` | Delete — currently unreachable behind FK restricts, see [#15](https://github.com/Jolls/enshu/issues/15) |
+| POST | `/decks/{id}/delete` | `can_delete` | Delete — currently unreachable behind FK restricts, see [#51](https://github.com/Jolls/enshu/issues/51) |
 
 ---
 
@@ -156,7 +156,7 @@ demand shows up.
 
 ---
 
-## Media — `media.go` (Phase 1, step 8 — blob store itself is [#34](https://github.com/Jolls/enshu/issues/34))
+## Media — `media.go` (Phase 1, step 8 — blob store itself is [#60](https://github.com/Jolls/enshu/issues/60))
 
 | Method | Path | Permission | Purpose |
 |---|---|---|---|

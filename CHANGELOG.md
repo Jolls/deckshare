@@ -30,6 +30,24 @@ TypeScript/SvelteKit implementation is superseded, not migrated.
   longer cite `drizzle-kit`, `better-sqlite3`, or TypeScript file paths — pointed at the Go
   repo layout instead, and the `better-sqlite3` collation caveat is marked unverified under
   the new `modernc.org/sqlite` driver rather than restated as fact
+- architecture.md §12's remaining scaffold-blocking open questions settled: `html/template`
+  over `templ` (no runtime/UX difference — the reviewer's felt latency is a client-side JS
+  property, not a rendering one; decided on dependency count and contributor accessibility
+  instead), `goose` for migrations (plain SQL files fit CLAUDE.md §9's "committed, immutable,
+  fix forward" convention more directly than `atlas`'s declarative-diff model), and
+  `alexedwards/argon2id` for password hashing. Also newly recorded: Go 1.26, `golangci-lint`
+  v2 with the `standard` linter set, and GitHub Actions for CI. §4's package layout confirmed
+  as the scaffold target rather than illustrative
+- Filed 15 Go-track issues (#49–#63) against architecture.md §11's Phase 1 build order, plus a
+  tracking issue (#64), now that all TS-era issues are closed as superseded. `architecture.md`,
+  `routes.md`, and `schema.md` repointed from the closed #15/#34 to their live replacements
+  (#51, #60)
+- `tests/fixtures/apkg/README.md`: replaced the vague "collect fixtures early" reminder with a
+  concrete four-export plan covering every dimension `apkg-format.md`'s Fixtures section asks
+  for from one small hand-built Anki collection, and reframed the synthetic-fixture builder as
+  Go test-helper code belonging to #58, not a standalone script producing committed binaries —
+  a synthetic schema-18 fixture built ahead of a real one would just bake today's unverified
+  spec guesses into something that looks authoritative
 
 ### Removed
 - The `predicted`-field / divergence-counter design (architecture.md §6, CLAUDE.md §17) — with

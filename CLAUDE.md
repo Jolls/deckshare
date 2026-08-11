@@ -151,8 +151,7 @@ These are the load-bearing choices. Each one is cheap now and a rewrite later.
 - **Time is `timestamptz`, always UTC in the DB.** Local-time reasoning happens only at the
   day-boundary calculation (architecture.md §5) and in display formatting.
 - **Migrations are committed, generated SQL, and immutable once merged.** Fix forward with a
-  new migration; never edit an applied one. Migration tool is not yet chosen — see
-  architecture.md §12.
+  new migration; never edit an applied one. Migration tool: `goose` — see architecture.md §12.
 - **Authorisation is explicit at the query layer.** Every query touching a deck takes a
   `user_id` and joins `deck_access`. Do not rely on handler-level guards alone — a shared deck
   means "readable by some users" is the normal case, not the exception.
@@ -326,10 +325,9 @@ Windows 11, PowerShell primary (Bash tool also available — each takes its own 
 - Line endings: set `.gitattributes` (`* text=auto eol=lf`) at scaffold time so this repo
   never develops the mixed CRLF/LF problem. Do it in the first commit — retrofitting it
   rewrites every file.
-- Go-specific, once the scaffold exists: `go generate` regenerates `sqlc` output (and `templ`
-  output, if that's the rendering choice — architecture.md §12) — run it and commit the
-  result, don't hand-edit generated files. Docker images are multi-arch, so builds cross-compile
-  (`GOOS`/`GOARCH`), not just build for the host.
+- Go-specific, once the scaffold exists: `go generate` regenerates `sqlc` output — run it and
+  commit the result, don't hand-edit generated files. Docker images are multi-arch, so builds
+  cross-compile (`GOOS`/`GOARCH`), not just build for the host.
 
 ---
 

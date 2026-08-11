@@ -259,7 +259,7 @@ only a genuine content disagreement that does.
 `${MEDIA_ROOT}/<sha[0:2]>/<sha>`. The database holds metadata rows only and never a `bytea`
 column. S3-compatible stays a drop-in later — the metadata-row-plus-external-bytes shape is
 identical, only "external" changes. See architecture.md §12; the store itself is not built yet
-([#34](https://github.com/Jolls/enshu/issues/34)).
+([#60](https://github.com/Jolls/enshu/issues/60)).
 
 ---
 
