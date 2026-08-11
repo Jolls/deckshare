@@ -164,11 +164,11 @@ to lead an index or that becomes a sequential scan. `review_log` carries
 trailing columns also serve the per-card replay path. `cards.template_id` and
 `notes.note_type_id` are indexed for the same reason.
 
-**`stability` and `difficulty` are `double precision`, not `real`.** `ts-fsrs` rounds them to
+**`stability` and `difficulty` are `double precision`, not `real`.** FSRS rounds them to
 8 decimal places and clamps stability to 36500; `real` holds ~7 significant digits, so a
-value round-tripped through it would not byte-match what the replay path computes in memory.
-`real` would also put the storage error above the `1e-6` threshold the divergence check uses
-(architecture.md §6), so every grade would report a client/server mismatch that wasn't one.
+value round-tripped through it would not byte-match what the batch-preview and grade-time
+`Repeat()` calls compute in memory (architecture.md §6, CLAUDE.md §10.2) — the consistency
+check between them needs exact values to compare, not ones already degraded by storage.
 
 `user_card_state.learning_steps` mirrors `ts-fsrs`'s `Card.learning_steps`. FSRS-6 short-term
 scheduling reads it, so it has to survive a reload or a `review_log` replay.
