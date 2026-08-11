@@ -48,7 +48,8 @@ versions column fills in once the scaffold session picks them.
 | Concern | Choice | Notes |
 |---|---|---|
 | Server + HTTP | Go, stdlib `net/http` | No web framework required — most of the app is CRUD over forms and tables. |
-| HTML rendering | `html/template` or `templ` | Server-rendered; auto-escapes by default, which is most of §8's sanitise-on-render requirement for free. Choice between the two is open — §12. A small vanilla-JS island drives the reviewer only. |
+| HTML rendering | `html/template` or `templ` | Server-rendered; auto-escapes by default, which is most of §8's sanitise-on-render requirement for free. Choice between the two is open — §12. |
+| CSS / interactivity | Pico CSS + htmx | Pico is classless — ships no JS of its own, so there's nothing to conflict with htmx's attribute-driven behaviour (unlike a component library such as Bootstrap, which ships its own JS for modals/dropdowns and can fight a swap that pulls the rug out from under it). htmx drives the CRUD shell entirely: `hx-*` attributes on plain HTML, handlers return HTML fragments instead of JSON, no client-side templating layer to keep in sync with the server's. The reviewer is the one exception — see §6. |
 | Scheduler | `go-fsrs` (targets FSRS v6) | Runs **server-side only.** No client-side FSRS implementation exists — see §6. |
 | Database | PostgreSQL | Row-level tenancy via `user_id` columns and explicit query scoping. Unchanged from the original stack decision — this was never a TypeScript-specific choice. |
 | Typed SQL | `sqlc` | Generates Go structs/queries from real SQL, checked against the schema at compile time. Migration tool (to pair with it) is open — §12. |
@@ -225,6 +226,20 @@ case where a graded card's new `due` lands it back inside the window.
 not, and prefetching 20 cards' images is a different problem from prefetching 20 cards' HTML.
 Until #34 wires the blob store to live decks, the session payload carries no media URLs. When
 it does, prefetch media for the next two or three cards only — not for the batch.
+
+**Client-side shape: hidden cards, htmx for the wire.** Every card in a batch — the initial one
+inline in the page response, every refill — renders as a hidden HTML node (e.g.
+`<article hidden data-card-id>`), each carrying its four precomputed rating branches, not a
+client-side template driven by JSON. A small local JS/TS module owns the in-session queue on top
+of that: which card is current, the local learning-steps requeue decision, unseen-count
+tracking, and toggling `hidden`/revealing the answer. It never touches the network itself.
+Instead it dispatches plain DOM events (`refill-needed`, `card-graded`) at the right moments,
+and htmx attributes listen for those: a hidden element with
+`hx-trigger="refill-needed from:body" hx-get="/reviews/refill" hx-swap="beforeend"` appends the
+next batch's hidden cards, and `hx-post hx-swap="none"` on each rating button sends the graded
+event in the background. htmx owns the two network-touching pieces; the queue module owns
+everything that doesn't touch the wire, and nothing about it waits on a request completing
+before the UI advances (CLAUDE.md §2.6).
 
 **Grading, synchronously and locally:**
 
