@@ -217,7 +217,7 @@ against a real export with FSRS-optimised deck options.
 Real tables replacing the `col.models`/`col.decks`/`col.dconf`/`col.tags` JSON blobs. Each
 row's settings live in a `config`/`common`/`kind` column that is a **protobuf message, not
 JSON** — decoding it needs a schema (field numbers), which is what
-`src/lib/server/apkg/protobuf.ts` and `anki-schema.ts` exist to hold, and both are themselves
+`internal/apkg/protobuf.go` and `ankischema.go` exist to hold, and both are themselves
 unverified against a real schema-18 file.
 
 | Table | Key columns | Config column(s) | Notes |
@@ -233,9 +233,10 @@ unverified against a real schema-18 file.
 Notes carried over from `apkg-format.md`, restated here because they're schema-shape facts
 rather than import-semantics ones:
 
-- `COLLATE unicase` is declared on schema-18 name columns. `better-sqlite3` can't register
-  that collation, so any query relying on it (`ORDER BY name`) fails — order by integer id
-  instead.
+- `COLLATE unicase` is declared on schema-18 name columns. `better-sqlite3` (the old
+  TypeScript reader's driver) couldn't register that collation, so any query relying on it
+  (`ORDER BY name`) failed. Whether `modernc.org/sqlite` (the Go reader's driver,
+  architecture.md §4) can is unchecked — order by integer id instead until verified.
 - `col.models`/`col.decks` still exist as columns on schema 18 but are emptied, not dropped —
   a reader that only checks "does this parse" sees an empty collection, not an error.
 

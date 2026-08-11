@@ -26,6 +26,10 @@ TypeScript/SvelteKit implementation is superseded, not migrated.
   follows
 - CLAUDE.md §9/§10/§14/§16/§17 updated for Go tooling and the new testing surface
   (batch-preview/grade-time consistency replaces client/server FSRS parity)
+- Deeper-reference docs (`docs/schema.md`, `docs/apkg-format.md`, `docs/anki-schema.md`) no
+  longer cite `drizzle-kit`, `better-sqlite3`, or TypeScript file paths — pointed at the Go
+  repo layout instead, and the `better-sqlite3` collation caveat is marked unverified under
+  the new `modernc.org/sqlite` driver rather than restated as fact
 
 ### Removed
 - The `predicted`-field / divergence-counter design (architecture.md §6, CLAUDE.md §17) — with
