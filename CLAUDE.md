@@ -33,8 +33,9 @@ section moves.
 | | | **§20** | [Deviations from Anki](docs/architecture.md#20-deviations-from-anki) |
 
 Deeper reference lives one level further out — **ours** in
-[docs/schema.md](docs/schema.md) (full DDL) and
-[docs/schema-diagram.md](docs/schema-diagram.md) (ER diagrams); **Anki's** in
+[docs/schema.md](docs/schema.md) (full DDL),
+[docs/schema-diagram.md](docs/schema-diagram.md) (ER diagrams), and
+[docs/routes.md](docs/routes.md) (the planned HTTP route surface); **Anki's** in
 [docs/anki-schema.md](docs/anki-schema.md) (their tables and columns),
 [docs/anki-schema-diagram.md](docs/anki-schema-diagram.md) (their ER diagrams), and
 [docs/apkg-format.md](docs/apkg-format.md) (the container, and the encoding traps that make

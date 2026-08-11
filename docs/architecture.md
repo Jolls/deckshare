@@ -136,7 +136,9 @@ enshu/
 - `internal/apkg/` produces and consumes an **intermediate representation**, never
   `sqlc`-generated rows directly. Import is `apkg -> IR -> db`, export is `db -> IR -> apkg`.
   The IR is where format quirks are normalised, and it is what unit tests assert against.
-- HTTP handlers stay thin: parse, authorise, delegate to `internal/db` queries, respond.
+- HTTP handlers stay thin: parse, authorise, delegate to `internal/db` queries, respond. The
+  full planned route surface is [docs/routes.md](routes.md) — update it alongside any handler
+  that adds, renames, or removes a route.
 
 ---
 
