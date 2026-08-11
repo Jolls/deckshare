@@ -97,6 +97,21 @@ deck_access deck_id, user_id, created_at,
 fields are always read and written as a unit with the note, never queried individually, and
 the row count would otherwise be 5–10× the note count.
 
+**Editing a note's fields must not regenerate its cards by dropping and recreating them, once
+`cards` rows can carry scheduling state or review history.** A naive edit handler — delete every
+`cards` row for the note, reinsert from the new field values — is the obvious first
+implementation and it is a trap: as soon as a card can have a `user_card_state` row or a
+`review_log` row, that delete either hits the `ON DELETE RESTRICT` on `review_log.card_id` and
+the edit fails outright, or (for a card with scheduling state but no reviews yet) cascade-deletes
+its `user_card_state` silently, discarding a live card's progress as a side effect of an
+unrelated field edit. This is the CLAUDE.md §15 "silently corrupts `user_card_state`" bucket —
+it earns `sev: critical` the day it's reachable. It's only harmless before the reviewer and
+`.apkg` import exist to populate either table, which is exactly why it's easy to ship first and
+forget: nothing fails in Phase 1's early CRUD-only state. The fix belongs to whichever change
+first makes cards stateful (the reviewer, §11 step 7, or import, step 8): diff the old and new
+cloze ordinals (or template set, for non-cloze note types) and only add/remove the cards that
+actually changed, leaving every untouched card's row — and its scheduling state — alone.
+
 **Deferred:** full-text search over notes. The intended shape is a generated `tsvector`
 column over the concatenated fields, but nothing queries it yet and it is not implemented.
 Add it with the search feature, not before.
@@ -230,6 +245,16 @@ Anki references media by filename inside note fields (`<img src="x.jpg">`), so t
 `(deck_id, filename)` mapping is what rendering resolves against. Two decks shipping an
 identical image store one blob.
 
+**A filename collision within one import — one name, two different contents — is survivable, not
+fatal.** It happens honestly (two source decks that both happen to name a file `image1.jpg`) and
+it also happens as a side effect of NFC-normalising filenames on read (§7): two names distinct
+only in Unicode normalisation form collapse onto one. Aborting an import of several hundred files
+over one colliding name is the wrong trade against the size of the problem, so the policy is
+first-seen wins — the first file under that name (in the package's own media-index order, so it's
+deterministic across re-imports of the same package) is kept, the rest are dropped, and the
+import reports a warning naming the dropped files. Same bytes twice needs no warning at all; it's
+only a genuine content disagreement that does.
+
 **Storage backend is settled: the filesystem**, content-addressed, at
 `${MEDIA_ROOT}/<sha[0:2]>/<sha>`. The database holds metadata rows only and never a `bytea`
 column. S3-compatible stays a drop-in later — the metadata-row-plus-external-bytes shape is
@@ -262,6 +287,13 @@ exception.
 visibility flag and no public-deck carve-out: a deck is reachable by exactly the users holding
 a row, and no combination of that row's permission flags ever grants read of another user's
 `user_card_state`. One authorisation path means one thing to get right and one thing to test.
+
+**A deck that exists but the caller can't see should respond identically to a deck that doesn't
+exist — 404, not 403.** Collapsing "not found" and "found but forbidden" into one outcome at the
+query layer (rather than distinguishing them and letting a handler turn the distinction into two
+different status codes) is what stops a 403 from becoming an existence oracle: a user who lacks
+`can_view` on someone else's deck must not be able to learn the deck *exists* by getting a
+different answer than they'd get for a deck id that was never valid at all.
 
 `user_card_state` and `review_log` are per-user throughout. A deck's content is shared; nobody's
 progress on it ever is.

@@ -31,11 +31,16 @@ conclusion is Go, no client-side FSRS, PostgreSQL retained, parameter optimisati
 of MVP. This file and CLAUDE.md now describe that decision, not the merged TypeScript code.
 
 **Nothing here is a migration.** Zero users, and the TypeScript code predates the decision by
-days — there is no reason to carry any of it forward for its own sake. Whether the old code is
-deleted, archived on a branch, or left in place as inert history is a separate call the code
-session that starts the Go work should make explicitly; this file doesn't presume an answer.
-Until that session, no Go code exists yet — the stack table and repo layout below describe the
-target, not something already scaffolded.
+days — there is no reason to carry any of it forward for its own sake.
+
+**The old code is deleted.** `git log` on this repo's history has the full TypeScript
+implementation if anything below turns out to need double-checking against it. Before deletion,
+this file, `schema.md`, and `apkg-format.md` were re-checked against it for anything load-bearing
+that hadn't already made it into the docs — session-cookie hardening, timing-safe login/signup,
+the sanitisation allowlist's XSS-defense rationale, the advisory-lock deadlock-avoidance rule,
+and a card-regeneration data-loss trap among them — and folded in where found. No Go code exists
+yet — the stack table and repo layout below describe the target, not something already
+scaffolded.
 
 ---
 
@@ -75,6 +80,26 @@ Dropping client-side FSRS also removes the version-skew failure mode the old cal
 about: there was never a second implementation to drift out of sync with, so there is nothing to
 pin two ways. `user_fsrs_params.fsrs_version` still matters (invariant §2.3) — it's what makes a
 historical `review_log` replay-able after `go-fsrs` upgrades — just not for this reason.
+
+**Don't trust an FSRS library's own parameter validation; check explicitly before calling it.**
+The TypeScript prototype's scheduler (`ts-fsrs`) coerced rather than rejected a bad weight —
+clamping a `NaN` to `0` instead of refusing it, silently substituting a default for a falsy
+`request_retention` — which is exactly the "plausible but wrong, forever" failure invariant §2.3
+exists to prevent: a corrupt optimiser fit or a hand-edited `user_fsrs_params` row would schedule
+happily and wrongly with nothing raised. Verify `go-fsrs`'s validation behaviour before relying
+on it, and if it's similarly permissive, reject explicitly before calling it: wrong parameter
+count for the declared `fsrs_version`, any non-finite weight, `desired_retention` outside `(0,
+1]`.
+
+**Verify `go-fsrs`'s fuzz behaviour and force it off (or deterministic) before relying on
+batch-precompute/grade-time parity.** FSRS's optional "fuzz" randomises an interval slightly; if
+`go-fsrs` seeds it from wall-clock time or another non-reproducible source rather than
+deterministically from the card, the four-branch preview computed at batch-fetch time and the
+same `Repeat()` call re-run at grade time would legitimately disagree — which is precisely the
+drift CLAUDE.md §10.2's consistency test exists to catch, and a random source would make that
+test flaky rather than meaningful. The historical-replay path (`replayReviews`, above) needs the
+same determinism for a different reason: replaying one `review_log` twice must produce the same
+`user_card_state`, or `recomputeUserCardState` isn't actually idempotent.
 
 ---
 
@@ -285,6 +310,13 @@ to assert, and the only fields the server reads. Everything written to `review_l
 `predicted` field on the wire to trust or distrust, because the server is the only place `Repeat`
 ever runs.
 
+Being the only fields read doesn't make them trusted as sent. Parsing them strictly (reject a
+malformed event rather than coercing it) is necessary but not sufficient — `reviewedAt` in
+particular is a believability check against the server's own clock, not a shape check: a client
+clock can be wrong, and a review timestamped in the future would sort ahead of everything else in
+a replay and corrupt `review_log`'s ordering guarantee for that card. Clamp or reject it; don't
+take it on faith just because it parsed.
+
 The `last_review <` guard makes application last-write-wins by *review time*, not arrival
 time — the correctness property that makes a retrying sender safe.
 
@@ -296,6 +328,11 @@ client's `stateAfter` used to:
   tabs, a redelivered POST — would otherwise both read the same `before` under READ COMMITTED
   and one review would vanish. Advisory rather than `SELECT … FOR UPDATE`, because a card the
   user has never seen has no row to lock, and two concurrent first grades are exactly that case.
+  **Acquire the locks for a batch in a fixed sorted order** (sort the `(user, card)` keys before
+  taking any of them), not in whatever order the batch happens to list its cards — two batches
+  that share more than one card, locking in different orders, is a textbook deadlock, and it is
+  reachable in practice (two tabs open on the same deck, both about to send a batch that
+  overlaps).
 - **Sort the batch by `reviewed_at` before scheduling.** Two grades of the same card in one
   batch have to be applied in the order they happened, so a shuffled batch still converges.
 - **Skip an event whose id is already in `review_log`.** A pure retry must not be rescheduled
@@ -370,9 +407,41 @@ filters (`{{text:Field}}`, `{{furigana:Field}}`, `{{type:Field}}`), and cloze de
 
 Keep it in `internal/render/` (§4), a pure `(template, fields) -> html` package with a
 golden-file test per construct — rendering only ever happens server-side, so there's no
-isomorphism requirement to satisfy. **Sanitise on render** — note content is user-authored HTML
-and shared decks mean it is *other users'* HTML. Card content is untrusted input in the
-multiuser model, unlike in Anki where it is always your own.
+isomorphism requirement to satisfy.
+
+**Template tags don't nest braces** — a cloze marker lives inside field *content*, not template
+text — so a single non-nested tokenising pass over `{{...}}` is enough; sections
+(`{{#Field}}`/`{{^Field}}`/`{{/Field}}`) are the one construct that needs a stack, matched by
+field name on close. Cloze rendering has a rule easy to get half-right: the active cloze number
+(the card's ordinal) blanks to `[...]` or `[hint]` on the front and reveals highlighted on the
+back, but *every other* cloze number in the field reveals as plain text on **both** sides —
+dropping the "other numbers" case makes a multi-cloze note's non-active clozes vanish instead of
+showing as context.
+
+**Sanitise on render** — note content is user-authored HTML and shared decks mean it is *other
+users'* HTML. Card content is untrusted input in the multiuser model, unlike in Anki where it is
+always your own. The allowlist design that mattered in the TypeScript prototype (`bluemonday` or
+equivalent is the Go analogue of `sanitize-html`) is worth carrying forward as a checklist, since
+each item closes a specific attack, not a generic one:
+
+- **No element with a non-HTML parsing mode** — no `<svg>`/`<math>` (foreign content), no
+  `<style>`/`<script>`/`<template>`/`<textarea>`/`<title>` (raw-text or escapable-raw-text
+  elements). A tokenising sanitiser and a browser's HTML parser disagree about *those* elements
+  specifically, and that disagreement is what mutation XSS exploits — leave them all out and
+  there's no context left where the browser re-parses sanitised text as markup.
+- **Scheme allowlist on URL-bearing attributes** (`http`/`https`/`mailto`) that excludes
+  `javascript:`, `data:`, `vbscript:`, and `file:` by omission — an allowlist that names what's
+  in, not a denylist that has to keep naming what's out.
+- **A CSS value grammar that admits no bare `(`** outside the four colour functions
+  (`rgb`/`rgba`/`hsl`/`hsla`), so `url(...)`, `expression(...)`, and `image-set(...)` stay out
+  even if a URL-accepting property is ever added to the allowed-properties list by mistake later.
+- **`{{type:Field}}`'s answer-input widget is not sanitisable card content.** It renders an
+  `<input>` carrying the expected answer for the reviewer to grade against — an interactive
+  element with no legitimate place in an allowlist built for static card markup. Treat it as a
+  separate insertion the reviewer performs after sanitisation, not as HTML that flows through
+  `sanitiseCardHtml`; conflating the two either lets an `<input>` sneak into the allowlist (attack
+  surface) or the sanitiser silently strips the answer widget (feature that quietly stops
+  working, the more likely outcome if this gets missed).
 
 ---
 
@@ -447,6 +516,38 @@ Unresolved. Do not silently pick one — surface it.
   password hashing (specific Go package: open, below), and an explicit `Origin`-header check on
   state-changing requests for CSRF. Kept behind `internal/auth/` (§4) regardless, so it stays
   reversible.
+
+  The superseded TypeScript prototype worked out several mechanics below the "hand-rolled
+  sessions" headline that are easy to skip and cheap to get wrong; carry them into the Go
+  implementation rather than re-deriving them:
+
+  - **Session cookie name is `__Host-`-prefixed.** That prefix requires `Secure`, `Path=/`, and
+    no `Domain` attribute — the browser enforces all three, not just convention — which is what
+    stops a sibling subdomain (a future status page, a blog, anything with its own XSS bug) from
+    setting a same-named cookie that silently rides along to Enshu.
+  - **Sliding expiration, renewed only when it's close to expiring** (e.g. a 30-day lifetime,
+    renewed once under 15 days remain), so a `Set-Cookie` header — and the write it costs — only
+    goes out on the minority of requests that need one, not every request of an active session.
+  - **Login is timing-safe against account enumeration.** Verify a password hash unconditionally,
+    even when no account matches the email — against a fixed dummy `argon2id` hash computed once
+    at startup — so a wrong email and a wrong password take the same time. Any fast-reject (e.g.
+    an oversized input) must be deterministic on the *attacker's own input*, never on whether the
+    account exists, or the fast path itself becomes the oracle.
+  - **Signup is timing-safe the same way**, plus one more thing to get right: the existence check
+    and the password hash both run unconditionally and in parallel, so rejecting a duplicate
+    email costs the same wall-clock time as completing a real signup — skipping the hash on a
+    known duplicate is the ~tens-of-milliseconds gap that turns into an email-enumeration oracle.
+    The existence check is also not atomic with the insert, so a concurrent signup for the same
+    address can race past it — the `UNIQUE (lower(email))` index is the actual guarantee, and the
+    handler's job is only to turn that constraint violation into a clean 409 instead of a 500.
+  - **Login and signup are rate-limited per key** (e.g. per IP or per email) against
+    credential-stuffing and signup-flooding — both are otherwise unlimited-rate endpoints with
+    nothing else in front of them. An in-memory, per-process limiter is the right amount of
+    complexity for Phase 1's single-instance deployment (§3); revisit only if the deployment
+    target goes multi-instance.
+  - **CSRF and session population are enforced once, centrally**, wrapping every request before
+    it reaches a handler — never as a per-handler concern a new route could ship without by
+    forgetting to call it. See CLAUDE.md §9.
 - **Go argon2id package.** Not yet picked — candidates include `golang.org/x/crypto/argon2`
   (stdlib-adjacent, lower-level) and higher-level wrappers like `alexedwards/argon2id`. Decide
   when auth is scaffolded (§11 step 3).
