@@ -197,7 +197,10 @@ cards           id, note_id, template_id, ordinal
                 -- content only; NO scheduling state on this row
 
 decks           id, owner_id, name
-deck_access     deck_id, user_id, role (owner|editor|viewer)
+deck_access     deck_id, user_id,
+                can_view, can_study, can_edit_content,
+                can_edit_settings, can_manage_access, can_delete
+                -- six independent per-(user, deck) permissions, not a role enum
                 -- the ONLY way a deck reaches a second user
 
 user_card_state user_id, card_id, due, stability, difficulty,
@@ -245,9 +248,9 @@ server-derived state, `.apkg` import/export. Ship this before anything else. It 
 product for one user.
 
 **Phase 2 — Multiuser**
-Shared decks with `deck_access` roles, so two people can co-author a deck while each keeps a
-private review history. Classroom layer: instructor assigns a deck to a cohort, sees
-per-student retention, due counts, and lapse hotspots.
+Shared decks with per-user `deck_access` permissions, so two people can co-author a deck while
+each keeps a private review history. Classroom layer: instructor assigns a deck to a cohort,
+sees per-student retention, due counts, and lapse hotspots.
 
 **Explicitly not doing**
 Each of these is a decision rather than a backlog item:

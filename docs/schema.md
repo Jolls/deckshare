@@ -85,9 +85,12 @@ cards       id, note_id, template_id, ordinal, deck_id, anki_id
 decks       id, owner_id, name, description,
             preset jsonb, created_at, modified_at, anki_id
             -- UNIQUE (owner_id, name)   <- re-import reuses the owner's deck of that name
-deck_access deck_id, user_id, role, created_at   -- role: 'owner' | 'editor' | 'viewer'
+deck_access deck_id, user_id, created_at,
+            can_view bool, can_study bool, can_edit_content bool,
+            can_edit_settings bool, can_manage_access bool, can_delete bool
             -- PRIMARY KEY (deck_id, user_id)
             -- the ONLY thing that makes a deck reachable by a second user
+            -- six independent per-(user, deck) permissions, not a role enum -- see below
 ```
 
 `notes.fields` as `jsonb` (ordered array of strings) rather than a `note_fields` table:
@@ -103,6 +106,31 @@ idempotency key for import. It must be present on every note from day one — re
 duplicates every early user's decks on their next import. One guid is one note per owner, not
 per deck: re-importing the same collection into a second deck finds the existing note rather
 than forking its identity.
+
+`deck_access` grants six independent permissions per `(user_id, deck_id)` — a row can hold any
+combination, there is no role enum and no implied hierarchy:
+
+| Flag | Grants |
+|---|---|
+| `can_view` | See the deck, its notes/cards, and rendered content |
+| `can_study` | Fetch review batches, grade cards (writes only the caller's own `user_card_state`/`review_log`), set a personal per-deck FSRS retention override |
+| `can_edit_content` | Create/edit/delete notes and their generated cards, move notes between decks, import `.apkg` into the deck |
+| `can_edit_settings` | Edit deck metadata (name, description, preset), export the deck |
+| `can_manage_access` | Grant/revoke/change other users' `deck_access` rows |
+| `can_delete` | Delete the deck |
+
+`can_view` is a practical prerequisite for the other five to mean anything, but that's an
+application-level convention (a grant form defaults it on alongside any other flag) — nothing
+at the database level enforces the nesting, by design. The full per-route mapping lives in
+[routes.md](routes.md).
+
+A deck's creator gets all six flags on creation. A personal, single-user deck is just the
+trivial case of this — one user, fully permissioned — not a separate code path.
+
+**Open guard, not yet enforced:** nothing currently blocks removing the last
+`can_manage_access` (or `can_delete`) holder from a deck, which would strand it with no one
+able to manage access or delete it. Needs a check before Phase 2's access-management routes
+ship.
 
 ---
 
@@ -232,8 +260,8 @@ exception.
 
 **No cross-user reads without a `deck_access` row, and there are no exceptions.** There is no
 visibility flag and no public-deck carve-out: a deck is reachable by exactly the users holding
-a row, and no role on that row ever grants read of another user's `user_card_state`. One
-authorisation path means one thing to get right and one thing to test.
+a row, and no combination of that row's permission flags ever grants read of another user's
+`user_card_state`. One authorisation path means one thing to get right and one thing to test.
 
 `user_card_state` and `review_log` are per-user throughout. A deck's content is shared; nobody's
 progress on it ever is.

@@ -379,7 +379,7 @@ multiuser model, unlike in Anki where it is always your own.
 10. Per-user parameter optimisation — **deferred out of MVP** (§12). `review_log` accumulates
     from day one regardless (invariant §2.5), so this is purely additive whenever it's built.
 
-**Phase 2 — multiuser.** `deck_access` roles enforced; co-authoring a deck while each author
+**Phase 2 — multiuser.** `deck_access` permissions enforced; co-authoring a deck while each author
 keeps a private review history; classroom cohorts with per-student retention, due counts, and
 lapse hotspots. The seam in CLAUDE.md §2.1 is what makes all of it possible, and §2.7 is what makes the
 per-student numbers worth showing.

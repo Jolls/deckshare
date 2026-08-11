@@ -114,8 +114,8 @@ pun died with the feature, and the romanisation reads cutesy), **Fukushu** (homo
 
 - **Phase 1 — single-user core.** Accounts, decks, note types, the reviewer, local grading
   against server-derived state, `.apkg` import/export. Complete product for one user.
-- **Phase 2 — multiuser.** Shared decks with roles, co-authoring with separate histories,
-  classroom cohorts and progress reporting.
+- **Phase 2 — multiuser.** Shared decks with per-user permissions, co-authoring with separate
+  histories, classroom cohorts and progress reporting.
 
 Explicitly not doing — decisions, not backlog: sync protocol, full offline study, deck forking,
 a public deck directory, native mobile apps, a plugin system, and LLM-generated cards as a

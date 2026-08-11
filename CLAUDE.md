@@ -158,8 +158,9 @@ These are the load-bearing choices. Each one is cheap now and a rewrite later.
   means "readable by some users" is the normal case, not the exception.
 - **No cross-user reads without a `deck_access` row. No exceptions.** There is no public-deck
   carve-out and no visibility flag — a deck is reachable by exactly the users with a row, and
-  a `deck_access` row never grants read of another user's `user_card_state` regardless of
-  role. One authorisation path, so there is only one thing to get right and one thing to test.
+  no combination of that row's permission flags ever grants read of another user's
+  `user_card_state`. One authorisation path, so there is only one thing to get right and one
+  thing to test.
 - Naming: `snake_case` in SQL, Go-idiomatic field casing in generated structs — `sqlc` handles
   the mapping.
 - Comment density matches surrounding code. The `apkg` package earns comments (it encodes
@@ -190,8 +191,8 @@ Priority order, highest first — this reflects where silent wrongness is most e
    test asset to produce later and the format is where the unknown-unknowns live.
 4. **Send idempotency.** Replaying a batch, reordering it, and interleaving it with a later
    review all converge to the same `user_card_state`.
-5. **Access control.** Table-driven: for each (role, resource, operation), assert allow/deny.
-   Add a row on every new endpoint.
+5. **Access control.** Table-driven: for each (permission, resource, operation), assert
+   allow/deny. Add a row on every new endpoint.
 6. **E2E reviewer** (Playwright): keyboard grading, optimistic advance, events sent, and a
    session survives a transient network failure mid-review.
 
