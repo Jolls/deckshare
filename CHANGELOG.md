@@ -3,6 +3,42 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.7] - 2026-08-11
+
+### Added
+- Full schema as 14 `goose` migrations, one per table, and `sqlc`-generated models/queries
+  ([#50](https://github.com/Jolls/enshu/issues/50))
+- CI Postgres service (`postgres:18`) that applies the migrations to a fresh database and
+  verifies `sqlc generate` matches the committed `internal/db/` output on every push and PR
+  ([#50](https://github.com/Jolls/enshu/issues/50))
+- Deletion policy: deck delete removes the deck's cards and any note left with no cards anywhere,
+  re-homing notes whose cards survive in other decks; `internal/db/deletion.go` runs it as an
+  ordered transaction ([#51](https://github.com/Jolls/enshu/issues/51))
+- Last-`can_manage_access`/`can_delete`-holder guard on `deck_access`, enforced in the query layer
+  under a deck row lock ([#51](https://github.com/Jolls/enshu/issues/51))
+- DB-backed tests for the cascade graph, the deck-delete procedure, and the access guard
+  ([#51](https://github.com/Jolls/enshu/issues/51))
+
+### Changed
+- `compose.yaml`'s dev database bumped `postgres:16` → `postgres:18`, enabling native
+  `uuidv7()` as a `DEFAULT` safety net on every `uuid` primary key alongside the
+  application-generated id ([#50](https://github.com/Jolls/enshu/issues/50))
+- `internal/db/db.go` renamed to `internal/db/pool.go` so `sqlc generate` (which writes its own
+  `db.go`) no longer overwrites the hand-written connection pool code
+  ([#50](https://github.com/Jolls/enshu/issues/50))
+- Foreign keys carry their terminal `ON DELETE` behaviour instead of the blanket `RESTRICT`:
+  sessions, fields, templates, `deck_access.deck_id`, `cards.note_id`/`deck_id`,
+  `user_card_state.card_id`, per-deck `user_fsrs_params`, and `media_refs.deck_id` cascade;
+  everything user-owned restricts ([#51](https://github.com/Jolls/enshu/issues/51))
+- `review_log.card_id` is no longer a foreign key — the column, its index, and the re-import dedup
+  key are unchanged, and no `review_log` row is deletable by any path. This is what makes a studied
+  deck deletable without a `DELETE` over training data, and it matches Anki's own `revlog.cid`
+  ([#51](https://github.com/Jolls/enshu/issues/51))
+
+### Removed
+- User deletion as a reachable operation: blocked at the FK level pending an account-closure
+  design ([#51](https://github.com/Jolls/enshu/issues/51))
+
 ## [0.1.6] - 2026-08-11
 
 ### Added

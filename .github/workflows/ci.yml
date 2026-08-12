@@ -8,6 +8,22 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: root
+          POSTGRES_PASSWORD: mysecretpassword
+          POSTGRES_DB: local
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://root:mysecretpassword@localhost:5432/local
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -15,6 +31,16 @@ jobs:
           go-version: "1.26"
       - run: go build ./...
       - run: go vet ./...
+      - name: Install goose and sqlc
+        run: |
+          go install github.com/pressly/goose/v3/cmd/goose@v3.27.3
+          go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+      - name: Apply migrations to a fresh database
+        run: goose -dir migrations postgres "$DATABASE_URL" up
+      - name: sqlc generate must match committed output
+        run: |
+          sqlc generate
+          git diff --exit-code -- internal/db
       - uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.2

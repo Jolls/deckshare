@@ -30,6 +30,12 @@ epoch-millis ints. Rationale:
 Anki's original numeric ids are preserved as `anki_id` columns on imported rows — needed for
 round-trip export fidelity, never used as a key.
 
+Every `uuid` PK also carries `DEFAULT uuidv7()` (Postgres 18) as a safety net: the application
+still generates ids in Go (`uuid.NewV7()`) at insert time and supplies them explicitly wherever
+the id needs to be known before the row exists — the DB default only fires on an insert that
+forgot to supply one, and produces a valid, time-ordered id when it does. It is not a change to
+"generated client-side where possible," just a belt-and-braces fallback.
+
 **Re-import dedups on name, not on `anki_id`.** Anki ids are per-collection: deck id 1 is
 `Default` in every collection that has ever existed, and note-type ids are creation
 timestamps unique only within one profile. `UNIQUE (owner_id, anki_id)` would therefore
@@ -97,20 +103,16 @@ deck_access deck_id, user_id, created_at,
 fields are always read and written as a unit with the note, never queried individually, and
 the row count would otherwise be 5–10× the note count.
 
-**Editing a note's fields must not regenerate its cards by dropping and recreating them, once
-`cards` rows can carry scheduling state or review history.** A naive edit handler — delete every
-`cards` row for the note, reinsert from the new field values — is the obvious first
-implementation and it is a trap: as soon as a card can have a `user_card_state` row or a
-`review_log` row, that delete either hits the `ON DELETE RESTRICT` on `review_log.card_id` and
-the edit fails outright, or (for a card with scheduling state but no reviews yet) cascade-deletes
-its `user_card_state` silently, discarding a live card's progress as a side effect of an
-unrelated field edit. This is the CLAUDE.md §15 "silently corrupts `user_card_state`" bucket —
-it earns `sev: critical` the day it's reachable. It's only harmless before the reviewer and
-`.apkg` import exist to populate either table, which is exactly why it's easy to ship first and
-forget: nothing fails in Phase 1's early CRUD-only state. The fix belongs to whichever change
-first makes cards stateful (the reviewer, §11 step 7, or import, step 8): diff the old and new
-cloze ordinals (or template set, for non-cloze note types) and only add/remove the cards that
-actually changed, leaving every untouched card's row — and its scheduling state — alone.
+**Editing a note's fields must not regenerate its cards by dropping and recreating them.** A
+naive edit handler — delete every `cards` row for the note, reinsert from the new field
+values — is the obvious first implementation and it is a trap: `user_card_state.card_id`
+cascades on card delete (#51), so that delete silently discards a live card's progress, and a
+re-created card gets a new id, stranding its `review_log` history from it. This is the
+CLAUDE.md §15 "silently corrupts `user_card_state`" bucket — it earns `sev: critical` the day
+it's reachable. The fix belongs to whichever change first makes cards stateful (the reviewer,
+§11 step 7, or import, step 8): diff the old and new cloze ordinals (or template set, for
+non-cloze note types) and only add/remove the cards that actually changed, leaving every
+untouched card's row — and its scheduling state — alone.
 
 **Deferred:** full-text search over notes. The intended shape is a generated `tsvector`
 column over the concatenated fields, but nothing queries it yet and it is not implemented.
@@ -142,10 +144,91 @@ at the database level enforces the nesting, by design. The full per-route mappin
 A deck's creator gets all six flags on creation. A personal, single-user deck is just the
 trivial case of this — one user, fully permissioned — not a separate code path.
 
-**Open guard, not yet enforced:** nothing currently blocks removing the last
-`can_manage_access` (or `can_delete`) holder from a deck, which would strand it with no one
-able to manage access or delete it. Needs a check before Phase 2's access-management routes
-ship.
+**Last-holder guard — enforced in the query layer.** A deck must always retain at least one
+`can_manage_access` holder and one `can_delete` holder, or it is stranded with nobody able to
+manage access or delete it. `internal/db/deletion.go`'s `RevokeDeckAccess` and `SetDeckAccess`
+apply the mutation and then re-count holders inside the same transaction, under a row lock on
+the deck, and return `ErrLastAccessHolder` for the caller to roll back on. It is an
+authorisation rule, so it lives where the others live (CLAUDE.md §9) rather than in a trigger
+— and a trigger would need the same lock to be race-free anyway. Consequence: a deck's sole
+member cannot revoke their own access; they delete the deck. `decks.owner_id` is not a
+permission source and exempts nobody.
+
+---
+
+## Deletion policy
+
+Settled in [#51](https://github.com/Jolls/enshu/issues/51); full reasoning:
+`docs/plans/51-deletion-policy.md`. Two organising principles decide every foreign key's
+`ON DELETE` action: a row with no independent meaning without its parent cascades; a row
+another user can reach, or that is training data, never cascades.
+
+| FK | Action | Why |
+|---|---|---|
+| `sessions.user_id → users` | CASCADE | An auth artifact, not content. |
+| `note_types.owner_id → users` | RESTRICT | User delete is not a supported operation (below). |
+| `fields.note_type_id → note_types` | CASCADE | A field definition has no meaning without its note type. |
+| `templates.note_type_id → note_types` | CASCADE | Same. |
+| `decks.owner_id → users` | RESTRICT | See below. |
+| `deck_access.deck_id → decks` | CASCADE | A grant on a deleted deck grants nothing. |
+| `deck_access.user_id → users` | RESTRICT | See below. |
+| `notes.owner_id → users` | RESTRICT | See below. |
+| `notes.note_type_id → note_types` | RESTRICT | A note type cannot be deleted while notes reference it. |
+| `notes.deck_id → decks` | RESTRICT | Deliberate tripwire — deck deletion goes through the transaction below, which clears these references first. |
+| `cards.note_id → notes` | CASCADE | Cards are generated from a note. |
+| `cards.template_id → templates` | RESTRICT | Never fires spuriously; kept as an assertion. |
+| `cards.deck_id → decks` | CASCADE | Deleting a deck deletes its cards (architecture.md §20). |
+| `user_card_state.user_id → users` | RESTRICT | See below. |
+| `user_card_state.card_id → cards` | CASCADE | Scheduling state for a gone card is meaningless. |
+| `review_log.user_id → users` | RESTRICT — permanent | A review belongs to a live user (CLAUDE.md §2.5). |
+| `review_log.card_id → cards` | **no FK** | See below. |
+| `user_fsrs_params.user_id → users` | RESTRICT | See below. |
+| `user_fsrs_params.deck_id → decks` | CASCADE | A per-deck override for a deleted deck is dead configuration; the global row (`deck_id IS NULL`) is untouched. |
+| `media_refs.deck_id → decks` | CASCADE | `media_refs` is deck-scoped by its own PK. |
+| `media_refs.sha256 → media_blobs` | RESTRICT | A referenced blob is never deletable (blob GC deferred, see Media). |
+
+**User deletion is not a supported operation in Phase 1.** No route deletes a user, and eight
+FKs restrict on `users` so it is impossible rather than silently wrong: cascading
+`decks.owner_id`, `notes.owner_id`, or `note_types.owner_id` would evaporate a shared or
+co-authored resource for every other user holding a `deck_access` row the moment its creator
+closes their account. `review_log.user_id` blocks permanently — a user who has ever answered a
+card can never be deleted, which is CLAUDE.md §2.5 expressed as a constraint. The only user
+delete the schema permits is a signup that never studied: `sessions.user_id` cascades, so
+`DELETE FROM users` succeeds for an account with no decks, notes, access grants, scheduling
+state, or reviews. Account closure needs an ownership-transfer decision for shared decks and a
+written `review_log` decision (anonymise vs. delete) before it can be built — tracked in a
+follow-up issue, not designed here.
+
+**`review_log.card_id` has no foreign key, by decision.** RESTRICT there would make any deck
+that had ever been studied permanently undeletable, colliding with architecture.md §20
+("deleting a deck deletes its cards"). Dropping the FK is strictly stronger than RESTRICT
+against the invariant it protects: no delete anywhere in this schema can remove a `review_log`
+row, and none can be made to. `card_id` stays `NOT NULL` and a sound grouping key — UUIDv7 ids
+are never reused — so history for a deleted card remains replayable. This is also Anki's own
+shape: `revlog.cid` is not a foreign key there either (CLAUDE.md §2.10).
+
+**Deck delete is an ordered transaction (`internal/db/deletion.go`), not a cascade.** Deleting
+deck D deletes every card whose `deck_id` is D; a note is deleted only when it has no cards
+left anywhere, not merely because D was its home deck — a note whose cards span decks survives
+and is re-homed to the deck of its lowest-ordinal surviving card. No static FK expresses "delete
+the note when its last card goes"; that is a predicate over sibling rows, not a per-reference
+rewrite. The four steps, in one transaction:
+
+1. Lock and authorise the deck row (`FOR UPDATE OF d`, joined against the caller's
+   `deck_access`); no row → `pgx.ErrNoRows` → 404.
+2. Delete every note this delete would leave with no cards at all.
+3. Re-home every note still homed in D — by step 2's complement, each provably has a surviving
+   card elsewhere.
+4. `DELETE FROM decks`, which cascades to `cards`, `deck_access`, per-deck
+   `user_fsrs_params`, and `media_refs`.
+
+The post-condition — no note is ever left with zero cards — holds because step 4's cascade can
+only delete cards in D, and every note whose cards were *all* in D was already removed in
+step 2.
+
+**Orphaned `media_blobs` cleanup is deferred.** A deck delete cascades its `media_refs` rows
+away and can leave a `media_blobs` row with zero remaining references; nothing collects it —
+see Media, below.
 
 ---
 
@@ -175,7 +258,8 @@ review_log       id uuid,                  -- client-generated UUIDv7; every OTH
                  -- INDEX (user_id, reviewed_at)
                  -- UNIQUE (user_id, card_id, anki_id)   <- re-import dedup
                  -- append-only; the optimiser's training set
-                 -- FKs are ON DELETE RESTRICT: nothing may cascade training data away
+                 -- user_id is ON DELETE RESTRICT permanently; card_id has NO FK (#51) -- see Deletion policy.
+                 -- Either way nothing ever cascades training data away, and now nothing can.
 
 user_fsrs_params id, user_id, deck_id NULL,   -- deck_id NULL = the user's global default
                  fsrs_version smallint, params jsonb,
@@ -200,12 +284,21 @@ straight into `make_interval`), `review_log.rating` 1–4, `review_log.review_ki
 `review_log.state_before` and `user_card_state.state` 0–3, and
 `user_fsrs_params.desired_retention` strictly between 0 and 1.
 
+**Every foreign key carries its terminal `ON DELETE` action** — settled in
+[#51](https://github.com/Jolls/enshu/issues/51); the full table and reasoning are in
+Deletion policy, above.
+
 **Indexes backing `ON DELETE RESTRICT`.** A restricting foreign key makes Postgres run
 `SELECT 1 FROM child WHERE fk = $1` on every parent delete, so the referencing column needs
-to lead an index or that becomes a sequential scan. `review_log` carries
-`(card_id, user_id, reviewed_at)` for this — `card_id` leads for the RI check, and the
-trailing columns also serve the per-card replay path. `cards.template_id` and
-`notes.note_type_id` are indexed for the same reason.
+to lead an index or that becomes a sequential scan. `cards.template_id` and
+`notes.note_type_id` are indexed for this. `review_log`'s `(card_id, user_id, reviewed_at)`
+index no longer backs an RI check — `card_id` has no FK — and exists purely for the per-card
+replay path. The `CASCADE` FKs need the same index support and already have it:
+`cards.deck_id`, `cards.note_id` (via `UNIQUE (note_id, ordinal)`), `user_card_state.card_id`,
+`deck_access.deck_id` (via its PK), `user_fsrs_params.deck_id`, `media_refs.deck_id` (via its PK),
+and `fields`/`templates` on `note_type_id`. No new index is required by this change.
+`deck_access.user_id` is `RESTRICT`, not `CASCADE` — see the Deletion policy table above — and
+is backed by `deck_access_user_id_idx`.
 
 **`stability` and `difficulty` are `double precision`, not `real`.** FSRS rounds them to
 8 decimal places and clamps stability to 36500; `real` holds ~7 significant digits, so a
@@ -261,6 +354,11 @@ column. S3-compatible stays a drop-in later — the metadata-row-plus-external-b
 identical, only "external" changes. See architecture.md §12; the store itself is not built yet
 ([#60](https://github.com/Jolls/enshu/issues/60)).
 
+A deck delete cascades its `media_refs` rows away and can leave a `media_blobs` row with zero
+remaining references. Nothing collects it yet — a reference-counted GC needs to delete a row
+and a file with no transaction spanning them, which is a separate feature blocked on #60. See
+the follow-up issue filed alongside #51.
+
 ---
 
 ## The day boundary
@@ -303,9 +401,12 @@ progress on it ever is.
 ## Migrations
 
 Committed SQL, **immutable once merged**. Fix forward with a new migration; never edit an
-applied one. Migration tool is not yet chosen — see architecture.md §12 — but the checklist
-below holds regardless of which one lands, since `sqlc` reads the committed SQL directly
-rather than generating it from a Go-side schema.
+applied one. Migration tool is `goose`, one migration per table, sequentially numbered
+(`00001_users.sql`, `00002_sessions.sql`, …) via `goose -dir migrations create -s <name> sql` —
+the `-s` flag is what forces sequential rather than timestamp-based numbering, which matters
+because `sqlc` reads `migrations/` in filename order and 14 migrations authored in one sitting
+would otherwise sort by accident rather than by intent. Apply with
+`goose -dir migrations postgres "$DATABASE_URL" up`.
 
 Checklist for a new table:
 
@@ -317,3 +418,7 @@ Checklist for a new table:
 2. Verify it applies cleanly to a fresh database.
 3. Update this file's table listing and, if it holds per-user state, confirm the
    `(user_id, …)` key and index shape.
+
+FK actions are part of the table definition, so a change to a deletion policy after a
+migration has merged is an `ALTER TABLE … DROP CONSTRAINT … ADD CONSTRAINT …` migration, not an
+edit to the original.

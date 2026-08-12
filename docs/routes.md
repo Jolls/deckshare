@@ -53,7 +53,7 @@ contract for `POST /api/reviews/batch` is pinned down there in full and is not r
 | GET | `/decks/{id}` | `can_view` | Detail: notes list, card/due counts |
 | GET | `/decks/{id}/edit` | `can_edit_settings` | Edit form (name, description, preset) |
 | POST | `/decks/{id}/edit` | `can_edit_settings` | Update |
-| POST | `/decks/{id}/delete` | `can_delete` | Delete — currently unreachable behind FK restricts, see [#51](https://github.com/Jolls/enshu/issues/51) |
+| POST | `/decks/{id}/delete` | `can_view`, `can_delete` | Delete deck, its cards, and any note left with no cards anywhere; notes with cards in other decks are re-homed. Query layer: `db.DeleteDeck` requires both flags — `can_view` is normally granted alongside every other flag by convention (schema.md), and requiring it here keeps a caller who somehow holds `can_delete` without `can_view` from learning the deck exists via a different error shape ([#51](https://github.com/Jolls/enshu/issues/51)); handler is Phase 1 step 5 |
 
 ---
 
@@ -69,7 +69,7 @@ its owner's decks.
 | POST | `/note-types` | — | Create |
 | GET | `/note-types/{id}/edit` | owns row | Edit form |
 | POST | `/note-types/{id}/edit` | owns row | Update fields/templates/CSS |
-| POST | `/note-types/{id}/delete` | owns row | Delete — blocked while any note references it |
+| POST | `/note-types/{id}/delete` | owns row | Delete — blocked while any note references it, enforced by `notes.note_type_id ON DELETE RESTRICT`; `fields` and `templates` cascade |
 
 **Open question — not a route table decision, needs a call before Phase 2:** rendering a note
 in a shared deck requires reading its note type's fields/templates, but `note_types` has no
@@ -93,7 +93,7 @@ as a side effect of note writes.
 | POST | `/decks/{deckId}/notes` | `can_edit_content` | Create note; generates its cards |
 | GET | `/notes/{id}/edit` | `can_edit_content` | Edit form |
 | POST | `/notes/{id}/edit` | `can_edit_content` | Update fields/tags; regenerates cards if cloze ordinals changed |
-| POST | `/notes/{id}/delete` | `can_edit_content` | Delete note and its cards |
+| POST | `/notes/{id}/delete` | `can_edit_content` | Delete note and its cards — `cards.note_id ON DELETE CASCADE`, a single-statement delete; `review_log` rows for the deleted cards persist |
 | POST | `/notes/{id}/move` | `can_edit_content` | Change `deck_id`; must also update denormalised `owner_id` (schema.md, "must not drift") |
 
 ---
@@ -123,9 +123,13 @@ access until Phase 2 (architecture.md §11).
 | POST | `/decks/{id}/access/{userId}/edit` | `can_manage_access` | Change a collaborator's flags |
 | POST | `/decks/{id}/access/{userId}/delete` | `can_manage_access` | Revoke access (delete the row) |
 
-**Open question:** no guard yet against removing the last `can_manage_access` (or `can_delete`)
-holder from a deck, which would strand it with no one able to manage access or delete it — also
-noted in [schema.md](schema.md).
+**Last-holder guard, enforced.** A deck must always retain at least one `can_manage_access`
+holder and one `can_delete` holder. `db.RevokeDeckAccess` and `db.SetDeckAccess`
+([#51](https://github.com/Jolls/enshu/issues/51)) apply the mutation and re-count holders in the
+same transaction, under a deck row lock, returning `ErrLastAccessHolder` when it would strand the
+deck — the handler answers **409**. Two consequences: a deck's sole member cannot revoke their
+own access (they delete the deck instead), and `decks.owner_id` is not a permission source and
+exempts nobody from the guard.
 
 ---
 
@@ -185,7 +189,10 @@ Collected from above, so they're visible in one place:
 1. **Note-type read access under sharing** (Notes/note-types section) — a user with only
    `can_view`/`can_study` on a deck has no read path to a note type they don't own that backs
    one of its notes.
-2. **Last-`can_manage_access`/`can_delete`-holder guard** on `deck_access` (Access section) —
-   unguarded today; also noted in [schema.md](schema.md).
-3. **Card preview route** — not included. Add only if template authoring needs a live preview
+2. **Card preview route** — not included. Add only if template authoring needs a live preview
    before a note exists to generate one from.
+
+**Explicitly not routed:** no account-deletion route. User deletion is blocked at the FK level
+by design ([#51](https://github.com/Jolls/enshu/issues/51)) — a user's decks, notes, note types,
+access grants, scheduling state, and review history all restrict. Account closure needs an
+ownership-transfer decision for shared decks and a written `review_log` decision first.
