@@ -3,6 +3,17 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.6] - 2026-08-11
+
+### Added
+- Go module scaffold: `cmd/enshu/` entrypoint (config from env, DB pool, graceful shutdown) and
+  the `internal/` package skeleton from architecture.md §4 ([#49](https://github.com/Jolls/enshu/issues/49))
+- `sqlc` wired to generate from `migrations/` + `internal/db/queries/`; `goose` wired to
+  `migrations/` for schema migrations
+- `golangci-lint` v2 config (`standard` linter set)
+- Multi-arch `Dockerfile` (`GOOS`/`GOARCH` cross-compile, distroless runtime image)
+- GitHub Actions CI: `go build`, `go vet`, `golangci-lint run`, `go test ./...` on push and PR
+
 ## [0.1.5] - 2026-08-10
 
 Documentation only. Reconciles the docs with a ground-up stack re-evaluation

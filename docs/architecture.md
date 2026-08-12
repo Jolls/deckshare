@@ -38,17 +38,19 @@ implementation if anything below turns out to need double-checking against it. B
 this file, `schema.md`, and `apkg-format.md` were re-checked against it for anything load-bearing
 that hadn't already made it into the docs — session-cookie hardening, timing-safe login/signup,
 the sanitisation allowlist's XSS-defense rationale, the advisory-lock deadlock-avoidance rule,
-and a card-regeneration data-loss trap among them — and folded in where found. No Go code exists
-yet — the stack table and repo layout below describe the target, not something already
-scaffolded.
+and a card-regeneration data-loss trap among them — and folded in where found.
+
+**Build order step 1 (§11) is scaffolded** ([#49](https://github.com/Jolls/enshu/issues/49)):
+`cmd/enshu/`, the `internal/` package skeleton (§4), `sqlc`/`goose` wiring, `golangci-lint`,
+a multi-arch `Dockerfile`, and GitHub Actions CI. No schema, auth, FSRS, or `.apkg` logic yet —
+those are their own build-order steps.
 
 ---
 
 ## 3. Stack
 
-Not yet scaffolded — no Go code exists yet (§1). This table describes the target, decided in
-[docs/plans/architecture-reconsidered.md](plans/architecture-reconsidered.md); the pinned
-versions column fills in once the scaffold session picks them.
+Scaffolded as of [#49](https://github.com/Jolls/enshu/issues/49) (§1). This table describes the
+target, decided in [docs/plans/architecture-reconsidered.md](plans/architecture-reconsidered.md).
 
 | Concern | Choice | Notes |
 |---|---|---|
@@ -108,9 +110,8 @@ same determinism for a different reason: replaying one `review_log` twice must p
 
 ## 4. Repo layout
 
-**Provisional — nothing here is scaffolded yet.** Exact package names are open (§12); what
-follows is the shape the layout needs to have, illustrated with placeholder names so the
-boundary rules below have something concrete to refer to.
+**Scaffolded as of [#49](https://github.com/Jolls/enshu/issues/49).** Package names below are
+the ones actually in the repo, not placeholders.
 
 ```
 enshu/
