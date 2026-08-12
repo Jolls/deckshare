@@ -42,8 +42,13 @@ and a card-regeneration data-loss trap among them — and folded in where found.
 
 **Build order step 1 (§11) is scaffolded** ([#49](https://github.com/Jolls/enshu/issues/49)):
 `cmd/enshu/`, the `internal/` package skeleton (§4), `sqlc`/`goose` wiring, `golangci-lint`,
-a multi-arch `Dockerfile`, and GitHub Actions CI. No schema, auth, FSRS, or `.apkg` logic yet —
-those are their own build-order steps.
+a multi-arch `Dockerfile`, and GitHub Actions CI.
+
+**Build order step 2 (§11) has landed** ([#50](https://github.com/Jolls/enshu/issues/50),
+[#51](https://github.com/Jolls/enshu/issues/51)): the full schema as 14 `goose` migrations and
+`sqlc`-generated Go, with the terminal deletion policy (§20, docs/schema.md) and the deck-delete
+transaction / last-access-holder guard (`internal/db/deletion.go`). Auth, FSRS, and `.apkg` logic
+remain their own build-order steps.
 
 ---
 
@@ -94,7 +99,7 @@ exists to prevent: a corrupt optimiser fit or a hand-edited `user_fsrs_params` r
 happily and wrongly with nothing raised. Verify `go-fsrs`'s validation behaviour before relying
 on it, and if it's similarly permissive, reject explicitly before calling it: wrong parameter
 count for the declared `fsrs_version`, any non-finite weight, `desired_retention` outside `(0,
-1]`.
+1)`.
 
 **Verify `go-fsrs`'s fuzz behaviour and force it off (or deterministic) before relying on
 batch-precompute/grade-time parity.** FSRS's optional "fuzz" randomises an interval slightly; if
@@ -696,8 +701,13 @@ filed, where the notes list shows it, and the default for cards generated later.
 no reader change, one decision in the writer. `primaryDeckAnkiId` then either becomes that home
 deck or goes away.
 
-One consequence to settle while doing it: `notes.deck_id` and `cards.deck_id` both cascade on
-deck delete, so deleting a note's home deck would take cards living in *other* decks with it.
-Anki's own answer is that deleting a deck deletes its cards, and notes left with no cards go
-too. Deletion policy is already unreachable behind the FK restricts (#15), so settle both at
-once.
+One consequence, settled in [#51](https://github.com/Jolls/enshu/issues/51): deleting a deck
+deletes the cards filed in it, and a note goes only when it has **no cards left anywhere** — so a
+note whose cards span decks survives its home deck's deletion and is re-homed to the deck of its
+lowest-ordinal surviving card. That is not expressible as a static FK cascade, so `cards.deck_id`
+cascades while `notes.deck_id` restricts, and deck deletion runs as an ordered transaction in
+`internal/db/deletion.go`. `review_log` keeps every row: its `card_id` is not a foreign key, the
+same shape Anki's `revlog.cid` has, which is what lets a studied deck be deletable without any
+`DELETE` path over training data (CLAUDE.md §2.5). Full policy: docs/schema.md, Deletion policy;
+reasoning: `docs/plans/51-deletion-policy.md`. Filing `cards.deck_id` from `IrCard.deckAnkiId`
+remains #33's job — the schema is ready for it.
