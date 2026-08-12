@@ -14,3 +14,10 @@ Thumbs.db
 # Claude Code local settings (machine-specific permissions)
 .claude/settings.local.json
 .claude/memory/*
+
+# Go build output
+/bin/
+/enshu
+/enshu.exe
+*.test
+coverage.out
