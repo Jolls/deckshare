@@ -11,6 +11,45 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createUser = `-- name: CreateUser :one
+INSERT INTO users (email, password_hash, display_name)
+VALUES ($1, $2, $3)
+ON CONFLICT (lower(email)) DO NOTHING
+RETURNING id, email, password_hash, display_name, timezone, day_start_hour, created_at
+`
+
+type CreateUserParams struct {
+	Email        string `json:"email"`
+	PasswordHash string `json:"password_hash"`
+	DisplayName  string `json:"display_name"`
+}
+
+func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, createUser, arg.Email, arg.PasswordHash, arg.DisplayName)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.DisplayName,
+		&i.Timezone,
+		&i.DayStartHour,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const emailExists = `-- name: EmailExists :one
+SELECT EXISTS (SELECT 1 FROM users WHERE lower(email) = lower($1))
+`
+
+func (q *Queries) EmailExists(ctx context.Context, email string) (bool, error) {
+	row := q.db.QueryRow(ctx, emailExists, email)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const getUser = `-- name: GetUser :one
 SELECT id, email, password_hash, display_name, timezone, day_start_hour, created_at FROM users WHERE id = $1
 `
@@ -28,4 +67,58 @@ func (q *Queries) GetUser(ctx context.Context, id pgtype.UUID) (User, error) {
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getUserByEmail = `-- name: GetUserByEmail :one
+SELECT id, email, password_hash, display_name, timezone, day_start_hour, created_at FROM users WHERE lower(email) = lower($1)
+`
+
+func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByEmail, email)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.DisplayName,
+		&i.Timezone,
+		&i.DayStartHour,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updateUserPassword = `-- name: UpdateUserPassword :exec
+UPDATE users SET password_hash = $2 WHERE id = $1
+`
+
+type UpdateUserPasswordParams struct {
+	ID           pgtype.UUID `json:"id"`
+	PasswordHash string      `json:"password_hash"`
+}
+
+func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error {
+	_, err := q.db.Exec(ctx, updateUserPassword, arg.ID, arg.PasswordHash)
+	return err
+}
+
+const updateUserProfile = `-- name: UpdateUserProfile :exec
+UPDATE users SET display_name = $2, timezone = $3, day_start_hour = $4 WHERE id = $1
+`
+
+type UpdateUserProfileParams struct {
+	ID           pgtype.UUID `json:"id"`
+	DisplayName  string      `json:"display_name"`
+	Timezone     string      `json:"timezone"`
+	DayStartHour int16       `json:"day_start_hour"`
+}
+
+func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) error {
+	_, err := q.db.Exec(ctx, updateUserProfile,
+		arg.ID,
+		arg.DisplayName,
+		arg.Timezone,
+		arg.DayStartHour,
+	)
+	return err
 }

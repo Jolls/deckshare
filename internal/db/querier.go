@@ -14,15 +14,20 @@ type Querier interface {
 	// The guard itself, run AFTER the mutation inside the same transaction. Zero of either count
 	// means the deck has been stranded and the caller must roll back.
 	CountDeckAccessHolders(ctx context.Context, deckID pgtype.UUID) (CountDeckAccessHoldersRow, error)
+	CreateSession(ctx context.Context, arg CreateSessionParams) error
+	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteDeckAccessRow(ctx context.Context, arg DeleteDeckAccessRowParams) (int64, error)
 	// Step 4 of DeleteDeck. Cascades to cards (and through them to user_card_state), deck_access,
 	// per-deck user_fsrs_params, and media_refs. Authorisation happened under the lock above.
 	DeleteDeckRow(ctx context.Context, deckID pgtype.UUID) (int64, error)
+	DeleteExpiredSessions(ctx context.Context) (int64, error)
 	// Step 2 of DeleteDeck. Deletes every note that this deck delete would leave with no cards at
 	// all: notes homed here, and notes homed elsewhere whose cards all live here -- but only when
 	// nothing of theirs survives outside this deck. Cascades to cards and user_card_state.
 	// review_log is untouched and has no FK to cards (#51 §0.4).
 	DeleteNotesOrphanedByDeckDelete(ctx context.Context, deckID pgtype.UUID) (int64, error)
+	DeleteSession(ctx context.Context, id string) error
+	EmailExists(ctx context.Context, email string) (bool, error)
 	GetCard(ctx context.Context, id pgtype.UUID) (Card, error)
 	GetDeck(ctx context.Context, id pgtype.UUID) (Deck, error)
 	GetDeckAccess(ctx context.Context, arg GetDeckAccessParams) (DeckAccess, error)
@@ -33,8 +38,10 @@ type Querier interface {
 	GetNoteType(ctx context.Context, id pgtype.UUID) (NoteType, error)
 	GetReviewLogEntry(ctx context.Context, id pgtype.UUID) (ReviewLog, error)
 	GetSession(ctx context.Context, id string) (Session, error)
+	GetSessionUser(ctx context.Context, id string) (GetSessionUserRow, error)
 	GetTemplate(ctx context.Context, id pgtype.UUID) (Template, error)
 	GetUser(ctx context.Context, id pgtype.UUID) (User, error)
+	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserCardState(ctx context.Context, arg GetUserCardStateParams) (UserCardState, error)
 	GetUserFsrsParams(ctx context.Context, id pgtype.UUID) (UserFsrsParam, error)
 	// Locks the deck and authorises an access change. Same 404-shaped no-row contract as
@@ -56,7 +63,10 @@ type Querier interface {
 	// requires owner_id to track the current deck's owner (it's denormalised, not enforced by a DB
 	// constraint), and a re-home is exactly the kind of deck move that must not let it drift.
 	RehomeNotesOffDeck(ctx context.Context, deckID pgtype.UUID) (int64, error)
+	RenewSession(ctx context.Context, arg RenewSessionParams) error
 	UpdateDeckAccessRow(ctx context.Context, arg UpdateDeckAccessRowParams) (int64, error)
+	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
+	UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) error
 }
 
 var _ Querier = (*Queries)(nil)

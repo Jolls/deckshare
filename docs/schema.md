@@ -306,7 +306,8 @@ value round-tripped through it would not byte-match what the batch-preview and g
 `Repeat()` calls compute in memory (architecture.md §6, CLAUDE.md §10.2) — the consistency
 check between them needs exact values to compare, not ones already degraded by storage.
 
-`user_card_state.learning_steps` mirrors `go-fsrs`'s `Card.LearningSteps`. FSRS-6 short-term
+`user_card_state.learning_steps` mirrors `go-fsrs`'s `Card.RemainingSteps` (v4's field name; the
+column name follows the concept, not the library's current identifier). FSRS-6 short-term
 scheduling reads it, so it has to survive a reload or a `review_log` replay.
 
 `review_log` rows carry `*_before` values and `fsrs_version` so the log stays interpretable

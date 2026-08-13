@@ -30,7 +30,7 @@ contract for `POST /api/reviews/batch` is pinned down there in full and is not r
 
 ---
 
-## Auth — `auth.go` (Phase 1, step 3)
+## Auth — `auth.go` (Phase 1, step 3) -- built (#52)
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
@@ -39,7 +39,7 @@ contract for `POST /api/reviews/batch` is pinned down there in full and is not r
 | GET | `/login` | public | Login form |
 | POST | `/login` | public | Verify credentials, create session (cookie: hashed token, §12) |
 | POST | `/logout` | session | Destroy session |
-| GET | `/` | public | Redirect to `/decks` if authed, else `/login` |
+| GET | `/` | public | Renders a placeholder home page for an authed user (deck management arrives in step 5, which replaces this with a redirect to `/decks`); redirects to `/login` otherwise |
 
 ---
 
@@ -133,7 +133,7 @@ exempts nobody from the guard.
 
 ---
 
-## Settings — `settings.go` (Phase 1: account settings step 3, FSRS default step 9)
+## Settings — `settings.go` (Phase 1: account settings step 3 -- built (#52), FSRS default step 9)
 
 | Method | Path | Permission | Purpose |
 |---|---|---|---|
@@ -142,6 +142,9 @@ exempts nobody from the guard.
 | POST | `/settings/password` | session | Change password |
 | POST | `/settings/fsrs` | session | Update the global `desired_retention` default |
 | POST | `/decks/{id}/settings/fsrs` | `can_study` | Per-deck override. Scoped to the caller, not the deck — `user_fsrs_params` keys on `(user_id, deck_id)`, so this is "my retention target for this deck," not a deck-wide setting an admin sets for everyone |
+
+`/settings/fsrs` and `/decks/{id}/settings/fsrs` are step 9 (`user_fsrs_params` isn't a UI concept
+yet) and are not part of #52 — only the profile and password rows above are built.
 
 ---
 

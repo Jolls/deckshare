@@ -50,6 +50,13 @@ a multi-arch `Dockerfile`, and GitHub Actions CI.
 transaction / last-access-holder guard (`internal/db/deletion.go`). Auth, FSRS, and `.apkg` logic
 remain their own build-order steps.
 
+**Build order step 3 (§11) has landed** ([#52](https://github.com/Jolls/enshu/issues/52)):
+`internal/auth/` — signup/login/logout with a `__Host-`-prefixed session cookie, sliding
+expiration, `argon2id` password hashing, an `Origin`-header CSRF check enforced centrally in
+`Service.Middleware`, per-key rate limiting on login and signup, and an in-process ticker that
+sweeps expired sessions and stale rate-limit buckets hourly. Also includes the `/settings`
+profile and password-change routes (docs/routes.md).
+
 ---
 
 ## 3. Stack
