@@ -3,6 +3,37 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.8] - 2026-08-13
+
+### Added
+- `internal/auth/`: signup, login, and logout with a `__Host-`-prefixed session cookie, sliding
+  expiration, `argon2id` password hashing, an `Origin`-header CSRF check enforced centrally in
+  the auth middleware, per-key rate limiting on login (IP + email) and signup (IP), and an
+  in-process ticker that sweeps expired sessions and stale rate-limit buckets hourly
+  ([#52](https://github.com/Jolls/enshu/issues/52))
+- `/settings` account routes: profile (display name, timezone, day-start hour) and password
+  change ([#52](https://github.com/Jolls/enshu/issues/52))
+- First server-rendered HTML templates (`web/templates/`): login, signup, home, and settings
+  pages over a shared layout, Pico CSS from CDN ([#52](https://github.com/Jolls/enshu/issues/52))
+- `internal/fsrs/`: pure wrapper over `go-fsrs` v4 (FSRS-6) with `Schedule` (grade-time recompute)
+  and `PreviewAll` (batch-preview precompute over all four ratings), explicit `fsrs_version`/weight
+  count/finite-weight/`desired_retention` validation ahead of the library, fuzz forced off for
+  batch-preview/grade-time determinism, and an `ElapsedDays` helper matching go-fsrs's own
+  calendar-day-boundary semantics ([#53](https://github.com/Jolls/enshu/issues/53))
+- Property-based batch-preview/grade-time consistency test (CLAUDE.md §10.2, this repo's
+  second-highest testing priority) over 500 random review sequences, plus determinism tests for
+  `Schedule` and full-sequence replay ([#53](https://github.com/Jolls/enshu/issues/53))
+
+### Security
+- Timing-safe login (a fixed dummy `argon2id` hash for unknown accounts, compared unconditionally)
+  and timing-safe signup (existence check and password hash run unconditionally and in parallel)
+  ([#52](https://github.com/Jolls/enshu/issues/52))
+- Rate limiting on `POST /settings/password`, keyed per-user, closing a brute-force gap on
+  `current_password` that the initial pass missed ([#52](https://github.com/Jolls/enshu/issues/52))
+- Login's per-email rate limit now keys on the lower-cased address, matching the case-insensitive
+  account lookup -- previously an attacker could rotate email casing for a fresh 5-attempt budget
+  per variant ([#52](https://github.com/Jolls/enshu/issues/52))
+
 ## [0.1.7] - 2026-08-11
 
 ### Added

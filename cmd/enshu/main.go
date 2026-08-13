@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Jolls/enshu/internal/auth"
 	"github.com/Jolls/enshu/internal/db"
 	apphttp "github.com/Jolls/enshu/internal/http"
 )
@@ -41,9 +42,20 @@ func run() error {
 	}
 	defer pool.Close()
 
+	authSvc, err := auth.New(pool, auth.Config{Origin: os.Getenv("ORIGIN")})
+	if err != nil {
+		return fmt.Errorf("init auth: %w", err)
+	}
+	go authSvc.Run(ctx, time.Hour)
+
+	handler, err := apphttp.NewHandler(pool, authSvc)
+	if err != nil {
+		return fmt.Errorf("build handler: %w", err)
+	}
+
 	srv := &http.Server{
 		Addr:    addr,
-		Handler: apphttp.NewMux(pool),
+		Handler: handler,
 	}
 
 	errCh := make(chan error, 1)

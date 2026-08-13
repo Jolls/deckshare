@@ -1,0 +1,39 @@
+{{define "content"}}
+<h1>Account settings</h1>
+
+<section>
+    <h2>Profile</h2>
+    {{if .ProfileError}}<p style="color: red;">{{.ProfileError}}</p>{{end}}
+    {{if .ProfileSuccess}}<p style="color: green;">{{.ProfileSuccess}}</p>{{end}}
+    <form method="post" action="/settings">
+        <label for="display_name">Name</label>
+        <input type="text" id="display_name" name="display_name" value="{{.User.DisplayName}}" required>
+
+        <label for="timezone">Timezone</label>
+        <input type="text" id="timezone" name="timezone" value="{{.User.Timezone}}" required>
+
+        <label for="day_start_hour">Day start hour</label>
+        <input type="number" id="day_start_hour" name="day_start_hour" min="0" max="23" value="{{.User.DayStartHour}}" required>
+
+        <button type="submit">Update profile</button>
+    </form>
+</section>
+
+<section>
+    <h2>Change password</h2>
+    {{if .PasswordError}}<p style="color: red;">{{.PasswordError}}</p>{{end}}
+    {{if .PasswordSuccess}}<p style="color: green;">{{.PasswordSuccess}}</p>{{end}}
+    <form method="post" action="/settings/password">
+        <label for="current_password">Current password</label>
+        <input type="password" id="current_password" name="current_password" required>
+
+        <label for="new_password">New password</label>
+        <input type="password" id="new_password" name="new_password" required>
+
+        <label for="confirm_password">Confirm new password</label>
+        <input type="password" id="confirm_password" name="confirm_password" required>
+
+        <button type="submit">Change password</button>
+    </form>
+</section>
+{{end}}

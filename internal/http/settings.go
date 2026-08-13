@@ -1,0 +1,111 @@
+package http
+
+import (
+	"errors"
+	"html/template"
+	"math"
+	"net/http"
+	"strconv"
+
+	"github.com/Jolls/enshu/internal/auth"
+)
+
+func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*template.Template) {
+	mux.Handle("GET /settings", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, _ := auth.UserFromContext(r.Context())
+		render(w, pages["settings"], http.StatusOK, map[string]any{"User": user})
+	})))
+
+	mux.Handle("POST /settings", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, _ := auth.UserFromContext(r.Context())
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		displayName := r.PostForm.Get("display_name")
+		timezone := r.PostForm.Get("timezone")
+		dayStartHour, atoiErr := strconv.Atoi(r.PostForm.Get("day_start_hour"))
+
+		// Sticky display values: whatever was submitted, valid or not, is what re-renders --
+		// set once here so every branch below (bad input, validation failure, success) shows
+		// the same thing without repeating the assignment.
+		user.DisplayName = displayName
+		user.Timezone = timezone
+		if atoiErr == nil && dayStartHour >= math.MinInt16 && dayStartHour <= math.MaxInt16 {
+			user.DayStartHour = int16(dayStartHour)
+		}
+
+		if atoiErr != nil || dayStartHour < math.MinInt16 || dayStartHour > math.MaxInt16 {
+			// This only guards the int16 conversion below against overflow -- the actual
+			// 0-23 business rule is enforced once, downstream in a.UpdateProfile.
+			render(w, pages["settings"], http.StatusBadRequest, map[string]any{
+				"User":         user,
+				"ProfileError": "Day start hour must be a valid number",
+			})
+			return
+		}
+
+		if err := a.UpdateProfile(r.Context(), user.ID, displayName, timezone, int16(dayStartHour)); err != nil {
+			status, msg, _, ok := classifyFormError(err, nil)
+			if !ok {
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+				return
+			}
+			render(w, pages["settings"], status, map[string]any{
+				"User":         user,
+				"ProfileError": msg,
+			})
+			return
+		}
+
+		render(w, pages["settings"], http.StatusOK, map[string]any{
+			"User":           user,
+			"ProfileSuccess": "Profile updated",
+		})
+	})))
+
+	mux.Handle("POST /settings/password", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, _ := auth.UserFromContext(r.Context())
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		currentPassword := r.PostForm.Get("current_password")
+		newPassword := r.PostForm.Get("new_password")
+		confirmPassword := r.PostForm.Get("confirm_password")
+
+		if newPassword != confirmPassword {
+			render(w, pages["settings"], http.StatusBadRequest, map[string]any{
+				"User":          user,
+				"PasswordError": "Passwords do not match",
+			})
+			return
+		}
+
+		if err := a.ChangePassword(r.Context(), user.ID, user.PasswordHash, currentPassword, newPassword); err != nil {
+			status, msg, retryAfter, ok := classifyFormError(err, func(e error) (int, string, bool) {
+				if errors.Is(e, auth.ErrInvalidCredentials) {
+					return http.StatusUnauthorized, "Current password is incorrect", true
+				}
+				return 0, "", false
+			})
+			if !ok {
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+				return
+			}
+			if retryAfter != "" {
+				w.Header().Set("Retry-After", retryAfter)
+			}
+			render(w, pages["settings"], status, map[string]any{
+				"User":          user,
+				"PasswordError": msg,
+			})
+			return
+		}
+
+		render(w, pages["settings"], http.StatusOK, map[string]any{
+			"User":            user,
+			"PasswordSuccess": "Password changed",
+		})
+	})))
+}

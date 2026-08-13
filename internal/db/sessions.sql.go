@@ -7,7 +7,45 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const createSession = `-- name: CreateSession :exec
+INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)
+`
+
+type CreateSessionParams struct {
+	ID        string             `json:"id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+}
+
+func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) error {
+	_, err := q.db.Exec(ctx, createSession, arg.ID, arg.UserID, arg.ExpiresAt)
+	return err
+}
+
+const deleteExpiredSessions = `-- name: DeleteExpiredSessions :execrows
+DELETE FROM sessions WHERE expires_at < now()
+`
+
+func (q *Queries) DeleteExpiredSessions(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredSessions)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteSession = `-- name: DeleteSession :exec
+DELETE FROM sessions WHERE id = $1
+`
+
+func (q *Queries) DeleteSession(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, deleteSession, id)
+	return err
+}
 
 const getSession = `-- name: GetSession :one
 SELECT id, user_id, expires_at, created_at FROM sessions WHERE id = $1
@@ -23,4 +61,46 @@ func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getSessionUser = `-- name: GetSessionUser :one
+SELECT u.id, u.email, u.password_hash, u.display_name, u.timezone, u.day_start_hour, u.created_at, s.expires_at
+FROM sessions s
+JOIN users u ON u.id = s.user_id
+WHERE s.id = $1 AND s.expires_at > now()
+`
+
+type GetSessionUserRow struct {
+	User      User               `json:"user"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+}
+
+func (q *Queries) GetSessionUser(ctx context.Context, id string) (GetSessionUserRow, error) {
+	row := q.db.QueryRow(ctx, getSessionUser, id)
+	var i GetSessionUserRow
+	err := row.Scan(
+		&i.User.ID,
+		&i.User.Email,
+		&i.User.PasswordHash,
+		&i.User.DisplayName,
+		&i.User.Timezone,
+		&i.User.DayStartHour,
+		&i.User.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const renewSession = `-- name: RenewSession :exec
+UPDATE sessions SET expires_at = $2 WHERE id = $1
+`
+
+type RenewSessionParams struct {
+	ID        string             `json:"id"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+}
+
+func (q *Queries) RenewSession(ctx context.Context, arg RenewSessionParams) error {
+	_, err := q.db.Exec(ctx, renewSession, arg.ID, arg.ExpiresAt)
+	return err
 }
