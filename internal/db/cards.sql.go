@@ -11,6 +11,92 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const appendNoteFieldSlot = `-- name: AppendNoteFieldSlot :execrows
+UPDATE notes SET fields = fields || '""'::jsonb, modified_at = now() WHERE note_type_id = $1
+`
+
+func (q *Queries) AppendNoteFieldSlot(ctx context.Context, noteTypeID pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, appendNoteFieldSlot, noteTypeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const createCard = `-- name: CreateCard :one
+INSERT INTO cards (note_id, template_id, ordinal, deck_id) VALUES ($1, $2, $3, $4) RETURNING id, note_id, template_id, ordinal, deck_id, anki_id
+`
+
+type CreateCardParams struct {
+	NoteID     pgtype.UUID `json:"note_id"`
+	TemplateID pgtype.UUID `json:"template_id"`
+	Ordinal    int32       `json:"ordinal"`
+	DeckID     pgtype.UUID `json:"deck_id"`
+}
+
+// Called once per card in the create set (§0.3's "create" batch is small -- at most one row
+// per template/cloze ordinal) rather than as a single multi-row statement: sqlc's query
+// analyzer cannot resolve a two-array unnest(...) without a live database catalog.
+func (q *Queries) CreateCard(ctx context.Context, arg CreateCardParams) (Card, error) {
+	row := q.db.QueryRow(ctx, createCard,
+		arg.NoteID,
+		arg.TemplateID,
+		arg.Ordinal,
+		arg.DeckID,
+	)
+	var i Card
+	err := row.Scan(
+		&i.ID,
+		&i.NoteID,
+		&i.TemplateID,
+		&i.Ordinal,
+		&i.DeckID,
+		&i.AnkiID,
+	)
+	return i, err
+}
+
+const createCardsForNewTemplate = `-- name: CreateCardsForNewTemplate :execrows
+INSERT INTO cards (note_id, template_id, ordinal, deck_id)
+SELECT n.id, $1, $2, n.deck_id
+FROM notes n WHERE n.note_type_id = $3
+ON CONFLICT (note_id, ordinal) DO NOTHING
+`
+
+type CreateCardsForNewTemplateParams struct {
+	TemplateID pgtype.UUID `json:"template_id"`
+	Ordinal    int32       `json:"ordinal"`
+	NoteTypeID pgtype.UUID `json:"note_type_id"`
+}
+
+// One card per existing note when a template is appended to a non-cloze note type (#54 §0.5).
+// Filed in each note's home deck: notes.deck_id is the default for cards generated later
+// (architecture.md §20).
+func (q *Queries) CreateCardsForNewTemplate(ctx context.Context, arg CreateCardsForNewTemplateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, createCardsForNewTemplate, arg.TemplateID, arg.Ordinal, arg.NoteTypeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteCardsByOrdinals = `-- name: DeleteCardsByOrdinals :execrows
+DELETE FROM cards WHERE note_id = $1 AND ordinal = ANY($2::int[])
+`
+
+type DeleteCardsByOrdinalsParams struct {
+	NoteID   pgtype.UUID `json:"note_id"`
+	Ordinals []int32     `json:"ordinals"`
+}
+
+func (q *Queries) DeleteCardsByOrdinals(ctx context.Context, arg DeleteCardsByOrdinalsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteCardsByOrdinals, arg.NoteID, arg.Ordinals)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getCard = `-- name: GetCard :one
 SELECT id, note_id, template_id, ordinal, deck_id, anki_id FROM cards WHERE id = $1
 `
@@ -27,4 +113,44 @@ func (q *Queries) GetCard(ctx context.Context, id pgtype.UUID) (Card, error) {
 		&i.AnkiID,
 	)
 	return i, err
+}
+
+const listCardsForNoteForUpdate = `-- name: ListCardsForNoteForUpdate :many
+
+SELECT id, ordinal, template_id, deck_id FROM cards WHERE note_id = $1 ORDER BY ordinal FOR UPDATE
+`
+
+type ListCardsForNoteForUpdateRow struct {
+	ID         pgtype.UUID `json:"id"`
+	Ordinal    int32       `json:"ordinal"`
+	TemplateID pgtype.UUID `json:"template_id"`
+	DeckID     pgtype.UUID `json:"deck_id"`
+}
+
+// Cards are content addressing only -- no scheduling columns exist here to lose (CLAUDE.md §2.1).
+// These four statements are the whole of card regeneration; see internal/db/cards.go for the
+// diff that calls them and docs/schema.md's card-regeneration trap for why it is a diff.
+func (q *Queries) ListCardsForNoteForUpdate(ctx context.Context, noteID pgtype.UUID) ([]ListCardsForNoteForUpdateRow, error) {
+	rows, err := q.db.Query(ctx, listCardsForNoteForUpdate, noteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCardsForNoteForUpdateRow
+	for rows.Next() {
+		var i ListCardsForNoteForUpdateRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Ordinal,
+			&i.TemplateID,
+			&i.DeckID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

@@ -12,7 +12,11 @@ import (
 
 func parseTemplates() (map[string]*template.Template, error) {
 	pages := map[string]*template.Template{}
-	for _, name := range []string{"login", "signup", "home", "settings"} {
+	for _, name := range []string{
+		"login", "signup", "settings",
+		"decks", "deck_new", "deck", "deck_edit",
+		"notetypes", "notetype_form", "note_form",
+	} {
 		t, err := template.ParseFS(web.Templates, "templates/layout.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, fmt.Errorf("parse %s template: %w", name, err)

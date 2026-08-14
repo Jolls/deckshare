@@ -39,25 +39,25 @@ contract for `POST /api/reviews/batch` is pinned down there in full and is not r
 | GET | `/login` | public | Login form |
 | POST | `/login` | public | Verify credentials, create session (cookie: hashed token, §12) |
 | POST | `/logout` | session | Destroy session |
-| GET | `/` | public | Renders a placeholder home page for an authed user (deck management arrives in step 5, which replaces this with a redirect to `/decks`); redirects to `/login` otherwise |
+| GET | `/` | public | Authed: redirects to `/decks` (step 5, #54); redirects to `/login` otherwise |
 
 ---
 
-## Decks — `decks.go` (Phase 1, step 5)
+## Decks — `decks.go` (Phase 1, step 5) -- built (#54)
 
 | Method | Path | Permission | Purpose |
 |---|---|---|---|
 | GET | `/decks` | — | List decks reachable via `deck_access` |
 | GET | `/decks/new` | — | New-deck form |
 | POST | `/decks` | — | Create deck; creator gets a `deck_access` row with all six flags true |
-| GET | `/decks/{id}` | `can_view` | Detail: notes list, card/due counts |
-| GET | `/decks/{id}/edit` | `can_edit_settings` | Edit form (name, description, preset) |
+| GET | `/decks/{id}` | `can_view` | Detail: notes list, note/card counts. Due counts deferred to step 7 (the reviewer) — they need `StudyDayStart`/`StudyDayEnd`, which don't exist yet, and there are no `user_card_state` rows at all before step 7 regardless |
+| GET | `/decks/{id}/edit` | `can_edit_settings` | Edit form (name, description only — `preset` is not yet editable; its shape isn't read by any code until the reviewer's learning-steps config lands) |
 | POST | `/decks/{id}/edit` | `can_edit_settings` | Update |
 | POST | `/decks/{id}/delete` | `can_view`, `can_delete` | Delete deck, its cards, and any note left with no cards anywhere; notes with cards in other decks are re-homed. Query layer: `db.DeleteDeck` requires both flags — `can_view` is normally granted alongside every other flag by convention (schema.md), and requiring it here keeps a caller who somehow holds `can_delete` without `can_view` from learning the deck exists via a different error shape ([#51](https://github.com/Jolls/enshu/issues/51)); handler is Phase 1 step 5 |
 
 ---
 
-## Note types — `notetypes.go` (Phase 1, step 5)
+## Note types — `notetypes.go` (Phase 1, step 5) -- built (#54)
 
 Owner-scoped (`note_types.owner_id`), not deck-scoped — a note type is reusable across all of
 its owner's decks.
@@ -68,7 +68,7 @@ its owner's decks.
 | GET | `/note-types/new` | — | New note-type form (fields + templates builder) |
 | POST | `/note-types` | — | Create |
 | GET | `/note-types/{id}/edit` | owns row | Edit form |
-| POST | `/note-types/{id}/edit` | owns row | Update fields/templates/CSS |
+| POST | `/note-types/{id}/edit` | owns row | Update name/css/field-and-template renames, append new fields/templates. **Removing or reordering an existing field or template is refused with 409 while the note type has any notes** — `notes.fields` is a positional array, and a template removal would delete cards. Free while the note type has zero notes. Follow-up issue: field/template removal-and-reorder with positional note remap |
 | POST | `/note-types/{id}/delete` | owns row | Delete — blocked while any note references it, enforced by `notes.note_type_id ON DELETE RESTRICT`; `fields` and `templates` cascade |
 
 **Open question — not a route table decision, needs a call before Phase 2:** rendering a note
@@ -81,7 +81,7 @@ Neither is decided.
 
 ---
 
-## Notes — `notes.go` (Phase 1, step 5)
+## Notes — `notes.go` (Phase 1, step 5) -- built (#54)
 
 Cards have **no routes of their own** — they're generated from a note × its note type's
 templates (one per template, N per cloze ordinal — architecture.md §8) and destroyed/regenerated
@@ -95,6 +95,9 @@ as a side effect of note writes.
 | POST | `/notes/{id}/edit` | `can_edit_content` | Update fields/tags; regenerates cards if cloze ordinals changed |
 | POST | `/notes/{id}/delete` | `can_edit_content` | Delete note and its cards — `cards.note_id ON DELETE CASCADE`, a single-statement delete; `review_log` rows for the deleted cards persist |
 | POST | `/notes/{id}/move` | `can_edit_content` | Change `deck_id`; must also update denormalised `owner_id` (schema.md, "must not drift") |
+
+The deck-detail notes list (`GET /decks/{id}`, above) is unpaginated — `ORDER BY modified_at
+DESC LIMIT 200`. Follow-up issue: pagination once a deck's note count makes that limit visible.
 
 ---
 

@@ -1,0 +1,52 @@
+{{define "content"}}
+{{if .PickNoteType}}
+<h1>Add note to {{.Deck.Name}}</h1>
+{{if .NoteTypes}}
+<form method="get" action="/decks/{{.Deck.ID}}/notes/new">
+    <label for="note_type_id">Note type</label>
+    <select id="note_type_id" name="note_type_id" required>
+        {{range .NoteTypes}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+    </select>
+    <button type="submit">Continue</button>
+</form>
+{{else}}
+<p>You don't have any note types yet. <a href="/note-types/new">Create one</a> first.</p>
+{{end}}
+{{else if .IsNew}}
+<h1>Add note to {{.Deck.Name}}</h1>
+<form method="post" action="/decks/{{.Deck.ID}}/notes">
+    <input type="hidden" name="note_type_id" value="{{.NoteType.ID}}">
+    {{range .Fields}}
+    <label>{{.Name}}</label>
+    <textarea name="field[]"></textarea>
+    {{end}}
+    <label for="tags">Tags</label>
+    <input type="text" id="tags" name="tags" placeholder="space separated">
+    <button type="submit">Add note</button>
+</form>
+{{else}}
+<h1>Edit note</h1>
+<form method="post" action="/notes/{{.Note.ID}}/edit">
+    {{$values := .FieldValues}}
+    {{range $i, $f := .Fields}}
+    <label>{{$f.Name}}</label>
+    <textarea name="field[]">{{index $values $i}}</textarea>
+    {{end}}
+    <label for="tags">Tags</label>
+    <input type="text" id="tags" name="tags" value="{{range .Note.Tags}}{{.}} {{end}}">
+    <button type="submit">Save</button>
+</form>
+
+<form method="post" action="/notes/{{.Note.ID}}/move">
+    <label for="target_deck_id">Move to deck</label>
+    <select id="target_deck_id" name="target_deck_id">
+        {{range .Decks}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+    </select>
+    <button type="submit">Move</button>
+</form>
+
+<form method="post" action="/notes/{{.Note.ID}}/delete">
+    <button type="submit">Delete note</button>
+</form>
+{{end}}
+{{end}}

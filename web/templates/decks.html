@@ -1,0 +1,27 @@
+{{define "content"}}
+<h1>Decks</h1>
+<p><a href="/decks/new">New deck</a> · <a href="/note-types">Note types</a></p>
+
+{{if .Decks}}
+<table>
+    <thead>
+        <tr><th>Name</th><th>Cards</th><th></th></tr>
+    </thead>
+    <tbody>
+        {{range .Decks}}
+        <tr>
+            <td><a href="/decks/{{.ID}}">{{.Name}}</a></td>
+            <td>{{.CardCount}}</td>
+            <td><a href="/decks/{{.ID}}/edit">Edit</a></td>
+        </tr>
+        {{end}}
+    </tbody>
+</table>
+{{else}}
+<p>No decks yet.</p>
+{{end}}
+
+<form method="post" action="/logout">
+    <button type="submit">Log out</button>
+</form>
+{{end}}

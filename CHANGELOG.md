@@ -3,6 +3,58 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.9] - 2026-08-14
+
+### Added
+- Deck / note-type / note / card CRUD: `internal/http/{decks,notetypes,notes}.go` handlers and
+  server-rendered forms/list pages, following docs/routes.md's Decks/Note types/Notes tables
+  ([#54](https://github.com/Jolls/enshu/issues/54))
+- Card generation on note create and diff-based card regeneration on note edit
+  (`internal/db/cards.go`'s `SyncNoteCards`): one card per template for non-cloze note types, one
+  per distinct cloze ordinal for cloze note types; a surviving ordinal's card keeps its id, and
+  with it its `user_card_state`/`review_log` history, instead of the drop-and-recreate trap
+  docs/schema.md warns against ([#54](https://github.com/Jolls/enshu/issues/54))
+- `internal/render.ClozeOrdinals`, a pure cloze-marker scanner shared by card generation and the
+  future rendering engine (#55) ([#54](https://github.com/Jolls/enshu/issues/54))
+- DB-backed regression test for the card-regeneration trap (edit a 3-cloze note; assert a
+  surviving card's id and `user_card_state` are untouched) and a composite-FK regression test
+  for `notes.owner_id = decks.owner_id` ([#54](https://github.com/Jolls/enshu/issues/54))
+- `internal/render/`: note-type template rendering (§8) — `{{Field}}`, `{{#Field}}`/`{{^Field}}`
+  sections, `{{FrontSide}}`, filters (`text`, `furigana`/`kanji`/`kana`, `hint`, `cloze`,
+  `type`), special tags (`{{Tags}}`, `{{Type}}`, `{{Deck}}`, `{{Subdeck}}`, `{{Card}}`), and
+  cloze fan-out with nested-marker support. `RenderCard(tmpl, note, ordinal, isCloze)` is the
+  sole entry point ([#55](https://github.com/Jolls/enshu/issues/55))
+- Card-content HTML sanitisation on render, via a `bluemonday` allowlist policy: no
+  non-HTML-parsing-mode elements (`svg`/`math`/`style`/`script`/`textarea`/`title`/…), a URL
+  scheme allowlist (`http`/`https`/`mailto`), and a shared CSS value grammar banning any bare
+  `(` outside the four colour functions, applied to both inline `style=""` and the note-type CSS
+  blob ([#55](https://github.com/Jolls/enshu/issues/55))
+- `internal/render.SanitiseCSS`: note-type CSS-blob sanitisation via `douceur`'s parser —
+  property/selector allowlists, the same value grammar as inline styles, all at-rules dropped,
+  selectors scoped to `.enshu-card` ([#55](https://github.com/Jolls/enshu/issues/55))
+- `{{type:Field}}` answer-input boundary: rendering leaves an unguessable placeholder (never
+  HTML) in `Rendered.HTML`; `TypeAnswerInput`/`TypeAnswerExpected` splice the real widget in
+  *after* sanitisation, so the widget can never be sanitised as card content and never needs a
+  hole in the allowlist ([#55](https://github.com/Jolls/enshu/issues/55))
+
+### Changed
+- `notes.owner_id = decks.owner_id` is now enforced at the database level: `decks` carries
+  `UNIQUE (id, owner_id)` and `notes` a composite `FOREIGN KEY (deck_id, owner_id)` (migration
+  `00015`), replacing the query-layer-only convention
+  ([#54](https://github.com/Jolls/enshu/issues/54))
+- `GET /` now redirects an authed user straight to `/decks` instead of rendering a placeholder
+  home page; `web/templates/home.html` removed ([#54](https://github.com/Jolls/enshu/issues/54))
+- `internal/render.ClozeOrdinals`'s cloze-marker scanner now tracks brace depth, so a nested
+  `{{c2::…}}` inside `{{c1::…}}` is recognised correctly instead of truncating at the inner
+  marker's close; its exported signature and behaviour on every existing test case are unchanged
+  ([#55](https://github.com/Jolls/enshu/issues/55))
+
+### Security
+- Card-content and note-type-CSS sanitisation (see Added, above) is the first place untrusted
+  HTML from a note reaches a page — required before any shared-deck rendering path exists, since
+  a card's content is *other users'* HTML under the multiuser model
+  ([#55](https://github.com/Jolls/enshu/issues/55))
+
 ## [0.1.8] - 2026-08-13
 
 ### Added

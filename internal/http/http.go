@@ -23,6 +23,9 @@ func NewHandler(pool *pgxpool.Pool, a *auth.Service) (http.Handler, error) {
 	mux.HandleFunc("GET /healthz", healthHandler(pool))
 	registerAuthRoutes(mux, a, pages)
 	registerSettingsRoutes(mux, a, pages)
+	registerDeckRoutes(mux, pool, pages)
+	registerNoteTypeRoutes(mux, pool, pages)
+	registerNoteRoutes(mux, pool, pages)
 	return a.Middleware(mux), nil
 }
 

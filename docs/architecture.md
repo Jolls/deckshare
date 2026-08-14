@@ -57,6 +57,24 @@ expiration, `argon2id` password hashing, an `Origin`-header CSRF check enforced 
 sweeps expired sessions and stale rate-limit buckets hourly. Also includes the `/settings`
 profile and password-change routes (docs/routes.md).
 
+**Build order step 5 (§11) has landed** ([#54](https://github.com/Jolls/enshu/issues/54)):
+deck/note-type/note/card CRUD (docs/routes.md). `notes.owner_id = decks.owner_id` is now a
+database-enforced composite foreign key (migration `00015`), not just a query-layer convention.
+Card generation and card-regeneration-on-edit both go through `internal/db/cards.go`'s
+`SyncNoteCards`, which diffs old and new (ordinal, template) pairs so an edit's surviving cards
+keep their id, and with it their `user_card_state`/`review_log` history (docs/schema.md's
+card-regeneration trap).
+
+**Build order step 6 (§11) has landed** ([#55](https://github.com/Jolls/enshu/issues/55)):
+`internal/render/` — the §8 template mini-language (`{{Field}}`, sections, filters, cloze
+fan-out) and card-content/CSS sanitisation, built on `github.com/microcosm-cc/bluemonday`
+(HTML) and `github.com/aymerick/douceur` (the note-type CSS blob). A pure package: no
+`internal/db`, no `net/http`, no I/O. `RenderCard` is the sole entry point; `sanitiseCardHTML`
+stays unexported, and the `{{type:Field}}` answer-input widget is spliced in *after*
+sanitisation via `TypeAnswerInput`/`TypeAnswerExpected`, never through it — see
+[docs/plans/55-note-type-rendering-sanitisation.md](plans/55-note-type-rendering-sanitisation.md)
+for the full design. No route consumes it yet; the reviewer (step 7) is the first caller.
+
 ---
 
 ## 3. Stack
@@ -416,6 +434,9 @@ The parts you need without opening any of them:
 
 ## 8. Note-type rendering
 
+**Built** ([#55](https://github.com/Jolls/enshu/issues/55)) — `internal/render/`; full design in
+[docs/plans/55-note-type-rendering-sanitisation.md](plans/55-note-type-rendering-sanitisation.md).
+
 Anki templates are their own small language, and this is more work than it looks:
 `{{Field}}`, `{{#Field}}…{{/Field}}` and `{{^Field}}` conditionals, `{{FrontSide}}`,
 filters (`{{text:Field}}`, `{{furigana:Field}}`, `{{type:Field}}`), and cloze deletion
@@ -667,6 +688,7 @@ seemed tidier."
 | Sync protocol | Yes | No, permanently (§2.9) |
 | Filtered / custom-study decks | Yes | Not built. The importer reads `odid`/`odue` and files cards under their real home deck, so nothing is lost on the way in |
 | Add-ons | Plugin API | No plugin system (§11) |
+| Empty cards on cloze-ordinal removal | Kept as "empty cards" until the user runs Tools → Empty Cards | Deleted immediately by the edit that removed the ordinal, cascading that card's `user_card_state` (§54, `internal/db/cards.go`'s `SyncNoteCards`, docs/schema.md's card-regeneration diff rule). No empty-cards concept exists; building one wasn't required by any Phase 1 step |
 
 ### Unforced — obsolete, and due for removal
 

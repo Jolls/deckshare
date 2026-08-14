@@ -55,9 +55,13 @@ So the keys are:
 
 `notes.owner_id` is denormalised from `decks.owner_id` because a unique index can't span a
 join. It must not drift: moving a note between decks sets it to the new deck's owner. A no-op
-in Phase 1, load-bearing once decks are shared. Nothing enforces the equality at the database
-level today — it holds by convention in the query layer, which is weaker than it should be for
-an import key.
+in Phase 1, load-bearing once decks are shared. As of migration `00015` (#54), the equality is
+enforced at the database level: `decks` carries `UNIQUE (id, owner_id)` and `notes` a composite
+`FOREIGN KEY (deck_id, owner_id) REFERENCES decks (id, owner_id)`. A `CHECK` can't subquery
+another table and a generated column can't reference another row, so a composite FK is the only
+non-procedural mechanism Postgres offers for this shape — declarative, and referential-integrity
+row locking makes it race-free against a concurrent deck move, which a trigger would need to
+reimplement by hand.
 
 `anki_id` is nullable everywhere and NULLs stay distinct, so rows authored here rather than
 imported collide on nothing — including every row the live grading path (`internal/review/`,
@@ -109,10 +113,10 @@ values — is the obvious first implementation and it is a trap: `user_card_stat
 cascades on card delete (#51), so that delete silently discards a live card's progress, and a
 re-created card gets a new id, stranding its `review_log` history from it. This is the
 CLAUDE.md §15 "silently corrupts `user_card_state`" bucket — it earns `sev: critical` the day
-it's reachable. The fix belongs to whichever change first makes cards stateful (the reviewer,
-§11 step 7, or import, step 8): diff the old and new cloze ordinals (or template set, for
-non-cloze note types) and only add/remove the cards that actually changed, leaving every
-untouched card's row — and its scheduling state — alone.
+it's reachable. Implemented in `internal/db/cards.go`'s `SyncNoteCards` (#54): it diffs the old
+and new cloze ordinals (or template set, for non-cloze note types) and only adds/removes the
+cards that actually changed, leaving every untouched card's row — and its scheduling state —
+alone.
 
 **Deferred:** full-text search over notes. The intended shape is a generated `tsvector`
 column over the concatenated fields, but nothing queries it yet and it is not implemented.
@@ -175,6 +179,7 @@ another user can reach, or that is training data, never cascades.
 | `notes.owner_id → users` | RESTRICT | See below. |
 | `notes.note_type_id → note_types` | RESTRICT | A note type cannot be deleted while notes reference it. |
 | `notes.deck_id → decks` | RESTRICT | Deliberate tripwire — deck deletion goes through the transaction below, which clears these references first. |
+| `notes.(deck_id, owner_id) → decks (id, owner_id)` | RESTRICT — `ON UPDATE RESTRICT ON DELETE RESTRICT` | Composite FK (#54, migration `00015`) enforcing `notes.owner_id = decks.owner_id`; see Identifiers, above. `decks.owner_id` is never updated (no ownership transfer), so `ON UPDATE` never fires in practice. |
 | `cards.note_id → notes` | CASCADE | Cards are generated from a note. |
 | `cards.template_id → templates` | RESTRICT | Never fires spuriously; kept as an assertion. |
 | `cards.deck_id → decks` | CASCADE | Deleting a deck deletes its cards (architecture.md §20). |

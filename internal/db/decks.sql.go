@@ -11,6 +11,56 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countDeckContents = `-- name: CountDeckContents :one
+SELECT (SELECT count(*) FROM notes n WHERE n.deck_id = $1) AS note_count,
+       (SELECT count(*) FROM cards c WHERE c.deck_id = $1) AS card_count
+FROM deck_access da
+WHERE da.deck_id = $1 AND da.user_id = $2 AND da.can_view
+`
+
+type CountDeckContentsParams struct {
+	DeckID pgtype.UUID `json:"deck_id"`
+	UserID pgtype.UUID `json:"user_id"`
+}
+
+type CountDeckContentsRow struct {
+	NoteCount int64 `json:"note_count"`
+	CardCount int64 `json:"card_count"`
+}
+
+func (q *Queries) CountDeckContents(ctx context.Context, arg CountDeckContentsParams) (CountDeckContentsRow, error) {
+	row := q.db.QueryRow(ctx, countDeckContents, arg.DeckID, arg.UserID)
+	var i CountDeckContentsRow
+	err := row.Scan(&i.NoteCount, &i.CardCount)
+	return i, err
+}
+
+const createDeck = `-- name: CreateDeck :one
+INSERT INTO decks (owner_id, name, description) VALUES ($1, $2, $3) RETURNING id, owner_id, name, description, preset, created_at, modified_at, anki_id
+`
+
+type CreateDeckParams struct {
+	OwnerID     pgtype.UUID `json:"owner_id"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+}
+
+func (q *Queries) CreateDeck(ctx context.Context, arg CreateDeckParams) (Deck, error) {
+	row := q.db.QueryRow(ctx, createDeck, arg.OwnerID, arg.Name, arg.Description)
+	var i Deck
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Description,
+		&i.Preset,
+		&i.CreatedAt,
+		&i.ModifiedAt,
+		&i.AnkiID,
+	)
+	return i, err
+}
+
 const getDeck = `-- name: GetDeck :one
 SELECT id, owner_id, name, description, preset, created_at, modified_at, anki_id FROM decks WHERE id = $1
 `
@@ -29,4 +79,167 @@ func (q *Queries) GetDeck(ctx context.Context, id pgtype.UUID) (Deck, error) {
 		&i.AnkiID,
 	)
 	return i, err
+}
+
+const getDeckForContentEdit = `-- name: GetDeckForContentEdit :one
+SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id
+FROM decks d
+JOIN deck_access da ON da.deck_id = d.id AND da.user_id = $1
+                   AND da.can_view AND da.can_edit_content
+WHERE d.id = $2
+`
+
+type GetDeckForContentEditParams struct {
+	UserID pgtype.UUID `json:"user_id"`
+	DeckID pgtype.UUID `json:"deck_id"`
+}
+
+func (q *Queries) GetDeckForContentEdit(ctx context.Context, arg GetDeckForContentEditParams) (Deck, error) {
+	row := q.db.QueryRow(ctx, getDeckForContentEdit, arg.UserID, arg.DeckID)
+	var i Deck
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Description,
+		&i.Preset,
+		&i.CreatedAt,
+		&i.ModifiedAt,
+		&i.AnkiID,
+	)
+	return i, err
+}
+
+const getDeckForSettingsEdit = `-- name: GetDeckForSettingsEdit :one
+SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id
+FROM decks d
+JOIN deck_access da ON da.deck_id = d.id AND da.user_id = $1
+                   AND da.can_view AND da.can_edit_settings
+WHERE d.id = $2
+`
+
+type GetDeckForSettingsEditParams struct {
+	UserID pgtype.UUID `json:"user_id"`
+	DeckID pgtype.UUID `json:"deck_id"`
+}
+
+func (q *Queries) GetDeckForSettingsEdit(ctx context.Context, arg GetDeckForSettingsEditParams) (Deck, error) {
+	row := q.db.QueryRow(ctx, getDeckForSettingsEdit, arg.UserID, arg.DeckID)
+	var i Deck
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Description,
+		&i.Preset,
+		&i.CreatedAt,
+		&i.ModifiedAt,
+		&i.AnkiID,
+	)
+	return i, err
+}
+
+const getDeckForUser = `-- name: GetDeckForUser :one
+SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id
+FROM decks d
+JOIN deck_access da ON da.deck_id = d.id AND da.user_id = $1 AND da.can_view
+WHERE d.id = $2
+`
+
+type GetDeckForUserParams struct {
+	UserID pgtype.UUID `json:"user_id"`
+	DeckID pgtype.UUID `json:"deck_id"`
+}
+
+func (q *Queries) GetDeckForUser(ctx context.Context, arg GetDeckForUserParams) (Deck, error) {
+	row := q.db.QueryRow(ctx, getDeckForUser, arg.UserID, arg.DeckID)
+	var i Deck
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Description,
+		&i.Preset,
+		&i.CreatedAt,
+		&i.ModifiedAt,
+		&i.AnkiID,
+	)
+	return i, err
+}
+
+const listDecksForUser = `-- name: ListDecksForUser :many
+SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id, (SELECT count(*) FROM cards c WHERE c.deck_id = d.id) AS card_count
+FROM decks d
+JOIN deck_access da ON da.deck_id = d.id AND da.user_id = $1 AND da.can_view
+ORDER BY d.name
+`
+
+type ListDecksForUserRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	OwnerID     pgtype.UUID        `json:"owner_id"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	Preset      []byte             `json:"preset"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	ModifiedAt  pgtype.Timestamptz `json:"modified_at"`
+	AnkiID      pgtype.Int8        `json:"anki_id"`
+	CardCount   int64              `json:"card_count"`
+}
+
+func (q *Queries) ListDecksForUser(ctx context.Context, userID pgtype.UUID) ([]ListDecksForUserRow, error) {
+	rows, err := q.db.Query(ctx, listDecksForUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDecksForUserRow
+	for rows.Next() {
+		var i ListDecksForUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Name,
+			&i.Description,
+			&i.Preset,
+			&i.CreatedAt,
+			&i.ModifiedAt,
+			&i.AnkiID,
+			&i.CardCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateDeck = `-- name: UpdateDeck :execrows
+UPDATE decks d
+SET name = $1, description = $2, modified_at = now()
+FROM deck_access da
+WHERE d.id = $3 AND da.deck_id = d.id AND da.user_id = $4
+  AND da.can_view AND da.can_edit_settings
+`
+
+type UpdateDeckParams struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	DeckID      pgtype.UUID `json:"deck_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) UpdateDeck(ctx context.Context, arg UpdateDeckParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateDeck,
+		arg.Name,
+		arg.Description,
+		arg.DeckID,
+		arg.UserID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

@@ -1,0 +1,89 @@
+{{define "content"}}
+{{if .IsNew}}
+<h1>New note type</h1>
+<form method="post" action="/note-types">
+    <label for="name">Name</label>
+    <input type="text" id="name" name="name" maxlength="200" required>
+
+    <label for="css">CSS</label>
+    <textarea id="css" name="css"></textarea>
+
+    <label for="is_cloze">
+        <input type="checkbox" id="is_cloze" name="is_cloze">
+        Cloze note type
+    </label>
+
+    <fieldset>
+        <legend>Fields</legend>
+        <input type="text" name="field_name[]" placeholder="Front" required>
+        <input type="text" name="field_name[]" placeholder="Back">
+    </fieldset>
+
+    <fieldset>
+        <legend>Templates</legend>
+        <input type="text" name="template_name[]" placeholder="Card 1" required>
+        <label>Question format</label>
+        <textarea name="qfmt[]" placeholder="{{"{{"}}Front{{"}}"}}"></textarea>
+        <label>Answer format</label>
+        <textarea name="afmt[]" placeholder="{{"{{"}}FrontSide{{"}}"}}&lt;hr&gt;{{"{{"}}Back{{"}}"}}"></textarea>
+    </fieldset>
+
+    <button type="submit">Create note type</button>
+</form>
+{{else}}
+<h1>Edit note type</h1>
+<form method="post" action="/note-types/{{.NoteType.ID}}/edit">
+    <label for="name">Name</label>
+    <input type="text" id="name" name="name" value="{{.NoteType.Name}}" maxlength="200" required>
+
+    <label for="css">CSS</label>
+    <textarea id="css" name="css">{{.NoteType.Css}}</textarea>
+
+    <label>
+        <input type="checkbox" disabled {{if .NoteType.IsCloze}}checked{{end}}>
+        Cloze note type (fixed at creation)
+    </label>
+
+    <fieldset>
+        <legend>Fields</legend>
+        {{range .Fields}}
+        <div>
+            <input type="hidden" name="field_id[]" value="{{.ID}}">
+            <input type="text" name="field_name[]" value="{{.Name}}" required>
+        </div>
+        {{end}}
+        <div>
+            <input type="hidden" name="field_id[]" value="">
+            <input type="text" name="field_name[]" placeholder="New field">
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Templates</legend>
+        {{range .Templates}}
+        <div>
+            <input type="hidden" name="template_id[]" value="{{.ID}}">
+            <input type="text" name="template_name[]" value="{{.Name}}" required>
+            <label>Question format</label>
+            <textarea name="qfmt[]">{{.Qfmt}}</textarea>
+            <label>Answer format</label>
+            <textarea name="afmt[]">{{.Afmt}}</textarea>
+        </div>
+        {{end}}
+        {{if not .NoteType.IsCloze}}
+        <div>
+            <input type="hidden" name="template_id[]" value="">
+            <input type="text" name="template_name[]" placeholder="New template">
+            <label>Question format</label>
+            <textarea name="qfmt[]"></textarea>
+            <label>Answer format</label>
+            <textarea name="afmt[]"></textarea>
+        </div>
+        {{end}}
+    </fieldset>
+
+    <button type="submit">Save</button>
+</form>
+{{end}}
+<p><a href="/note-types">Back to note types</a></p>
+{{end}}
