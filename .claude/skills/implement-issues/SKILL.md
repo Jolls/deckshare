@@ -67,9 +67,9 @@ For each open question across all plans:
 
 The session that ran steps 0-3 continues directly — **no sub-agent**; it already
 has the resolved plans and conventions loaded, and implementation is sequential
-so there's nothing to parallelize. This session is typically Sonnet-low; if a
+so there's nothing to parallelize. This session is typically Sonnet-med; if a
 plan wants a much higher level (e.g. Opus-high for schema/auth work), ask the
-user rather than silently implementing complex work at low effort.
+user rather than silently implementing complex work at med effort.
 
 **Unplanned judgment call mid-implementation** — don't guess (effort is fixed
 per session):
