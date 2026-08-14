@@ -11,6 +11,76 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createNote = `-- name: CreateNote :one
+INSERT INTO notes (guid, owner_id, note_type_id, deck_id, fields, tags, checksum)
+SELECT $1, d.owner_id, nt.id, d.id, $2, $3, $4
+FROM decks d
+JOIN deck_access da ON da.deck_id = d.id AND da.user_id = $5
+                   AND da.can_view AND da.can_edit_content
+JOIN note_types nt ON nt.id = $6 AND nt.owner_id = $5
+WHERE d.id = $7
+RETURNING id, guid, owner_id, note_type_id, deck_id, fields, tags, checksum, created_at, modified_at, anki_id
+`
+
+type CreateNoteParams struct {
+	Guid       string      `json:"guid"`
+	Fields     []byte      `json:"fields"`
+	Tags       []string    `json:"tags"`
+	Checksum   int64       `json:"checksum"`
+	UserID     pgtype.UUID `json:"user_id"`
+	NoteTypeID pgtype.UUID `json:"note_type_id"`
+	DeckID     pgtype.UUID `json:"deck_id"`
+}
+
+// Owner_id comes from the DECK, not the caller: notes.owner_id is denormalised from
+// decks.owner_id and, as of migration 00015, a composite FK rejects any other value.
+func (q *Queries) CreateNote(ctx context.Context, arg CreateNoteParams) (Note, error) {
+	row := q.db.QueryRow(ctx, createNote,
+		arg.Guid,
+		arg.Fields,
+		arg.Tags,
+		arg.Checksum,
+		arg.UserID,
+		arg.NoteTypeID,
+		arg.DeckID,
+	)
+	var i Note
+	err := row.Scan(
+		&i.ID,
+		&i.Guid,
+		&i.OwnerID,
+		&i.NoteTypeID,
+		&i.DeckID,
+		&i.Fields,
+		&i.Tags,
+		&i.Checksum,
+		&i.CreatedAt,
+		&i.ModifiedAt,
+		&i.AnkiID,
+	)
+	return i, err
+}
+
+const deleteNote = `-- name: DeleteNote :execrows
+DELETE FROM notes n
+USING deck_access da
+WHERE n.id = $1 AND da.deck_id = n.deck_id AND da.user_id = $2
+  AND da.can_view AND da.can_edit_content
+`
+
+type DeleteNoteParams struct {
+	NoteID pgtype.UUID `json:"note_id"`
+	UserID pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) DeleteNote(ctx context.Context, arg DeleteNoteParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteNote, arg.NoteID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getNote = `-- name: GetNote :one
 SELECT id, guid, owner_id, note_type_id, deck_id, fields, tags, checksum, created_at, modified_at, anki_id FROM notes WHERE id = $1
 `
@@ -32,4 +102,221 @@ func (q *Queries) GetNote(ctx context.Context, id pgtype.UUID) (Note, error) {
 		&i.AnkiID,
 	)
 	return i, err
+}
+
+const getNoteForContentEdit = `-- name: GetNoteForContentEdit :one
+SELECT n.id, n.guid, n.owner_id, n.note_type_id, n.deck_id, n.fields, n.tags, n.checksum, n.created_at, n.modified_at, n.anki_id
+FROM notes n
+JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = $1
+                   AND da.can_view AND da.can_edit_content
+WHERE n.id = $2
+`
+
+type GetNoteForContentEditParams struct {
+	UserID pgtype.UUID `json:"user_id"`
+	NoteID pgtype.UUID `json:"note_id"`
+}
+
+func (q *Queries) GetNoteForContentEdit(ctx context.Context, arg GetNoteForContentEditParams) (Note, error) {
+	row := q.db.QueryRow(ctx, getNoteForContentEdit, arg.UserID, arg.NoteID)
+	var i Note
+	err := row.Scan(
+		&i.ID,
+		&i.Guid,
+		&i.OwnerID,
+		&i.NoteTypeID,
+		&i.DeckID,
+		&i.Fields,
+		&i.Tags,
+		&i.Checksum,
+		&i.CreatedAt,
+		&i.ModifiedAt,
+		&i.AnkiID,
+	)
+	return i, err
+}
+
+const listNoteIDsOfNoteType = `-- name: ListNoteIDsOfNoteType :many
+SELECT id FROM notes WHERE note_type_id = $1
+`
+
+func (q *Queries) ListNoteIDsOfNoteType(ctx context.Context, noteTypeID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listNoteIDsOfNoteType, noteTypeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listNotesInDeck = `-- name: ListNotesInDeck :many
+SELECT n.id, n.fields ->> nt.sort_field_idx AS sort_text, n.tags, n.modified_at, nt.name AS note_type_name,
+       (SELECT count(*) FROM cards c WHERE c.note_id = n.id) AS card_count
+FROM notes n
+JOIN note_types nt ON nt.id = n.note_type_id
+JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = $1 AND da.can_view
+WHERE n.deck_id = $2
+ORDER BY n.modified_at DESC
+LIMIT 200
+`
+
+type ListNotesInDeckParams struct {
+	UserID pgtype.UUID `json:"user_id"`
+	DeckID pgtype.UUID `json:"deck_id"`
+}
+
+type ListNotesInDeckRow struct {
+	ID           pgtype.UUID        `json:"id"`
+	SortText     interface{}        `json:"sort_text"`
+	Tags         []string           `json:"tags"`
+	ModifiedAt   pgtype.Timestamptz `json:"modified_at"`
+	NoteTypeName string             `json:"note_type_name"`
+	CardCount    int64              `json:"card_count"`
+}
+
+func (q *Queries) ListNotesInDeck(ctx context.Context, arg ListNotesInDeckParams) ([]ListNotesInDeckRow, error) {
+	rows, err := q.db.Query(ctx, listNotesInDeck, arg.UserID, arg.DeckID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNotesInDeckRow
+	for rows.Next() {
+		var i ListNotesInDeckRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SortText,
+			&i.Tags,
+			&i.ModifiedAt,
+			&i.NoteTypeName,
+			&i.CardCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockNoteForContentEdit = `-- name: LockNoteForContentEdit :one
+SELECT n.id, n.guid, n.owner_id, n.note_type_id, n.deck_id, n.fields, n.tags, n.checksum, n.created_at, n.modified_at, n.anki_id
+FROM notes n
+JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = $1
+                   AND da.can_view AND da.can_edit_content
+WHERE n.id = $2
+FOR UPDATE OF n
+`
+
+type LockNoteForContentEditParams struct {
+	UserID pgtype.UUID `json:"user_id"`
+	NoteID pgtype.UUID `json:"note_id"`
+}
+
+// Locks the note for the duration of the transaction and authorises the caller in one step --
+// the same no-row-means-404 contract as LockDeckForDelete. The lock is what makes the card
+// ordinal diff in SyncNoteCards atomic against a concurrent edit of the same note.
+func (q *Queries) LockNoteForContentEdit(ctx context.Context, arg LockNoteForContentEditParams) (Note, error) {
+	row := q.db.QueryRow(ctx, lockNoteForContentEdit, arg.UserID, arg.NoteID)
+	var i Note
+	err := row.Scan(
+		&i.ID,
+		&i.Guid,
+		&i.OwnerID,
+		&i.NoteTypeID,
+		&i.DeckID,
+		&i.Fields,
+		&i.Tags,
+		&i.Checksum,
+		&i.CreatedAt,
+		&i.ModifiedAt,
+		&i.AnkiID,
+	)
+	return i, err
+}
+
+const moveNoteCardsFromDeck = `-- name: MoveNoteCardsFromDeck :execrows
+UPDATE cards SET deck_id = $1
+WHERE note_id = $2 AND deck_id = $3
+`
+
+type MoveNoteCardsFromDeckParams struct {
+	TargetDeckID pgtype.UUID `json:"target_deck_id"`
+	NoteID       pgtype.UUID `json:"note_id"`
+	SourceDeckID pgtype.UUID `json:"source_deck_id"`
+}
+
+// Cards filed in the note's OLD home deck follow it; cards deliberately filed elsewhere stay
+// put (architecture.md §20: a card belongs to exactly one deck, and a note's cards need not
+// share one).
+func (q *Queries) MoveNoteCardsFromDeck(ctx context.Context, arg MoveNoteCardsFromDeckParams) (int64, error) {
+	result, err := q.db.Exec(ctx, moveNoteCardsFromDeck, arg.TargetDeckID, arg.NoteID, arg.SourceDeckID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const moveNoteToDeck = `-- name: MoveNoteToDeck :execrows
+UPDATE notes n
+SET deck_id = d.id, owner_id = d.owner_id, modified_at = now()
+FROM decks d
+JOIN deck_access da ON da.deck_id = d.id AND da.user_id = $3
+                   AND da.can_view AND da.can_edit_content
+WHERE n.id = $1 AND d.id = $2
+`
+
+type MoveNoteToDeckParams struct {
+	NoteID       pgtype.UUID `json:"note_id"`
+	TargetDeckID pgtype.UUID `json:"target_deck_id"`
+	UserID       pgtype.UUID `json:"user_id"`
+}
+
+// Moving a note must move owner_id with it (docs/schema.md, "must not drift"); migration 00015
+// makes a drifted pair fail loudly instead of silently breaking the import key.
+func (q *Queries) MoveNoteToDeck(ctx context.Context, arg MoveNoteToDeckParams) (int64, error) {
+	result, err := q.db.Exec(ctx, moveNoteToDeck, arg.NoteID, arg.TargetDeckID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const updateNoteContent = `-- name: UpdateNoteContent :execrows
+UPDATE notes SET fields = $1, tags = $2,
+                 checksum = $3, modified_at = now()
+WHERE id = $4
+`
+
+type UpdateNoteContentParams struct {
+	Fields   []byte      `json:"fields"`
+	Tags     []string    `json:"tags"`
+	Checksum int64       `json:"checksum"`
+	NoteID   pgtype.UUID `json:"note_id"`
+}
+
+func (q *Queries) UpdateNoteContent(ctx context.Context, arg UpdateNoteContentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateNoteContent,
+		arg.Fields,
+		arg.Tags,
+		arg.Checksum,
+		arg.NoteID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

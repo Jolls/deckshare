@@ -36,3 +36,21 @@ func (q *Queries) GetDeckAccess(ctx context.Context, arg GetDeckAccessParams) (D
 	)
 	return i, err
 }
+
+const grantFullDeckAccess = `-- name: GrantFullDeckAccess :exec
+INSERT INTO deck_access (deck_id, user_id, can_view, can_study, can_edit_content,
+                         can_edit_settings, can_manage_access, can_delete)
+VALUES ($1, $2, true, true, true, true, true, true)
+`
+
+type GrantFullDeckAccessParams struct {
+	DeckID pgtype.UUID `json:"deck_id"`
+	UserID pgtype.UUID `json:"user_id"`
+}
+
+// A deck's creator gets all six flags (docs/schema.md). A personal deck is the trivial case of
+// this, not a separate code path.
+func (q *Queries) GrantFullDeckAccess(ctx context.Context, arg GrantFullDeckAccessParams) error {
+	_, err := q.db.Exec(ctx, grantFullDeckAccess, arg.DeckID, arg.UserID)
+	return err
+}

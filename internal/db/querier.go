@@ -11,31 +11,61 @@ import (
 )
 
 type Querier interface {
+	AppendNoteFieldSlot(ctx context.Context, noteTypeID pgtype.UUID) (int64, error)
 	// The guard itself, run AFTER the mutation inside the same transaction. Zero of either count
 	// means the deck has been stranded and the caller must roll back.
 	CountDeckAccessHolders(ctx context.Context, deckID pgtype.UUID) (CountDeckAccessHoldersRow, error)
+	CountDeckContents(ctx context.Context, arg CountDeckContentsParams) (CountDeckContentsRow, error)
+	CountNotesOfNoteType(ctx context.Context, noteTypeID pgtype.UUID) (int64, error)
+	// Called once per card in the create set (§0.3's "create" batch is small -- at most one row
+	// per template/cloze ordinal) rather than as a single multi-row statement: sqlc's query
+	// analyzer cannot resolve a two-array unnest(...) without a live database catalog.
+	CreateCard(ctx context.Context, arg CreateCardParams) (Card, error)
+	// One card per existing note when a template is appended to a non-cloze note type (#54 §0.5).
+	// Filed in each note's home deck: notes.deck_id is the default for cards generated later
+	// (architecture.md §20).
+	CreateCardsForNewTemplate(ctx context.Context, arg CreateCardsForNewTemplateParams) (int64, error)
+	CreateDeck(ctx context.Context, arg CreateDeckParams) (Deck, error)
+	CreateField(ctx context.Context, arg CreateFieldParams) (Field, error)
+	// Owner_id comes from the DECK, not the caller: notes.owner_id is denormalised from
+	// decks.owner_id and, as of migration 00015, a composite FK rejects any other value.
+	CreateNote(ctx context.Context, arg CreateNoteParams) (Note, error)
+	CreateNoteType(ctx context.Context, arg CreateNoteTypeParams) (NoteType, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
+	CreateTemplate(ctx context.Context, arg CreateTemplateParams) (Template, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	DeleteCardsByOrdinals(ctx context.Context, arg DeleteCardsByOrdinalsParams) (int64, error)
 	DeleteDeckAccessRow(ctx context.Context, arg DeleteDeckAccessRowParams) (int64, error)
 	// Step 4 of DeleteDeck. Cascades to cards (and through them to user_card_state), deck_access,
 	// per-deck user_fsrs_params, and media_refs. Authorisation happened under the lock above.
 	DeleteDeckRow(ctx context.Context, deckID pgtype.UUID) (int64, error)
 	DeleteExpiredSessions(ctx context.Context) (int64, error)
+	DeleteFieldsForNoteType(ctx context.Context, noteTypeID pgtype.UUID) (int64, error)
+	DeleteNote(ctx context.Context, arg DeleteNoteParams) (int64, error)
+	// notes.note_type_id ON DELETE RESTRICT blocks this while any note exists (routes.md);
+	// fields and templates cascade. The handler turns 23503 into 409.
+	DeleteNoteType(ctx context.Context, arg DeleteNoteTypeParams) (int64, error)
 	// Step 2 of DeleteDeck. Deletes every note that this deck delete would leave with no cards at
 	// all: notes homed here, and notes homed elsewhere whose cards all live here -- but only when
 	// nothing of theirs survives outside this deck. Cascades to cards and user_card_state.
 	// review_log is untouched and has no FK to cards (#51 §0.4).
 	DeleteNotesOrphanedByDeckDelete(ctx context.Context, deckID pgtype.UUID) (int64, error)
 	DeleteSession(ctx context.Context, id string) error
+	DeleteTemplatesForNoteType(ctx context.Context, noteTypeID pgtype.UUID) (int64, error)
 	EmailExists(ctx context.Context, email string) (bool, error)
 	GetCard(ctx context.Context, id pgtype.UUID) (Card, error)
 	GetDeck(ctx context.Context, id pgtype.UUID) (Deck, error)
 	GetDeckAccess(ctx context.Context, arg GetDeckAccessParams) (DeckAccess, error)
+	GetDeckForContentEdit(ctx context.Context, arg GetDeckForContentEditParams) (Deck, error)
+	GetDeckForSettingsEdit(ctx context.Context, arg GetDeckForSettingsEditParams) (Deck, error)
+	GetDeckForUser(ctx context.Context, arg GetDeckForUserParams) (Deck, error)
 	GetField(ctx context.Context, id pgtype.UUID) (Field, error)
 	GetMediaBlob(ctx context.Context, sha256 string) (MediaBlob, error)
 	GetMediaRef(ctx context.Context, arg GetMediaRefParams) (MediaRef, error)
 	GetNote(ctx context.Context, id pgtype.UUID) (Note, error)
+	GetNoteForContentEdit(ctx context.Context, arg GetNoteForContentEditParams) (Note, error)
 	GetNoteType(ctx context.Context, id pgtype.UUID) (NoteType, error)
+	GetNoteTypeForOwner(ctx context.Context, arg GetNoteTypeForOwnerParams) (NoteType, error)
 	GetReviewLogEntry(ctx context.Context, id pgtype.UUID) (ReviewLog, error)
 	GetSession(ctx context.Context, id string) (Session, error)
 	GetSessionUser(ctx context.Context, id string) (GetSessionUserRow, error)
@@ -44,6 +74,19 @@ type Querier interface {
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserCardState(ctx context.Context, arg GetUserCardStateParams) (UserCardState, error)
 	GetUserFsrsParams(ctx context.Context, id pgtype.UUID) (UserFsrsParam, error)
+	// A deck's creator gets all six flags (docs/schema.md). A personal deck is the trivial case of
+	// this, not a separate code path.
+	GrantFullDeckAccess(ctx context.Context, arg GrantFullDeckAccessParams) error
+	// Cards are content addressing only -- no scheduling columns exist here to lose (CLAUDE.md §2.1).
+	// These four statements are the whole of card regeneration; see internal/db/cards.go for the
+	// diff that calls them and docs/schema.md's card-regeneration trap for why it is a diff.
+	ListCardsForNoteForUpdate(ctx context.Context, noteID pgtype.UUID) ([]ListCardsForNoteForUpdateRow, error)
+	ListDecksForUser(ctx context.Context, userID pgtype.UUID) ([]ListDecksForUserRow, error)
+	ListFieldsForNoteType(ctx context.Context, noteTypeID pgtype.UUID) ([]Field, error)
+	ListNoteIDsOfNoteType(ctx context.Context, noteTypeID pgtype.UUID) ([]pgtype.UUID, error)
+	ListNoteTypesForOwner(ctx context.Context, ownerID pgtype.UUID) ([]ListNoteTypesForOwnerRow, error)
+	ListNotesInDeck(ctx context.Context, arg ListNotesInDeckParams) ([]ListNotesInDeckRow, error)
+	ListTemplatesForNoteType(ctx context.Context, noteTypeID pgtype.UUID) ([]Template, error)
 	// Locks the deck and authorises an access change. Same 404-shaped no-row contract as
 	// LockDeckForDelete; the shared lock is what serialises concurrent revocations, without which
 	// two callers can each remove "the second-to-last" holder and strand the deck.
@@ -55,6 +98,21 @@ type Querier interface {
 	// No row means "absent OR invisible OR not permitted" -- deliberately indistinguishable, so a
 	// 403 can never become an existence oracle (docs/schema.md, Access control).
 	LockDeckForDelete(ctx context.Context, arg LockDeckForDeleteParams) (pgtype.UUID, error)
+	// Locks the note for the duration of the transaction and authorises the caller in one step --
+	// the same no-row-means-404 contract as LockDeckForDelete. The lock is what makes the card
+	// ordinal diff in SyncNoteCards atomic against a concurrent edit of the same note.
+	LockNoteForContentEdit(ctx context.Context, arg LockNoteForContentEditParams) (Note, error)
+	// Locks the note type row for the duration of an edit transaction, serialising it against a
+	// concurrent edit of the same note type (docs/plans/54's TOCTOU note: the noteCount read below
+	// and the structural field/template writes must not straddle a concurrent change).
+	LockNoteTypeForOwner(ctx context.Context, arg LockNoteTypeForOwnerParams) (NoteType, error)
+	// Cards filed in the note's OLD home deck follow it; cards deliberately filed elsewhere stay
+	// put (architecture.md §20: a card belongs to exactly one deck, and a note's cards need not
+	// share one).
+	MoveNoteCardsFromDeck(ctx context.Context, arg MoveNoteCardsFromDeckParams) (int64, error)
+	// Moving a note must move owner_id with it (docs/schema.md, "must not drift"); migration 00015
+	// makes a drifted pair fail loudly instead of silently breaking the import key.
+	MoveNoteToDeck(ctx context.Context, arg MoveNoteToDeckParams) (int64, error)
 	// Step 3 of DeleteDeck. Every note still homed here provably has a surviving card elsewhere
 	// (the complement of the statement above), so the subquery cannot be NULL -- and if it ever were,
 	// the NOT NULL column rejects it loudly. Home deck = the deck of the lowest-ordinal surviving
@@ -63,8 +121,15 @@ type Querier interface {
 	// requires owner_id to track the current deck's owner (it's denormalised, not enforced by a DB
 	// constraint), and a re-home is exactly the kind of deck move that must not let it drift.
 	RehomeNotesOffDeck(ctx context.Context, deckID pgtype.UUID) (int64, error)
+	RenameField(ctx context.Context, arg RenameFieldParams) (int64, error)
 	RenewSession(ctx context.Context, arg RenewSessionParams) error
+	UpdateDeck(ctx context.Context, arg UpdateDeckParams) (int64, error)
 	UpdateDeckAccessRow(ctx context.Context, arg UpdateDeckAccessRowParams) (int64, error)
+	UpdateNoteContent(ctx context.Context, arg UpdateNoteContentParams) (int64, error)
+	// is_cloze is immutable after creation: flipping it changes what every existing note's cards
+	// mean. Not editable in the form, not settable here.
+	UpdateNoteTypeRow(ctx context.Context, arg UpdateNoteTypeRowParams) (int64, error)
+	UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) (int64, error)
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) error
 }

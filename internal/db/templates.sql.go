@@ -11,6 +11,52 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createTemplate = `-- name: CreateTemplate :one
+INSERT INTO templates (note_type_id, ordinal, name, qfmt, afmt) VALUES ($1,$2,$3,$4,$5) RETURNING id, note_type_id, ordinal, name, qfmt, afmt, browser_qfmt, browser_afmt
+`
+
+type CreateTemplateParams struct {
+	NoteTypeID pgtype.UUID `json:"note_type_id"`
+	Ordinal    int32       `json:"ordinal"`
+	Name       string      `json:"name"`
+	Qfmt       string      `json:"qfmt"`
+	Afmt       string      `json:"afmt"`
+}
+
+func (q *Queries) CreateTemplate(ctx context.Context, arg CreateTemplateParams) (Template, error) {
+	row := q.db.QueryRow(ctx, createTemplate,
+		arg.NoteTypeID,
+		arg.Ordinal,
+		arg.Name,
+		arg.Qfmt,
+		arg.Afmt,
+	)
+	var i Template
+	err := row.Scan(
+		&i.ID,
+		&i.NoteTypeID,
+		&i.Ordinal,
+		&i.Name,
+		&i.Qfmt,
+		&i.Afmt,
+		&i.BrowserQfmt,
+		&i.BrowserAfmt,
+	)
+	return i, err
+}
+
+const deleteTemplatesForNoteType = `-- name: DeleteTemplatesForNoteType :execrows
+DELETE FROM templates WHERE note_type_id = $1
+`
+
+func (q *Queries) DeleteTemplatesForNoteType(ctx context.Context, noteTypeID pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTemplatesForNoteType, noteTypeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getTemplate = `-- name: GetTemplate :one
 SELECT id, note_type_id, ordinal, name, qfmt, afmt, browser_qfmt, browser_afmt FROM templates WHERE id = $1
 `
@@ -29,4 +75,64 @@ func (q *Queries) GetTemplate(ctx context.Context, id pgtype.UUID) (Template, er
 		&i.BrowserAfmt,
 	)
 	return i, err
+}
+
+const listTemplatesForNoteType = `-- name: ListTemplatesForNoteType :many
+SELECT id, note_type_id, ordinal, name, qfmt, afmt, browser_qfmt, browser_afmt FROM templates WHERE note_type_id = $1 ORDER BY ordinal
+`
+
+func (q *Queries) ListTemplatesForNoteType(ctx context.Context, noteTypeID pgtype.UUID) ([]Template, error) {
+	rows, err := q.db.Query(ctx, listTemplatesForNoteType, noteTypeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Template
+	for rows.Next() {
+		var i Template
+		if err := rows.Scan(
+			&i.ID,
+			&i.NoteTypeID,
+			&i.Ordinal,
+			&i.Name,
+			&i.Qfmt,
+			&i.Afmt,
+			&i.BrowserQfmt,
+			&i.BrowserAfmt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateTemplate = `-- name: UpdateTemplate :execrows
+UPDATE templates SET name = $1, qfmt = $2, afmt = $3
+WHERE id = $4 AND note_type_id = $5
+`
+
+type UpdateTemplateParams struct {
+	Name       string      `json:"name"`
+	Qfmt       string      `json:"qfmt"`
+	Afmt       string      `json:"afmt"`
+	ID         pgtype.UUID `json:"id"`
+	NoteTypeID pgtype.UUID `json:"note_type_id"`
+}
+
+func (q *Queries) UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateTemplate,
+		arg.Name,
+		arg.Qfmt,
+		arg.Afmt,
+		arg.ID,
+		arg.NoteTypeID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

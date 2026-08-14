@@ -88,6 +88,9 @@ func newTestHandler(t *testing.T, tx pgx.Tx, cfg auth.Config) (http.Handler, *au
 	mux := http.NewServeMux()
 	registerAuthRoutes(mux, a, pages)
 	registerSettingsRoutes(mux, a, pages)
+	registerDeckRoutes(mux, tx, pages)
+	registerNoteTypeRoutes(mux, tx, pages)
+	registerNoteRoutes(mux, tx, pages)
 	return a.Middleware(mux), a
 }
 
@@ -157,9 +160,9 @@ func TestRoutes_ValidSession(t *testing.T) {
 		wantStatus   int
 		wantLocation string
 	}{
-		{"GET", "/", 200, ""},
-		{"GET", "/login", 303, "/"},
-		{"GET", "/signup", 303, "/"},
+		{"GET", "/", 303, "/decks"},
+		{"GET", "/login", 303, "/decks"},
+		{"GET", "/signup", 303, "/decks"},
 		{"GET", "/settings", 200, ""},
 	}
 	for _, tt := range tests {
@@ -351,8 +354,8 @@ func TestSignupSetsCookieAndLandsHome(t *testing.T) {
 	if w.Code != 303 {
 		t.Fatalf("status = %d, want 303", w.Code)
 	}
-	if loc := w.Header().Get("Location"); loc != "/" {
-		t.Errorf("Location = %q, want /", loc)
+	if loc := w.Header().Get("Location"); loc != "/decks" {
+		t.Errorf("Location = %q, want /decks", loc)
 	}
 	resp := w.Result()
 	if len(resp.Cookies()) != 1 {

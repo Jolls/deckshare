@@ -11,6 +11,70 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countNotesOfNoteType = `-- name: CountNotesOfNoteType :one
+SELECT count(*) FROM notes WHERE note_type_id = $1
+`
+
+func (q *Queries) CountNotesOfNoteType(ctx context.Context, noteTypeID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countNotesOfNoteType, noteTypeID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const createNoteType = `-- name: CreateNoteType :one
+INSERT INTO note_types (owner_id, name, css, is_cloze, sort_field_idx)
+VALUES ($1, $2, $3, $4, $5) RETURNING id, owner_id, name, css, is_cloze, sort_field_idx, anki_id
+`
+
+type CreateNoteTypeParams struct {
+	OwnerID      pgtype.UUID `json:"owner_id"`
+	Name         string      `json:"name"`
+	Css          string      `json:"css"`
+	IsCloze      bool        `json:"is_cloze"`
+	SortFieldIdx int32       `json:"sort_field_idx"`
+}
+
+func (q *Queries) CreateNoteType(ctx context.Context, arg CreateNoteTypeParams) (NoteType, error) {
+	row := q.db.QueryRow(ctx, createNoteType,
+		arg.OwnerID,
+		arg.Name,
+		arg.Css,
+		arg.IsCloze,
+		arg.SortFieldIdx,
+	)
+	var i NoteType
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Css,
+		&i.IsCloze,
+		&i.SortFieldIdx,
+		&i.AnkiID,
+	)
+	return i, err
+}
+
+const deleteNoteType = `-- name: DeleteNoteType :execrows
+DELETE FROM note_types WHERE id = $1 AND owner_id = $2
+`
+
+type DeleteNoteTypeParams struct {
+	ID      pgtype.UUID `json:"id"`
+	OwnerID pgtype.UUID `json:"owner_id"`
+}
+
+// notes.note_type_id ON DELETE RESTRICT blocks this while any note exists (routes.md);
+// fields and templates cascade. The handler turns 23503 into 409.
+func (q *Queries) DeleteNoteType(ctx context.Context, arg DeleteNoteTypeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteNoteType, arg.ID, arg.OwnerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getNoteType = `-- name: GetNoteType :one
 SELECT id, owner_id, name, css, is_cloze, sort_field_idx, anki_id FROM note_types WHERE id = $1
 `
@@ -28,4 +92,130 @@ func (q *Queries) GetNoteType(ctx context.Context, id pgtype.UUID) (NoteType, er
 		&i.AnkiID,
 	)
 	return i, err
+}
+
+const getNoteTypeForOwner = `-- name: GetNoteTypeForOwner :one
+SELECT id, owner_id, name, css, is_cloze, sort_field_idx, anki_id FROM note_types WHERE id = $1 AND owner_id = $2
+`
+
+type GetNoteTypeForOwnerParams struct {
+	ID      pgtype.UUID `json:"id"`
+	OwnerID pgtype.UUID `json:"owner_id"`
+}
+
+func (q *Queries) GetNoteTypeForOwner(ctx context.Context, arg GetNoteTypeForOwnerParams) (NoteType, error) {
+	row := q.db.QueryRow(ctx, getNoteTypeForOwner, arg.ID, arg.OwnerID)
+	var i NoteType
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Css,
+		&i.IsCloze,
+		&i.SortFieldIdx,
+		&i.AnkiID,
+	)
+	return i, err
+}
+
+const listNoteTypesForOwner = `-- name: ListNoteTypesForOwner :many
+SELECT nt.id, nt.owner_id, nt.name, nt.css, nt.is_cloze, nt.sort_field_idx, nt.anki_id, (SELECT count(*) FROM notes n WHERE n.note_type_id = nt.id) AS note_count
+FROM note_types nt WHERE nt.owner_id = $1 ORDER BY nt.name
+`
+
+type ListNoteTypesForOwnerRow struct {
+	ID           pgtype.UUID `json:"id"`
+	OwnerID      pgtype.UUID `json:"owner_id"`
+	Name         string      `json:"name"`
+	Css          string      `json:"css"`
+	IsCloze      bool        `json:"is_cloze"`
+	SortFieldIdx int32       `json:"sort_field_idx"`
+	AnkiID       pgtype.Int8 `json:"anki_id"`
+	NoteCount    int64       `json:"note_count"`
+}
+
+func (q *Queries) ListNoteTypesForOwner(ctx context.Context, ownerID pgtype.UUID) ([]ListNoteTypesForOwnerRow, error) {
+	rows, err := q.db.Query(ctx, listNoteTypesForOwner, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNoteTypesForOwnerRow
+	for rows.Next() {
+		var i ListNoteTypesForOwnerRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Name,
+			&i.Css,
+			&i.IsCloze,
+			&i.SortFieldIdx,
+			&i.AnkiID,
+			&i.NoteCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockNoteTypeForOwner = `-- name: LockNoteTypeForOwner :one
+SELECT id, owner_id, name, css, is_cloze, sort_field_idx, anki_id FROM note_types WHERE id = $1 AND owner_id = $2 FOR UPDATE
+`
+
+type LockNoteTypeForOwnerParams struct {
+	ID      pgtype.UUID `json:"id"`
+	OwnerID pgtype.UUID `json:"owner_id"`
+}
+
+// Locks the note type row for the duration of an edit transaction, serialising it against a
+// concurrent edit of the same note type (docs/plans/54's TOCTOU note: the noteCount read below
+// and the structural field/template writes must not straddle a concurrent change).
+func (q *Queries) LockNoteTypeForOwner(ctx context.Context, arg LockNoteTypeForOwnerParams) (NoteType, error) {
+	row := q.db.QueryRow(ctx, lockNoteTypeForOwner, arg.ID, arg.OwnerID)
+	var i NoteType
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Css,
+		&i.IsCloze,
+		&i.SortFieldIdx,
+		&i.AnkiID,
+	)
+	return i, err
+}
+
+const updateNoteTypeRow = `-- name: UpdateNoteTypeRow :execrows
+UPDATE note_types SET name = $1, css = $2,
+                      sort_field_idx = $3
+WHERE id = $4 AND owner_id = $5
+`
+
+type UpdateNoteTypeRowParams struct {
+	Name         string      `json:"name"`
+	Css          string      `json:"css"`
+	SortFieldIdx int32       `json:"sort_field_idx"`
+	ID           pgtype.UUID `json:"id"`
+	OwnerID      pgtype.UUID `json:"owner_id"`
+}
+
+// is_cloze is immutable after creation: flipping it changes what every existing note's cards
+// mean. Not editable in the form, not settable here.
+func (q *Queries) UpdateNoteTypeRow(ctx context.Context, arg UpdateNoteTypeRowParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateNoteTypeRow,
+		arg.Name,
+		arg.Css,
+		arg.SortFieldIdx,
+		arg.ID,
+		arg.OwnerID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

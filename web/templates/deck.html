@@ -1,0 +1,35 @@
+{{define "content"}}
+<h1>{{.Deck.Name}}</h1>
+{{if .Deck.Description}}<p>{{.Deck.Description}}</p>{{end}}
+<p>{{.Counts.NoteCount}} notes, {{.Counts.CardCount}} cards</p>
+<p>
+    <a href="/decks/{{.Deck.ID}}/notes/new">Add note</a> ·
+    <a href="/decks/{{.Deck.ID}}/edit">Edit deck</a> ·
+    <a href="/decks">Back to decks</a>
+</p>
+
+{{if .Notes}}
+<table>
+    <thead>
+        <tr><th>Note</th><th>Type</th><th>Cards</th><th></th></tr>
+    </thead>
+    <tbody>
+        {{range .Notes}}
+        <tr>
+            <td>{{.SortText}}</td>
+            <td>{{.NoteTypeName}}</td>
+            <td>{{.CardCount}}</td>
+            <td>
+                <a href="/notes/{{.ID}}/edit">Edit</a>
+                <form method="post" action="/notes/{{.ID}}/delete" style="display:inline">
+                    <button type="submit">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {{end}}
+    </tbody>
+</table>
+{{else}}
+<p>No notes yet.</p>
+{{end}}
+{{end}}

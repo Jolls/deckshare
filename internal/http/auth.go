@@ -14,7 +14,7 @@ import (
 func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*template.Template) {
 	mux.HandleFunc("GET /signup", func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := auth.UserFromContext(r.Context()); ok {
-			http.Redirect(w, r, "/", http.StatusSeeOther)
+			http.Redirect(w, r, "/decks", http.StatusSeeOther)
 			return
 		}
 		render(w, pages["signup"], http.StatusOK, map[string]any{})
@@ -49,12 +49,12 @@ func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*t
 		}
 
 		auth.SetSessionCookie(w, token)
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(w, r, "/decks", http.StatusSeeOther)
 	})
 
 	mux.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := auth.UserFromContext(r.Context()); ok {
-			http.Redirect(w, r, "/", http.StatusSeeOther)
+			http.Redirect(w, r, "/decks", http.StatusSeeOther)
 			return
 		}
 		render(w, pages["login"], http.StatusOK, map[string]any{})
@@ -88,7 +88,7 @@ func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*t
 		}
 
 		auth.SetSessionCookie(w, token)
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(w, r, "/decks", http.StatusSeeOther)
 	})
 
 	mux.Handle("POST /logout", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -105,12 +105,11 @@ func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*t
 	})))
 
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		user, ok := auth.UserFromContext(r.Context())
-		if !ok {
+		if _, ok := auth.UserFromContext(r.Context()); !ok {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		render(w, pages["home"], http.StatusOK, map[string]any{"User": user})
+		http.Redirect(w, r, "/decks", http.StatusSeeOther)
 	})
 }
 

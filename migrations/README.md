@@ -26,3 +26,5 @@ there is no separate Go-side schema definition. A migration that doesn't parse b
 
 Schema §5 (docs/schema.md) landed in [#50](https://github.com/Jolls/enshu/issues/50) as 14
 migrations, one per table.
+
+`00015` (#54) adds the `notes.owner_id = decks.owner_id` composite foreign key.

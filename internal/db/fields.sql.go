@@ -11,6 +11,44 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createField = `-- name: CreateField :one
+INSERT INTO fields (note_type_id, ordinal, name) VALUES ($1, $2, $3) RETURNING id, note_type_id, ordinal, name, font, size, is_rtl, sticky
+`
+
+type CreateFieldParams struct {
+	NoteTypeID pgtype.UUID `json:"note_type_id"`
+	Ordinal    int32       `json:"ordinal"`
+	Name       string      `json:"name"`
+}
+
+func (q *Queries) CreateField(ctx context.Context, arg CreateFieldParams) (Field, error) {
+	row := q.db.QueryRow(ctx, createField, arg.NoteTypeID, arg.Ordinal, arg.Name)
+	var i Field
+	err := row.Scan(
+		&i.ID,
+		&i.NoteTypeID,
+		&i.Ordinal,
+		&i.Name,
+		&i.Font,
+		&i.Size,
+		&i.IsRtl,
+		&i.Sticky,
+	)
+	return i, err
+}
+
+const deleteFieldsForNoteType = `-- name: DeleteFieldsForNoteType :execrows
+DELETE FROM fields WHERE note_type_id = $1
+`
+
+func (q *Queries) DeleteFieldsForNoteType(ctx context.Context, noteTypeID pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteFieldsForNoteType, noteTypeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getField = `-- name: GetField :one
 SELECT id, note_type_id, ordinal, name, font, size, is_rtl, sticky FROM fields WHERE id = $1
 `
@@ -29,4 +67,55 @@ func (q *Queries) GetField(ctx context.Context, id pgtype.UUID) (Field, error) {
 		&i.Sticky,
 	)
 	return i, err
+}
+
+const listFieldsForNoteType = `-- name: ListFieldsForNoteType :many
+SELECT id, note_type_id, ordinal, name, font, size, is_rtl, sticky FROM fields WHERE note_type_id = $1 ORDER BY ordinal
+`
+
+func (q *Queries) ListFieldsForNoteType(ctx context.Context, noteTypeID pgtype.UUID) ([]Field, error) {
+	rows, err := q.db.Query(ctx, listFieldsForNoteType, noteTypeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Field
+	for rows.Next() {
+		var i Field
+		if err := rows.Scan(
+			&i.ID,
+			&i.NoteTypeID,
+			&i.Ordinal,
+			&i.Name,
+			&i.Font,
+			&i.Size,
+			&i.IsRtl,
+			&i.Sticky,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const renameField = `-- name: RenameField :execrows
+UPDATE fields SET name = $1 WHERE id = $2 AND note_type_id = $3
+`
+
+type RenameFieldParams struct {
+	Name       string      `json:"name"`
+	ID         pgtype.UUID `json:"id"`
+	NoteTypeID pgtype.UUID `json:"note_type_id"`
+}
+
+func (q *Queries) RenameField(ctx context.Context, arg RenameFieldParams) (int64, error) {
+	result, err := q.db.Exec(ctx, renameField, arg.Name, arg.ID, arg.NoteTypeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
