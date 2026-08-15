@@ -120,6 +120,16 @@ only the exporting owner's own `user_card_state`/`review_log` rows are flattened
 rows, and since Enshu persists no package-wide creation instant, `col.crt` is synthesised from
 the earliest exported review-state due date rather than carried through.
 
+`GET`/`POST /import` ([#62](https://github.com/Jolls/enshu/issues/62)) is the HTTP layer on top
+of the reader/writer above: `internal/http/import.go` uploads a `.apkg`, calls `apkg.Read` then
+`apkg.Import` inside one transaction, and redirects to the resulting deck. Since a package's
+`Decks` list doesn't say which deck its cards actually landed in (Anki collections routinely
+carry an untouched "Default" deck alongside the one actually exported), `ImportResult` now
+reports a per-deck card tally (`ImportResult.Decks`) and the handler redirects to whichever deck
+received the most cards. Verified end to end against the real fixture
+(`tests/fixtures/apkg/mathematics-schema18.apkg`) via the actual route, not just `apkg.Import`
+directly.
+
 ---
 
 ## 3. Stack

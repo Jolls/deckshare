@@ -68,6 +68,48 @@ func TestImport_FilesCardDeckFromCardsOwnDeck(t *testing.T) {
 	}
 }
 
+// TestImport_ResultReportsDeckCardCounts asserts ImportResult.Decks (the import UI's #62
+// redirect target) tallies cards per deck correctly: defaultSynthSpec files 3 cards under
+// "Default" (Did 1) and 2 under "Default::Sub" (Did 2).
+func TestImport_ResultReportsDeckCardCounts(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	ownerID := seedUser(t, tx)
+	q := db.New(tx)
+
+	spec := defaultSynthSpec(t)
+	pkg := buildSchema11Package(t, spec)
+	col := readBytes(t, pkg)
+
+	result, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	defaultDeck, err := q.GetDeckByOwnerAndName(ctx, db.GetDeckByOwnerAndNameParams{OwnerID: ownerID, Name: "Default"})
+	if err != nil {
+		t.Fatalf("GetDeckByOwnerAndName(Default): %v", err)
+	}
+	subDeck, err := q.GetDeckByOwnerAndName(ctx, db.GetDeckByOwnerAndNameParams{OwnerID: ownerID, Name: "Default::Sub"})
+	if err != nil {
+		t.Fatalf("GetDeckByOwnerAndName(Default::Sub): %v", err)
+	}
+
+	if len(result.Decks) != 2 {
+		t.Fatalf("len(result.Decks) = %d, want 2", len(result.Decks))
+	}
+	countByID := map[pgtype.UUID]int{}
+	for _, d := range result.Decks {
+		countByID[d.ID] = d.CardCount
+	}
+	if countByID[defaultDeck.ID] != 3 {
+		t.Errorf("Default card count = %d, want 3", countByID[defaultDeck.ID])
+	}
+	if countByID[subDeck.ID] != 2 {
+		t.Errorf("Default::Sub card count = %d, want 2", countByID[subDeck.ID])
+	}
+}
+
 func findCardByAnkiID(ctx context.Context, tx pgx.Tx, ankiID int64) (db.Card, error) {
 	var c db.Card
 	row := tx.QueryRow(ctx, `SELECT id, note_id, template_id, ordinal, deck_id, anki_id FROM cards WHERE anki_id = $1`, ankiID)

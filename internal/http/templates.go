@@ -24,7 +24,7 @@ func parseTemplates() (map[string]*template.Template, error) {
 		"login", "signup", "settings",
 		"decks", "deck_new", "deck", "deck_edit",
 		"notetypes", "notetype_form", "note_form",
-		"review",
+		"review", "import",
 	} {
 		files := append([]string{"templates/layout.html", "templates/" + name + ".html"}, pagePartials[name]...)
 		t, err := template.ParseFS(web.Templates, files...)

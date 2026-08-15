@@ -1,0 +1,11 @@
+{{define "content"}}
+<h1>Import a deck</h1>
+{{if .Error}}<p style="color: red;">{{.Error}}</p>{{end}}
+<form method="post" action="/import" enctype="multipart/form-data">
+    <label for="file">.apkg file</label>
+    <input type="file" id="file" name="file" accept=".apkg" required>
+
+    <button type="submit">Import</button>
+</form>
+<p><a href="/decks">Back to decks</a></p>
+{{end}}

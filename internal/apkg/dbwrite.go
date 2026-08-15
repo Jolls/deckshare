@@ -30,6 +30,19 @@ type ImportResult struct {
 	CardStatesReplayed int
 	MediaImported      int
 	Warnings           []string
+	// Decks is every non-filtered deck this import touched, with how many cards it received --
+	// the import UI (#62) uses this to redirect to whichever deck the package's cards actually
+	// landed in, since a package's Decks slice on its own doesn't say which one that is (Anki
+	// collections routinely carry an untouched "Default" deck alongside the one actually
+	// exported).
+	Decks []ImportedDeck
+}
+
+// ImportedDeck is one deck touched by an import, and how many of its cards came from this
+// import specifically (not the deck's total card count, which may be larger on a re-import).
+type ImportedDeck struct {
+	ID        pgtype.UUID
+	CardCount int
 }
 
 // Import files col into the database under ownerID, writing media bytes into blobs. Must be
@@ -54,9 +67,18 @@ func Import(ctx context.Context, tx pgx.Tx, ownerID pgtype.UUID, col *IrCollecti
 		return ImportResult{}, err
 	}
 
-	cardByAnkiID, err := importCards(ctx, q, col.Cards, noteByAnkiID, noteTypeByAnkiID, templatesByNoteType, isClozeByNoteType, deckByAnkiID, col.Notes, &result)
+	cardByAnkiID, cardCountByDeckID, err := importCards(ctx, q, col.Cards, noteByAnkiID, noteTypeByAnkiID, templatesByNoteType, isClozeByNoteType, deckByAnkiID, col.Notes, &result)
 	if err != nil {
 		return ImportResult{}, err
+	}
+
+	seenDeck := make(map[pgtype.UUID]bool, len(deckByAnkiID))
+	for _, id := range deckByAnkiID {
+		if seenDeck[id] {
+			continue
+		}
+		seenDeck[id] = true
+		result.Decks = append(result.Decks, ImportedDeck{ID: id, CardCount: cardCountByDeckID[id]})
 	}
 
 	lockIDs := make([]pgtype.UUID, 0, len(cardByAnkiID))
@@ -315,7 +337,7 @@ func importNotes(ctx context.Context, q *db.Queries, ownerID pgtype.UUID, notes 
 // importCards upserts each card, filing deck_id from the card's OWN home deck (architecture.md
 // §20), never the note's. ON CONFLICT (note_id, ordinal) keeps the existing card id and, with it,
 // its user_card_state and review_log history.
-func importCards(ctx context.Context, q *db.Queries, cards []IrCard, noteByAnkiID map[int64]pgtype.UUID, noteTypeByAnkiID map[int64]pgtype.UUID, templatesByNoteType map[int64]map[int32]pgtype.UUID, isClozeByNoteType map[int64]bool, deckByAnkiID map[int64]pgtype.UUID, notes []IrNote, result *ImportResult) (map[int64]pgtype.UUID, error) {
+func importCards(ctx context.Context, q *db.Queries, cards []IrCard, noteByAnkiID map[int64]pgtype.UUID, noteTypeByAnkiID map[int64]pgtype.UUID, templatesByNoteType map[int64]map[int32]pgtype.UUID, isClozeByNoteType map[int64]bool, deckByAnkiID map[int64]pgtype.UUID, notes []IrNote, result *ImportResult) (map[int64]pgtype.UUID, map[pgtype.UUID]int, error) {
 	noteTypeAnkiIDByNoteAnkiID := make(map[int64]int64, len(notes))
 	homeDeckByNoteAnkiID := make(map[int64]int64, len(notes))
 	for _, n := range notes {
@@ -324,6 +346,7 @@ func importCards(ctx context.Context, q *db.Queries, cards []IrCard, noteByAnkiI
 	}
 
 	cardByAnkiID := make(map[int64]pgtype.UUID, len(cards))
+	cardCountByDeckID := make(map[pgtype.UUID]int, len(deckByAnkiID))
 	for _, c := range cards {
 		noteID, ok := noteByAnkiID[c.NoteAnkiID]
 		if !ok {
@@ -370,12 +393,13 @@ func importCards(ctx context.Context, q *db.Queries, cards []IrCard, noteByAnkiI
 			AnkiID:     pgtype.Int8{Int64: c.AnkiID, Valid: true},
 		})
 		if err != nil {
-			return nil, fmt.Errorf("apkg: upserting card (anki_id %d): %w", c.AnkiID, err)
+			return nil, nil, fmt.Errorf("apkg: upserting card (anki_id %d): %w", c.AnkiID, err)
 		}
 		cardByAnkiID[c.AnkiID] = created.ID
+		cardCountByDeckID[deckID]++
 		result.CardsUpserted++
 	}
-	return cardByAnkiID, nil
+	return cardByAnkiID, cardCountByDeckID, nil
 }
 
 // reviewKindToState maps revlog.type onto review_log.state_before: 0 learning -> Learning,

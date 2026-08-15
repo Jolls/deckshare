@@ -3,6 +3,15 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.16] - 2026-08-15
+
+### Added
+- `GET`/`POST /import`: upload a `.apkg`, synchronous `read -> IR -> db`, redirect to the deck
+  the package's cards actually landed in. `ImportResult` now reports a per-deck card tally so the
+  handler can pick that deck over an untouched "Default" deck the package might also carry.
+  Verified end to end against the real fixture via the actual route
+  ([#62](https://github.com/Jolls/enshu/issues/62))
+
 ## [0.1.15] - 2026-08-15
 
 ### Added
