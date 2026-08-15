@@ -103,6 +103,21 @@ HTML carries inline `style=""` attributes, which cannot take a nonce, and a nonc
 makes CSP ignore `'unsafe-inline'` entirely. See
 [docs/plans/57-csp-reviewer.md](plans/57-csp-reviewer.md).
 
+**Build order step 8 (§11) has landed** ([#58](https://github.com/Jolls/enshu/issues/58),
+[#59](https://github.com/Jolls/enshu/issues/59)): `internal/apkg/` is a complete `apkg -> IR ->
+db` reader/writer pair for schema 11 (schema 18 stays reader-only and gated behind
+[#61](https://github.com/Jolls/enshu/issues/61)'s unverified protobuf field numbers). `Export`
+(db -> IR) and `Write`/`WriteFile` (IR -> `.apkg`) mirror `Import`/`Read` in reverse: each row
+reuses its original `anki_id` when one was imported and synthesises one otherwise (a note's or
+deck's creation timestamp in milliseconds, or a fold of its own UUID when no timestamp column
+exists), and `deriveCardScheduling` reconstructs Anki's `type`/`queue`/`due` triple from
+`user_card_state` plus go-fsrs's `State` (which shares Anki's 0–3 numbering for new/learning/
+review/relearning). Export is lossy in one direction by construction (apkg-format.md's Export
+section): a shared deck's other reviewers' progress cannot fit in a single Anki collection, so
+only the exporting owner's own `user_card_state`/`review_log` rows are flattened back onto card
+rows, and since Enshu persists no package-wide creation instant, `col.crt` is synthesised from
+the earliest exported review-state due date rather than carried through.
+
 ---
 
 ## 3. Stack

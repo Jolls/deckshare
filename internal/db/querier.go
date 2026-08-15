@@ -112,10 +112,16 @@ type Querier interface {
 	// reviewer writes. execrows, not exec: 0 rows means the id was already taken and this is a pure retry,
 	// which must NOT be rescheduled from the row it already advanced.
 	InsertReviewLog(ctx context.Context, arg InsertReviewLogParams) (int64, error)
+	ListCardsByOwner(ctx context.Context, ownerID pgtype.UUID) ([]Card, error)
 	// Cards are content addressing only -- no scheduling columns exist here to lose (CLAUDE.md §2.1).
 	// These four statements are the whole of card regeneration; see internal/db/cards.go for the
 	// diff that calls them and docs/schema.md's card-regeneration trap for why it is a diff.
 	ListCardsForNoteForUpdate(ctx context.Context, noteID pgtype.UUID) ([]ListCardsForNoteForUpdateRow, error)
+	// Export (#59). Every statement here is called only from internal/apkg/dbexport.go, reading one
+	// owner's own content -- scoped directly by owner_id, the same convention import.sql uses,
+	// not deck_access: exporting is always the owner's own collection, never someone else's shared
+	// deck (architecture.md §7's Export section).
+	ListDecksByOwner(ctx context.Context, ownerID pgtype.UUID) ([]Deck, error)
 	ListDecksForUser(ctx context.Context, userID pgtype.UUID) ([]ListDecksForUserRow, error)
 	// The queue. Keyset over (COALESCE(due,'infinity'), card_id): due reviews first by due date, then
 	// never-seen cards by id. 'infinity' (not NULL) keeps the sort key total -- a NULL inside the row
@@ -128,19 +134,27 @@ type Querier interface {
 	ListExistingReviewLogIDs(ctx context.Context, ids []pgtype.UUID) ([]pgtype.UUID, error)
 	ListFieldsForNoteType(ctx context.Context, noteTypeID pgtype.UUID) ([]Field, error)
 	ListFieldsForNoteTypes(ctx context.Context, noteTypeIds []pgtype.UUID) ([]ListFieldsForNoteTypesRow, error)
+	ListFieldsForOwner(ctx context.Context, ownerID pgtype.UUID) ([]Field, error)
 	ListNoteIDsOfNoteType(ctx context.Context, noteTypeID pgtype.UUID) ([]pgtype.UUID, error)
 	// Note-type CSS for every card in the deck: sanitised once per page, never per card (#55's doc
 	// comment), so a refilled card can never arrive before its styles.
 	ListNoteTypeCSSForDeck(ctx context.Context, arg ListNoteTypeCSSForDeckParams) ([]ListNoteTypeCSSForDeckRow, error)
+	ListNoteTypesByOwner(ctx context.Context, ownerID pgtype.UUID) ([]NoteType, error)
 	ListNoteTypesForOwner(ctx context.Context, ownerID pgtype.UUID) ([]ListNoteTypesForOwnerRow, error)
+	ListNotesByOwner(ctx context.Context, ownerID pgtype.UUID) ([]Note, error)
 	ListNotesInDeck(ctx context.Context, arg ListNotesInDeckParams) ([]ListNotesInDeckRow, error)
 	// The replay path (architecture.md §6); backed by review_log_card_id_user_id_reviewed_at_idx. Only
 	// rating and reviewed_at are read: a replay re-derives every *_before itself.
 	ListReviewLogForCard(ctx context.Context, arg ListReviewLogForCardParams) ([]ListReviewLogForCardRow, error)
+	ListReviewLogForOwnerExport(ctx context.Context, ownerID pgtype.UUID) ([]ReviewLog, error)
 	// Per-card authorisation for a grade batch, which may span decks. A card missing from the result is
 	// absent, invisible, or not studyable -- deliberately indistinguishable (docs/schema.md).
 	ListStudyableCards(ctx context.Context, arg ListStudyableCardsParams) ([]ListStudyableCardsRow, error)
 	ListTemplatesForNoteType(ctx context.Context, noteTypeID pgtype.UUID) ([]Template, error)
+	ListTemplatesForOwner(ctx context.Context, ownerID pgtype.UUID) ([]Template, error)
+	// Only this user's OWN progress on their OWN cards -- a shared deck's other reviewers' state is
+	// exactly what apkg-format.md's Export section says cannot be represented in a single collection.
+	ListUserCardStateForOwnerExport(ctx context.Context, ownerID pgtype.UUID) ([]UserCardState, error)
 	// The per-(user,card) advisory lock, held to commit (architecture.md §6). Advisory rather than
 	// SELECT ... FOR UPDATE because a never-seen card has no user_card_state row to lock, and two
 	// concurrent first grades are exactly that case. The key is derived in Go -- see internal/review/
