@@ -27,6 +27,10 @@ contract for `POST /api/reviews/batch` is pinned down there in full and is not r
   session-only, or gated by row ownership instead (e.g. a note type's `owner_id`).
 - **Phase / step** cites architecture.md §11's build order, so route work can be sequenced
   against it.
+- **Response headers are global, not per-route.** `internal/http/security.go`'s `securityHeaders`
+  middleware sets the `Content-Security-Policy` on every response, wrapping outside the auth
+  middleware so rejected requests carry it too. A new route inherits it with no action; a route
+  that needs a *different* policy does not exist and should be discussed before one is added.
 
 ---
 

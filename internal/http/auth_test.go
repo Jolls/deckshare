@@ -77,6 +77,8 @@ func countRows(t *testing.T, tx pgx.Tx, query string, args ...any) int64 {
 // newTestHandler builds the same route+middleware stack as NewHandler, over a tx-backed auth
 // service, without the DB pool (the /healthz route is not under test here). clocks is variadic so
 // existing call sites are unaffected; pass one func to pin the clock for review-route tests.
+// The securityHeaders wrap mirrors NewHandler's, so route tests exercise the same header stack
+// production serves.
 func newTestHandler(t *testing.T, tx pgx.Tx, cfg auth.Config, clocks ...func() time.Time) (http.Handler, *auth.Service) {
 	t.Helper()
 	a, err := auth.New(tx, cfg)
@@ -103,7 +105,7 @@ func newTestHandler(t *testing.T, tx pgx.Tx, cfg auth.Config, clocks ...func() t
 	registerNoteTypeRoutes(mux, tx, pages)
 	registerNoteRoutes(mux, tx, pages)
 	registerReviewRoutes(mux, tx, pages, fragments, clock)
-	return a.Middleware(mux), a
+	return securityHeaders(a.Middleware(mux)), a
 }
 
 func loginCookie(t *testing.T, tx pgx.Tx, a *auth.Service, email, password string) *http.Cookie {

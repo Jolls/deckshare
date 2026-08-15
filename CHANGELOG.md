@@ -3,6 +3,17 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.11] - 2026-08-14
+
+### Security
+- A global `Content-Security-Policy` (`internal/http/security.go`), set by a middleware wrapping
+  outside the auth middleware so it covers CSRF rejections and error responses too. Defence in
+  depth behind `internal/render`'s sanitisation for card content that, under a shared deck,
+  belongs to another user: `script-src` refuses inline and remote script, `img-src 'self'`
+  refuses remote card images (a tracking beacon in the multiuser model — architecture.md §20),
+  `frame-ancestors 'none'` refuses framing, and `base-uri 'none'` refuses a `<base>` rewrite of
+  relative card media ([#57](https://github.com/Jolls/enshu/issues/57))
+
 ## [0.1.10] - 2026-08-14
 
 ### Added

@@ -89,6 +89,20 @@ buttons are plain (no per-button `hx-post`) so grading can batch and retry with 
 literal per-button POST cannot do — a hidden `#review-sender` element, JS-triggered, is the single
 network-touching sender.
 
+**Build order step 7's security layer has landed** ([#57](https://github.com/Jolls/enshu/issues/57)):
+a global `Content-Security-Policy` set by `internal/http/security.go`'s `securityHeaders`
+middleware, wrapping outside `auth.Service.Middleware` so it covers rejected requests too. It is
+the browser-enforced bound behind §8's sanitisation, not a replacement for it: `script-src`
+refuses inline and remote script outright, `img-src 'self'` refuses remote card images (§20), and
+`frame-ancestors 'none'` closes the outer half of the clickjacking threat `internal/render/css.go`'s
+property allowlist closes from the inside. Two sources are concessions with recorded expiry
+conditions — `'unsafe-eval'`, forced by htmx's `hx-vals="js:…"` on the reviewer's two
+network-touching elements, and `https://cdn.jsdelivr.net`, forced by `layout.html`'s un-vendored
+Pico CSS. `style-src 'unsafe-inline'` is not a concession but a structural fact: sanitised card
+HTML carries inline `style=""` attributes, which cannot take a nonce, and a nonce in `style-src`
+makes CSP ignore `'unsafe-inline'` entirely. See
+[docs/plans/57-csp-reviewer.md](plans/57-csp-reviewer.md).
+
 ---
 
 ## 3. Stack
@@ -699,6 +713,7 @@ seemed tidier."
 | Row ids | Epoch-millis integers, unique per collection | UUIDv7; Anki's ids kept as `anki_id` for export fidelity. Per-collection ids cannot key across users — deck id 1 is `Default` in every collection ever made |
 | Card HTML | Trusted: it is always your own content | Sanitised on render (§8). A shared deck is *other users'* HTML |
 | Deck-content licensing | AnkiWeb hosts a public deck catalogue | No catalogue; a deck moves by `deck_access` row or by a file its owner passed on (§11) |
+| Remote card media | The webview loads whatever the card HTML references, including images on remote hosts | `img-src 'self'` refuses them (`internal/http/security.go`). Card content is always your own in Anki; under `deck_access` it is someone else's, and a remote `<img>` is a beacon reporting every reviewer's IP, UA and review timing to a host the deck author picked. Relative Anki filenames and `/media/{sha256}` (#60) are unaffected |
 
 ### Deliberate scope, not disagreement
 
