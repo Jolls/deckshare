@@ -2,8 +2,8 @@
 <h1>Import a deck</h1>
 {{if .Error}}<p style="color: red;">{{.Error}}</p>{{end}}
 <form method="post" action="/import" enctype="multipart/form-data">
-    <label for="file">.apkg file</label>
-    <input type="file" id="file" name="file" accept=".apkg" required>
+    <label for="file">.apkg or .colpkg file</label>
+    <input type="file" id="file" name="file" accept=".apkg,.colpkg" required>
 
     <button type="submit">Import</button>
 </form>

@@ -15,7 +15,7 @@ import (
 // which bounds decompressed member bytes, not the compressed upload itself.
 const maxUploadBytes = 550 << 20
 
-// registerImportRoutes wires GET/POST /import (docs/routes.md): upload a .apkg, synchronous
+// registerImportRoutes wires GET/POST /import (docs/routes.md): upload a .apkg/.colpkg, synchronous
 // read -> IR -> db (CLAUDE.md §9's Simplicity First -- no job queue for MVP), redirect to the
 // resulting deck.
 func registerImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]*template.Template, blobs *media.Store, now func() time.Time) {
@@ -37,7 +37,7 @@ func registerImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 		file, header, err := r.FormFile("file")
 		if err != nil {
 			render(w, pages["import"], http.StatusBadRequest, map[string]any{
-				"User": user, "Error": "Choose a .apkg file to import",
+				"User": user, "Error": "Choose a .apkg or .colpkg file to import",
 			})
 			return
 		}
