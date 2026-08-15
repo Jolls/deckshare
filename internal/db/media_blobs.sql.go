@@ -7,7 +7,28 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const createMediaBlob = `-- name: CreateMediaBlob :exec
+INSERT INTO media_blobs (sha256, size_bytes, mime) VALUES ($1, $2, $3)
+ON CONFLICT (sha256) DO NOTHING
+`
+
+type CreateMediaBlobParams struct {
+	Sha256    string `json:"sha256"`
+	SizeBytes int64  `json:"size_bytes"`
+	Mime      string `json:"mime"`
+}
+
+// Dedup is by content, across ALL users (docs/schema.md, Media). ON CONFLICT DO NOTHING because a
+// blob row is immutable once written: size_bytes/mime are pure functions of the bytes the sha256
+// already commits to, so a second import of the same content has nothing new to write.
+func (q *Queries) CreateMediaBlob(ctx context.Context, arg CreateMediaBlobParams) error {
+	_, err := q.db.Exec(ctx, createMediaBlob, arg.Sha256, arg.SizeBytes, arg.Mime)
+	return err
+}
 
 const getMediaBlob = `-- name: GetMediaBlob :one
 SELECT sha256, size_bytes, mime, created_at FROM media_blobs WHERE sha256 = $1
@@ -15,6 +36,38 @@ SELECT sha256, size_bytes, mime, created_at FROM media_blobs WHERE sha256 = $1
 
 func (q *Queries) GetMediaBlob(ctx context.Context, sha256 string) (MediaBlob, error) {
 	row := q.db.QueryRow(ctx, getMediaBlob, sha256)
+	var i MediaBlob
+	err := row.Scan(
+		&i.Sha256,
+		&i.SizeBytes,
+		&i.Mime,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getMediaBlobForUser = `-- name: GetMediaBlobForUser :one
+SELECT mb.sha256, mb.size_bytes, mb.mime, mb.created_at
+FROM media_blobs mb
+WHERE mb.sha256 = $1
+  AND EXISTS (
+    SELECT 1 FROM media_refs mr
+    JOIN deck_access da ON da.deck_id = mr.deck_id
+    WHERE mr.sha256 = mb.sha256 AND da.user_id = $2 AND da.can_view
+  )
+`
+
+type GetMediaBlobForUserParams struct {
+	Sha256 string      `json:"sha256"`
+	UserID pgtype.UUID `json:"user_id"`
+}
+
+// Used by GET /media/{sha256} (routes.md): a blob is visible to a user only through a deck they
+// can_view that references it -- the same deck_access join every cross-user read goes through
+// (CLAUDE.md §9). Collapsing "blob doesn't exist" and "blob exists but caller can't see it" into
+// one pgx.ErrNoRows, like GetDeckForUser does, avoids confirming existence to a caller who can't.
+func (q *Queries) GetMediaBlobForUser(ctx context.Context, arg GetMediaBlobForUserParams) (MediaBlob, error) {
+	row := q.db.QueryRow(ctx, getMediaBlobForUser, arg.Sha256, arg.UserID)
 	var i MediaBlob
 	err := row.Scan(
 		&i.Sha256,

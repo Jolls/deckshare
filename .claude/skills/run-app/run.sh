@@ -9,6 +9,7 @@ DB_URL="postgres://root:mysecretpassword@localhost:5432/local"
 PIDFILE=".claude/skills/run-app/.server.pid"
 BIN=".claude/skills/run-app/.enshu-server.exe"
 LOG=".claude/skills/run-app/.server.log"
+MEDIA_ROOT=".claude/skills/run-app/.media"
 
 port_pid() {
   netstat -ano 2>/dev/null | grep ":${PORT} " | grep LISTENING | awk '{print $NF}' | head -1
@@ -30,8 +31,9 @@ start() {
 
   DATABASE_URL="$DB_URL" goose -dir migrations postgres "$DB_URL" up
   go build -o "$BIN" ./cmd/enshu
+  mkdir -p "$MEDIA_ROOT"
 
-  ADDR=":${PORT}" DATABASE_URL="$DB_URL" "$BIN" >"$LOG" 2>&1 &
+  ADDR=":${PORT}" DATABASE_URL="$DB_URL" MEDIA_ROOT="$MEDIA_ROOT" "$BIN" >"$LOG" 2>&1 &
   echo $! >"$PIDFILE"
   sleep 1
 

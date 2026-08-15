@@ -1,4 +1,4 @@
-// Package http holds HTTP handlers, one file per aggregate: decks, notes, review, access.
+// Package http holds HTTP handlers, one file per aggregate: decks, notes, review, media, access.
 package http
 
 import (
@@ -9,13 +9,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Jolls/enshu/internal/auth"
+	"github.com/Jolls/enshu/internal/media"
 )
 
 // NewHandler builds the application's top-level handler: the route mux wrapped in the auth
 // middleware, so the CSRF check and session population run for every request
 // (architecture.md §12), wrapped in turn by securityHeaders so the CSP is set on every
 // response including the ones auth rejects (security.go).
-func NewHandler(pool *pgxpool.Pool, a *auth.Service) (http.Handler, error) {
+func NewHandler(pool *pgxpool.Pool, a *auth.Service, blobs *media.Store) (http.Handler, error) {
 	pages, err := parseTemplates()
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
@@ -34,6 +35,7 @@ func NewHandler(pool *pgxpool.Pool, a *auth.Service) (http.Handler, error) {
 	registerNoteTypeRoutes(mux, pool, pages)
 	registerNoteRoutes(mux, pool, pages)
 	registerReviewRoutes(mux, pool, pages, fragments, time.Now)
+	registerMediaRoutes(mux, pool, blobs)
 	return securityHeaders(a.Middleware(mux)), nil
 }
 

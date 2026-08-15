@@ -17,6 +17,7 @@ import (
 
 	"github.com/Jolls/enshu/internal/auth"
 	"github.com/Jolls/enshu/internal/db"
+	"github.com/Jolls/enshu/internal/media"
 )
 
 // DB-backed tests: skipped unless DATABASE_URL is set. Every test runs inside a pgx.Tx that is
@@ -105,6 +106,7 @@ func newTestHandler(t *testing.T, tx pgx.Tx, cfg auth.Config, clocks ...func() t
 	registerNoteTypeRoutes(mux, tx, pages)
 	registerNoteRoutes(mux, tx, pages)
 	registerReviewRoutes(mux, tx, pages, fragments, clock)
+	registerMediaRoutes(mux, tx, media.New(t.TempDir()))
 	return securityHeaders(a.Middleware(mux)), a
 }
 
@@ -150,6 +152,7 @@ func TestRoutes_NoSession(t *testing.T) {
 		{"GET", "/login", 200, ""},
 		{"GET", "/signup", 200, ""},
 		{"GET", "/settings", 303, "/login"},
+		{"GET", "/media/" + testSHA, 303, "/login"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
