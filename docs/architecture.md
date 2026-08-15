@@ -105,8 +105,10 @@ makes CSP ignore `'unsafe-inline'` entirely. See
 
 **Build order step 8 (§11) has landed** ([#58](https://github.com/Jolls/enshu/issues/58),
 [#59](https://github.com/Jolls/enshu/issues/59)): `internal/apkg/` is a complete `apkg -> IR ->
-db` reader/writer pair for schema 11 (schema 18 stays reader-only and gated behind
-[#61](https://github.com/Jolls/enshu/issues/61)'s unverified protobuf field numbers). `Export`
+db` reader/writer pair for schema 11, and reader-only for schema 18 -- its core protobuf field
+numbers are now verified against a real export ([#61](https://github.com/Jolls/enshu/issues/61)),
+but the writer stays schema-11-only by design (every Anki version can read it, so there is no
+compatibility reason to emit schema 18). `Export`
 (db -> IR) and `Write`/`WriteFile` (IR -> `.apkg`) mirror `Import`/`Read` in reverse: each row
 reuses its original `anki_id` when one was imported and synthesises one otherwise (a note's or
 deck's creation timestamp in milliseconds, or a fold of its own UUID when no timestamp column

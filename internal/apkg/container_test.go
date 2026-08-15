@@ -127,26 +127,20 @@ func TestRead_MediaIndexJSON(t *testing.T) {
 	}
 }
 
-// TestRead_MediaIndexProtobufFailsUntilVerified mirrors TestRead_Schema18_FailsUntilVerified:
-// the modern container's protobuf media index uses the same unverified field numbers (#61), so
-// readMediaIndex must fail loudly rather than risk silently mis-decoding filenames, while
-// decodeProtoMediaIndex (the plumbing #61 will unlock) still works correctly today.
-func TestRead_MediaIndexProtobufFailsUntilVerified(t *testing.T) {
+// TestRead_MediaIndexProtobuf confirms readMediaIndex sniffs and decodes the modern container's
+// protobuf media list -- mediaEntryField/mediaEntryNameField are confirmed against a real
+// export's media filenames (ankischema.go, #61).
+func TestRead_MediaIndexProtobuf(t *testing.T) {
 	var proto []byte
 	proto = append(proto, encodeMediaEntry("cat.jpg")...)
 	proto = append(proto, encodeMediaEntry("dog.png")...)
 
-	_, err := readMediaIndex(proto)
-	if !errors.Is(err, ErrSchema18Config) {
-		t.Fatalf("readMediaIndex(protobuf) err = %v, want ErrSchema18Config", err)
-	}
-
-	protoIdx, err := decodeProtoMediaIndex(proto)
+	idx, err := readMediaIndex(proto)
 	if err != nil {
-		t.Fatalf("decodeProtoMediaIndex: %v", err)
+		t.Fatalf("readMediaIndex(protobuf): %v", err)
 	}
-	if protoIdx["0"] != "cat.jpg" || protoIdx["1"] != "dog.png" {
-		t.Fatalf("protobuf media index = %v", protoIdx)
+	if idx["0"] != "cat.jpg" || idx["1"] != "dog.png" {
+		t.Fatalf("protobuf media index = %v", idx)
 	}
 }
 

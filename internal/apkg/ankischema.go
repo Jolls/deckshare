@@ -95,25 +95,32 @@ type ankiCardData struct {
 	DR  *float64 `json:"dr"`
 }
 
-// Schema-18 protobuf field numbers. ALL ❓ UNVERIFIED against a real export -- #61 exists to
-// close this, and tests/fixtures/apkg/README.md explains why a synthetic schema-18 fixture
-// cannot. Per the resolved decision in docs/plans/58-apkg-import.md §10.1, no third-party
-// provenance is claimed for these placeholder values: readSchema18 always fails with
-// ErrSchema18Config until #61 verifies the real numbers against a real export.
+// Schema-18 protobuf field numbers. Verified 2026-08-15 (#61) against two real schema-18
+// exports (tests/fixtures/apkg/mathematics-schema18.apkg): a Basic-family note type and a real
+// Cloze note type with content, decoded byte-for-byte against the raw config blobs. Each
+// constant below is either ✅ confirmed against those bytes or ❓ still unverified -- see
+// docs/apkg-format.md's schema-18 section for the decode walkthrough. Two of the original
+// placeholder guesses (fieldConfigFontField, fieldConfigSizeField) turned out wrong: the real
+// wire bytes have font/size at field numbers 3/4, not 1/2.
 const (
-	ntConfigKindField      uint32 = 1 // 0 standard, 1 cloze
-	ntConfigSortFieldField uint32 = 2
-	ntConfigCSSField       uint32 = 3
-	fieldConfigFontField   uint32 = 1
-	fieldConfigSizeField   uint32 = 2
-	fieldConfigRTLField    uint32 = 3
-	fieldConfigStickyField uint32 = 4
-	tmplConfigQFmtField    uint32 = 1
-	tmplConfigAFmtField    uint32 = 2
-	tmplConfigBQFmtField   uint32 = 3
-	tmplConfigBAFmtField   uint32 = 4
-	deckCommonDescField    uint32 = 1
-	deckKindFilteredField  uint32 = 1
-	mediaEntryField        uint32 = 1
-	mediaEntryNameField    uint32 = 1
+	ntConfigKindField      uint32 = 1 // ✅ 0 standard, 1 cloze -- confirmed against a real Cloze notetypes.config
+	ntConfigSortFieldField uint32 = 2 // ❓ unverified -- no note type in the real export has a non-default sort field
+	ntConfigCSSField       uint32 = 3 // ✅ confirmed against real CSS bytes
+	fieldConfigFontField   uint32 = 3 // ✅ confirmed ("Arial") -- corrected from an earlier guess of 1
+	fieldConfigSizeField   uint32 = 4 // ✅ confirmed (20) -- corrected from an earlier guess of 2
+	tmplConfigQFmtField    uint32 = 1 // ✅ confirmed against real template HTML
+	tmplConfigAFmtField    uint32 = 2 // ✅ confirmed against real template HTML
+	deckKindNormalField    uint32 = 1 // ✅ confirmed: wraps a nested message ({1: deck_config id}) for a non-filtered deck.
+	mediaEntryField        uint32 = 1 // ✅ confirmed against real media filenames
+	mediaEntryNameField    uint32 = 1 // ✅ confirmed against real media filenames
+
+	// Deliberately NOT decoded in read.go, and no constants declared for them: RTL/sticky field
+	// flags, browser-specific template overrides (bqfmt/bafmt), a deck's description, and a
+	// filtered deck's own `kind` oneof variant are all still ❓ -- no note/field/deck in either
+	// real export exercises a non-default value for them. Guessing a field number here risks
+	// silently mis-decoding a real collection, which is the exact failure mode #61 exists to
+	// rule out; these properties default to their zero value (false / "") until a fixture
+	// exercises them. IsFiltered is still derived correctly without knowing the Filtered variant's
+	// field number: it's the negation of deckKindNormalField's presence (deck kind is a oneof, so
+	// "not Normal" means "Filtered" is the only other variant Anki has).
 )

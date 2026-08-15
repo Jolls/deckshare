@@ -13,8 +13,29 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
+
+// init registers the "unicase" collation schema-18's notetypes/fields/templates/decks/tags
+// tables declare on their name columns (ankischema.go). Confirmed 2026-08-15 (#61): the driver
+// fails ANY query touching one of those tables -- not just one that ORDERs BY the collated
+// column -- unless a collation of that name is resolvable, because it's referenced by a UNIQUE
+// INDEX declared on the table, and the schema is validated as a whole when a table is opened.
+// This reader never orders by or compares those name columns (ankischema.go's queries sort by
+// integer id/ord only), so the comparison semantics registered here never affect what gets
+// imported -- only that the name is resolvable at all.
+func init() {
+	sqlite.MustRegisterCollationUtf8("unicase", func(a, b string) int {
+		switch {
+		case a < b:
+			return -1
+		case a > b:
+			return 1
+		default:
+			return 0
+		}
+	})
+}
 
 // closeQuietly closes c and drops any error. Used only for read-only cleanup that happens after
 // every check that could reveal a misread (rows.Err(), Scan errors) has already run -- a close
@@ -456,21 +477,10 @@ func readSchema11(dbh *sql.DB) ([]IrNoteType, []IrDeck, error) {
 }
 
 // readSchema18 decodes the notetypes/fields/templates/decks tables, including their protobuf
-// config columns, using the placeholder field numbers in ankischema.go. Per
-// docs/plans/58-apkg-import.md §10.1, the numbers are unverified against a real export (#61), so
-// this always returns ErrSchema18Config after decoding -- the decode plumbing runs (and is what
-// #61's fixture will exercise once the numbers are confirmed), but nothing schema-18 is ever
-// imported until then.
+// config columns, using the field numbers in ankischema.go -- confirmed against a real export as
+// of #61 for kind/css/qfmt/afmt/font/size/media/deck-kind. See ankischema.go for which
+// properties are still unverified and therefore left at their zero value.
 func readSchema18(dbh *sql.DB) ([]IrNoteType, []IrDeck, error) {
-	if _, _, err := decodeSchema18(dbh); err != nil {
-		return nil, nil, err
-	}
-	return nil, nil, fmt.Errorf("apkg: schema-18 protobuf field numbers are unverified, see #61: %w", ErrSchema18Config)
-}
-
-// decodeSchema18 does the actual notetypes/fields/templates/decks decode. Separated from
-// readSchema18 so the plumbing can be exercised directly once #61 lands.
-func decodeSchema18(dbh *sql.DB) ([]IrNoteType, []IrDeck, error) {
 	ntRows, err := dbh.Query(sqlSelectNotetypes18)
 	if err != nil {
 		return nil, nil, fmt.Errorf("apkg: reading notetypes: %w", ErrCorruptCollection)
@@ -540,15 +550,13 @@ func decodeSchema18(dbh *sql.DB) ([]IrNoteType, []IrDeck, error) {
 		}
 		font, _ := protoString(fields, fieldConfigFontField)
 		size, _ := protoUint(fields, fieldConfigSizeField)
-		rtl, _ := protoUint(fields, fieldConfigRTLField)
-		sticky, _ := protoUint(fields, fieldConfigStickyField)
+		// IsRTL/Sticky are left at their zero value: no field in a real export has either set,
+		// so their protobuf field numbers are still unverified (ankischema.go, #61).
 		noteTypes[i].Fields = append(noteTypes[i].Fields, IrField{
 			Ordinal: ord,
 			Name:    name,
 			Font:    font,
 			Size:    int32(size),
-			IsRTL:   rtl != 0,
-			Sticky:  sticky != 0,
 		})
 	}
 	if err := fRows.Err(); err != nil {
@@ -581,15 +589,13 @@ func decodeSchema18(dbh *sql.DB) ([]IrNoteType, []IrDeck, error) {
 		}
 		qfmt, _ := protoString(fields, tmplConfigQFmtField)
 		afmt, _ := protoString(fields, tmplConfigAFmtField)
-		bqfmt, _ := protoString(fields, tmplConfigBQFmtField)
-		bafmt, _ := protoString(fields, tmplConfigBAFmtField)
+		// BrowserQfmt/BrowserAfmt are left at their zero value: no template in a real export
+		// overrides them, so their protobuf field numbers are still unverified (#61).
 		noteTypes[i].Templates = append(noteTypes[i].Templates, IrTemplate{
-			Ordinal:     ord,
-			Name:        name,
-			Qfmt:        qfmt,
-			Afmt:        afmt,
-			BrowserQfmt: bqfmt,
-			BrowserAfmt: bafmt,
+			Ordinal: ord,
+			Name:    name,
+			Qfmt:    qfmt,
+			Afmt:    afmt,
 		})
 	}
 	if err := tRows.Err(); err != nil {
@@ -620,21 +626,24 @@ func decodeSchema18(dbh *sql.DB) ([]IrNoteType, []IrDeck, error) {
 		if err := dRows.Scan(&id, &name, &common, &kind); err != nil {
 			return nil, nil, fmt.Errorf("apkg: scanning decks row: %w", ErrCorruptCollection)
 		}
-		commonFields, err := decodeProto(common)
-		if err != nil {
+		// decks.common's field numbers (e.g. description) are still unverified (#61): no deck in
+		// a real export sets one. Decoded only to reject a corrupt blob; Description stays "".
+		if _, err := decodeProto(common); err != nil {
 			return nil, nil, fmt.Errorf("apkg: decoding decks.common for %q: %w", name, err)
 		}
-		desc, _ := protoString(commonFields, deckCommonDescField)
 		kindFields, err := decodeProto(kind)
 		if err != nil {
 			return nil, nil, fmt.Errorf("apkg: decoding decks.kind for %q: %w", name, err)
 		}
-		_, filtered := protoMessage(kindFields, deckKindFilteredField)
+		// decks.kind is a oneof: field 1 (deckKindNormalField) wraps a non-filtered deck's
+		// config, confirmed against a real export (#61). The filtered variant's own field number
+		// is still unverified, but Anki decks are one or the other, so "the Normal variant is
+		// absent" correctly identifies a filtered deck without needing that number.
+		_, isNormal := protoMessage(kindFields, deckKindNormalField)
 		decks = append(decks, IrDeck{
-			AnkiID:      id,
-			Name:        normaliseDeckName(name),
-			Description: desc,
-			IsFiltered:  filtered,
+			AnkiID:     id,
+			Name:       normaliseDeckName(name),
+			IsFiltered: !isNormal,
 		})
 	}
 	if err := dRows.Err(); err != nil {

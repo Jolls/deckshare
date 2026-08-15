@@ -3,6 +3,23 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.15] - 2026-08-15
+
+### Added
+- `tests/fixtures/apkg/mathematics-schema18.apkg`: the first committed `.apkg` fixture, a real
+  schema-18 export used to verify `internal/apkg`'s protobuf field numbers
+  ([#61](https://github.com/Jolls/enshu/issues/61))
+
+### Fixed
+- `.apkg` schema-18 import now reads real notetypes/fields/templates/decks/media instead of
+  unconditionally failing: `ankischema.go`'s protobuf field numbers are verified against a real
+  export, two of them (field font/size) corrected from earlier wrong guesses, `read.go` now
+  registers the `unicase` collation the schema's tables require to open at all under
+  `modernc.org/sqlite`, and a filtered deck is now detected correctly. RTL/sticky field flags,
+  browser-format template overrides, and a deck description remain undecoded (default to zero
+  value) pending a fixture that exercises them
+  ([#61](https://github.com/Jolls/enshu/issues/61))
+
 ## [0.1.14] - 2026-08-14
 
 ### Added

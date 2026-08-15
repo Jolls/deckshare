@@ -14,7 +14,7 @@ For each fixture, record here:
 
 | File | Anki version | Schema | Exercises |
 |---|---|---|---|
-| _(none committed)_ | | | |
+| `mathematics-schema18.apkg` | recent Anki, modern zstd container (`meta` version 3) — exact version unconfirmed | 18 | Real notetypes/fields/templates/decks tables; a Basic-family note type plus a real Cloze note with content; 13 media files; the media protobuf list. Closes [#61](https://github.com/Jolls/enshu/issues/61) for kind/css/qfmt/afmt/font/size/media/deck-kind. Does not exercise: RTL/sticky field flags, browser-format template overrides, a deck description, a filtered deck, non-ASCII media filenames, or `revlog` (0 rows). |
 
 ### Inspected but not committed
 
@@ -26,9 +26,10 @@ architecture.md §12. Findings are recorded in words in
 confirmed", and the two real-world traps it exposed are now covered by synthetic regression
 tests (`buildDowngradeStubPackage()`).
 
-**Nothing is committed yet — zero fixtures of any kind, real or synthetic.** Even the schema-11
-findings folded into `docs/apkg-format.md` came from the geography deck above, which can never be
-committed. The repo currently has no fixture it's actually allowed to test against.
+**One real fixture is committed** (`mathematics-schema18.apkg`, table above) — a small hand-built
+collection, so unlike the geography deck it carries no third-party licensing question. The
+schema-11 findings folded into `docs/apkg-format.md` still come from the (uncommitted) geography
+deck above; the schema-18 findings come from this fixture.
 
 ### What to export, and why this specific set
 
@@ -45,15 +46,20 @@ filenames; `.colpkg` as well as `.apkg`) without a combinatorial number of files
    so this falls out naturally.
 2. Export four ways from that one collection:
    - `.apkg`, **"Support older Anki versions" checked** (schema 11, legacy container), **scheduling
-     checked** → schema 11 + FSRS + cloze + media + non-ASCII, one file.
+     checked** → schema 11 + FSRS + cloze + media + non-ASCII, one file. **Still open** — the
+     committed fixture is schema 18 only.
    - `.apkg`, **"Support older Anki versions" unchecked** (schema 18+, modern/zstd container),
      scheduling checked → the fixture that closes [#61](https://github.com/Jolls/enshu/issues/61)
-     (verifying the protobuf field numbers `apkg-format.md` currently marks ❓).
-   - Same as above, **scheduling unchecked** → covers "without FSRS data" for schema 18.
+     (verifying the protobuf field numbers `apkg-format.md` marked ❓). **Done** —
+     `mathematics-schema18.apkg`, though it still leaves RTL/sticky field flags, browser-format
+     template overrides, a deck description, a filtered deck, non-ASCII filenames, and `revlog`
+     data unexercised; see the table above.
+   - Same as above, **scheduling unchecked** → covers "without FSRS data" for schema 18. **Still
+     open.**
    - Full collection **`.colpkg`** export → always carries `revlog`; exercises the `.colpkg`
-     container path specifically, which nothing else here does.
-3. Drop all four in this directory, fill in the table above, and correct `docs/apkg-format.md` in
-   place wherever a fixture disagrees with what it currently guesses.
+     container path specifically, which nothing else here does. **Still open.**
+3. Drop new exports in this directory, fill in the table above, and correct `docs/apkg-format.md`
+   in place wherever a fixture disagrees with what it currently guesses.
 
 ---
 
