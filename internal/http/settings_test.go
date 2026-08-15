@@ -106,6 +106,51 @@ func TestSettingsPasswordGoldenPath(t *testing.T) {
 	}
 }
 
+func TestSettingsFsrsGoldenPath(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	email := testEmail()
+	cookie := loginCookie(t, tx, a, email, "correct-horse-battery")
+
+	w := doRequest(handler, "POST", "/settings/fsrs", "desired_retention=0.85", cookie, "http://example.com")
+	if w.Code != 200 {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+
+	id := userID(t, ctx, tx, email)
+	if n := countRows(t, tx, `SELECT count(*) FROM user_fsrs_params WHERE user_id = $1 AND deck_id IS NULL AND desired_retention = 0.85`, id); n != 1 {
+		t.Error("global row should reflect the update")
+	}
+
+	// Re-posting updates the same row rather than inserting a second one.
+	w = doRequest(handler, "POST", "/settings/fsrs", "desired_retention=0.9", cookie, "http://example.com")
+	if w.Code != 200 {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if n := countRows(t, tx, `SELECT count(*) FROM user_fsrs_params WHERE user_id = $1 AND deck_id IS NULL`, id); n != 1 {
+		t.Error("second post should update, not duplicate, the global row")
+	}
+}
+
+func TestSettingsFsrsInvalidRetention(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	email := testEmail()
+	cookie := loginCookie(t, tx, a, email, "correct-horse-battery")
+
+	w := doRequest(handler, "POST", "/settings/fsrs", "desired_retention=1.5", cookie, "http://example.com")
+	if w.Code != 400 {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+
+	id := userID(t, ctx, tx, email)
+	if n := countRows(t, tx, `SELECT count(*) FROM user_fsrs_params WHERE user_id = $1`, id); n != 0 {
+		t.Error("no row should have been written for an out-of-range retention")
+	}
+}
+
 func TestSettingsPasswordMismatch(t *testing.T) {
 	tx := beginTx(t)
 	handler, a := newTestHandler(t, tx, auth.Config{})

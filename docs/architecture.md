@@ -130,6 +130,16 @@ received the most cards. Verified end to end against the real fixture
 (`tests/fixtures/apkg/mathematics-schema18.apkg`) via the actual route, not just `apkg.Import`
 directly.
 
+**Build order step 9 (§11) has landed** ([#63](https://github.com/Jolls/enshu/issues/63)):
+`GET`/`POST /settings/fsrs` and `POST /decks/{id}/settings/fsrs` write the `desired_retention`-
+only row `internal/review.EffectiveParams` (the reviewer's read path, §6) has read since
+migration 00012 — no fitting; `fsrs_version`/`params` come from `fsrs.NewDefaultParams`
+(FSRS-6, library default weights). The per-deck route's authorisation lives in the upsert query
+itself, not a handler guard: `UpsertDeckFsrsRetention` inserts from a `deck_access` join scoped
+to `can_view AND can_study`, so a caller lacking either matches zero rows and the query reports
+`0` affected — the handler then 404s, the same collapse-existence shape `UpdateDeck` (decks.sql)
+already uses for `can_edit_settings`.
+
 ---
 
 ## 3. Stack

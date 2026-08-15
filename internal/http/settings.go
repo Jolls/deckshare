@@ -7,13 +7,26 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/Jolls/enshu/internal/auth"
+	"github.com/Jolls/enshu/internal/db"
+	"github.com/Jolls/enshu/internal/fsrs"
+	"github.com/Jolls/enshu/internal/review"
 )
 
-func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*template.Template) {
+func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginner, pages map[string]*template.Template) {
 	mux.Handle("GET /settings", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, _ := auth.UserFromContext(r.Context())
-		render(w, pages["settings"], http.StatusOK, map[string]any{"User": user})
+		retention, err := db.New(store).GetGlobalFsrsRetention(r.Context(), user.ID)
+		if err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+				return
+			}
+			retention = review.DefaultDesiredRetention
+		}
+		render(w, pages["settings"], http.StatusOK, map[string]any{"User": user, "DesiredRetention": retention})
 	})))
 
 	mux.Handle("POST /settings", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +119,44 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, pages map[strin
 		render(w, pages["settings"], http.StatusOK, map[string]any{
 			"User":            user,
 			"PasswordSuccess": "Password changed",
+		})
+	})))
+
+	mux.Handle("POST /settings/fsrs", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, _ := auth.UserFromContext(r.Context())
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		retention, atoiErr := strconv.ParseFloat(r.PostForm.Get("desired_retention"), 64)
+		if atoiErr != nil {
+			render(w, pages["settings"], http.StatusBadRequest, map[string]any{
+				"User": user, "DesiredRetention": retention,
+				"FsrsError": "Desired retention must be a number",
+			})
+			return
+		}
+
+		params, err := fsrs.NewDefaultParams(retention)
+		if err != nil {
+			render(w, pages["settings"], http.StatusBadRequest, map[string]any{
+				"User": user, "DesiredRetention": retention,
+				"FsrsError": "Desired retention must be between 0 and 1",
+			})
+			return
+		}
+
+		q := db.New(store)
+		if err := q.UpsertGlobalFsrsRetention(r.Context(), db.UpsertGlobalFsrsRetentionParams{
+			UserID: user.ID, FsrsVersion: int16(params.Version()), DesiredRetention: retention,
+		}); err != nil {
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		render(w, pages["settings"], http.StatusOK, map[string]any{
+			"User": user, "DesiredRetention": retention,
+			"FsrsSuccess": "Retention target updated",
 		})
 	})))
 }

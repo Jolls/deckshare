@@ -5,6 +5,7 @@ import (
 	"errors"
 	"html/template"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/Jolls/enshu/internal/auth"
 	"github.com/Jolls/enshu/internal/db"
+	"github.com/Jolls/enshu/internal/fsrs"
+	"github.com/Jolls/enshu/internal/review"
 )
 
 func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]*template.Template) {
@@ -99,8 +102,14 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
+		params, err := review.EffectiveParams(r.Context(), q, user.ID, deckID)
+		if err != nil {
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
 		render(w, pages["deck"], http.StatusOK, map[string]any{
 			"User": user, "Deck": deck, "Counts": counts, "Notes": notes,
+			"DesiredRetention": params.DesiredRetention(),
 		})
 	})))
 
@@ -175,6 +184,42 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			return
 		}
 		http.Redirect(w, r, "/decks", http.StatusSeeOther)
+	})))
+
+	mux.Handle("POST /decks/{id}/settings/fsrs", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, _ := auth.UserFromContext(r.Context())
+		deckID, ok := pathUUID(r, "id")
+		if !ok {
+			notFound(w)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		retention, atoiErr := strconv.ParseFloat(r.PostForm.Get("desired_retention"), 64)
+		if atoiErr != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		params, err := fsrs.NewDefaultParams(retention)
+		if err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+
+		n, err := db.New(store).UpsertDeckFsrsRetention(r.Context(), db.UpsertDeckFsrsRetentionParams{
+			UserID: user.ID, DeckID: deckID, FsrsVersion: int16(params.Version()), DesiredRetention: retention,
+		})
+		if err != nil {
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		if n == 0 {
+			notFound(w)
+			return
+		}
+		http.Redirect(w, r, "/decks/"+deckID.String(), http.StatusSeeOther)
 	})))
 }
 

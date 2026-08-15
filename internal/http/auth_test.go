@@ -101,7 +101,7 @@ func newTestHandler(t *testing.T, tx pgx.Tx, cfg auth.Config, clocks ...func() t
 	mux := http.NewServeMux()
 	registerStaticRoutes(mux)
 	registerAuthRoutes(mux, a, pages)
-	registerSettingsRoutes(mux, a, pages)
+	registerSettingsRoutes(mux, a, tx, pages)
 	registerDeckRoutes(mux, tx, pages)
 	registerNoteTypeRoutes(mux, tx, pages)
 	registerNoteRoutes(mux, tx, pages)
