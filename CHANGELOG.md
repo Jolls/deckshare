@@ -3,6 +3,24 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.10] - 2026-08-14
+
+### Added
+- The reviewer: `internal/review/` (batch precompute over `internal/fsrs`, server-authoritative
+  grading, `review_log` replay) and `internal/http/review.go`'s three routes —
+  `GET /decks/{id}/review`, `GET /api/reviews/next`, `POST /api/reviews/batch` — implementing
+  architecture.md §6 in full: advisory locks acquired in ascending sorted-key order, events
+  applied in `reviewed_at` order, idempotency via `review_log.id`, and out-of-order replay
+  ([#56](https://github.com/Jolls/enshu/issues/56))
+- `POST /api/reviews/batch`'s route-level test asserting the client cannot write scheduling
+  state — extra fields (`stability`, `due`, …) are silently ignored, never stored — the highest
+  test-priority item in the repo (CLAUDE.md §10.1) ([#56](https://github.com/Jolls/enshu/issues/56))
+- The reviewer's client-side queue module (`web/static/review.js`, vanilla JS, no build step):
+  synchronous grading with no network wait, a local learning-steps requeue heuristic, batched
+  send with backoff retry, and htmx-driven refill/send wiring. First JS in the repo — vendored
+  htmx + the json-enc extension under `web/static/`, served from a new `GET /static/{path...}`
+  route, rather than a CDN ([#56](https://github.com/Jolls/enshu/issues/56))
+
 ## [0.1.9] - 2026-08-14
 
 ### Added

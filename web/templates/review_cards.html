@@ -1,0 +1,14 @@
+{{define "review_cards"}}
+<div class="review-batch" data-cursor="{{.Cursor}}" data-exhausted="{{.Exhausted}}">
+  {{range .Cards}}
+  <article hidden class="enshu-card card" data-card-id="{{.CardID}}" data-unseen="{{.Unseen}}"
+           data-again-due="{{.Again.Due}}" data-again-state="{{.Again.State}}" data-again-scheduled-days="{{.Again.ScheduledDays}}"
+           data-hard-due="{{.Hard.Due}}" data-hard-state="{{.Hard.State}}" data-hard-scheduled-days="{{.Hard.ScheduledDays}}"
+           data-good-due="{{.Good.Due}}" data-good-state="{{.Good.State}}" data-good-scheduled-days="{{.Good.ScheduledDays}}"
+           data-easy-due="{{.Easy.Due}}" data-easy-state="{{.Easy.State}}" data-easy-scheduled-days="{{.Easy.ScheduledDays}}">
+    <div class="card-question">{{.Question}}</div>
+    <div class="card-answer" hidden>{{.Answer}}</div>
+  </article>
+  {{end}}
+</div>
+{{end}}

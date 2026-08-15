@@ -1,0 +1,400 @@
+// The reviewer's in-session queue (architecture.md §6). Owns everything that doesn't touch the
+// network: which card is current, the local learning-steps requeue heuristic, unseen-count
+// tracking, and revealing/advancing. It dispatches plain DOM events (refill-needed, flush-events)
+// that htmx listens for; htmx owns the two network-touching elements (#review-refill,
+// #review-sender). Grading never awaits anything and never computes an FSRS value -- it looks up
+// a precomputed branch already present on the hidden card node (CLAUDE.md §2.6, §2.7).
+(function () {
+  'use strict';
+
+  var scriptTag = document.currentScript;
+
+  var BACKOFF_SECONDS = [1, 2, 4, 8, 16, 30];
+  var FLUSH_DEBOUNCE_MS = 2000;
+  var REQUEUE_WINDOW_MS = 20 * 60 * 1000;
+  var REFILL_THRESHOLD = 10;
+
+  var state = {
+    deckId: null,
+    queue: [], // {cardId, el, branches, done, repeat}
+    current: null, // index into state.queue
+    cursor: '',
+    exhausted: false,
+    pending: [], // ReviewEvents not yet sent
+    inFlight: null, // ReviewEvents currently in an outstanding request, or null
+    refillInFlight: false,
+    revealStart: null,
+    lastFlushAt: 0,
+    backoffIndex: 0,
+    flushTimer: null,
+  };
+
+  function init() {
+    state.deckId = scriptTag.dataset.deckId;
+    indexBatch(document.getElementById('review-queue'));
+    showNext();
+
+    document.addEventListener('keydown', onKeydown);
+    document.body.addEventListener('htmx:afterSwap', onAfterSwap);
+    document.body.addEventListener('htmx:afterRequest', onAfterRequest);
+    var stage = document.getElementById('review-stage');
+    if (stage) stage.addEventListener('click', onStageClick);
+    window.addEventListener('pagehide', flushOnUnload);
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') flush();
+    });
+  }
+
+  // -- Queue ownership -------------------------------------------------------
+
+  function onAfterSwap(evt) {
+    if (evt.target && evt.target.id === 'review-queue') {
+      state.refillInFlight = false;
+      indexBatch(evt.target);
+      if (state.current === null) showNext();
+    }
+  }
+
+  function indexBatch(container) {
+    if (!container) return;
+    var batches = container.querySelectorAll('.review-batch');
+    var latest = batches[batches.length - 1];
+    if (latest) {
+      state.exhausted = latest.dataset.exhausted === 'true';
+      state.cursor = latest.dataset.cursor || '';
+    }
+
+    var known = {};
+    for (var i = 0; i < state.queue.length; i++) known[state.queue[i].cardId] = true;
+
+    var nodes = container.querySelectorAll('article[data-card-id]');
+    for (var j = 0; j < nodes.length; j++) {
+      var el = nodes[j];
+      var cardId = el.dataset.cardId;
+      // A card already graded this session, or already queued, must not appear twice -- the
+      // server's due-window refill can re-offer a card the client graded moments ago, before
+      // the write has landed (architecture.md §6).
+      if (known[cardId]) continue;
+      known[cardId] = true;
+      state.queue.push(cardToSlot(el));
+    }
+    maybeShowDone();
+  }
+
+  function cardToSlot(el) {
+    return {
+      cardId: el.dataset.cardId,
+      el: el,
+      unseen: el.dataset.unseen === 'true',
+      branches: {
+        1: branch(el, 'again'),
+        2: branch(el, 'hard'),
+        3: branch(el, 'good'),
+        4: branch(el, 'easy'),
+      },
+      done: false,
+      repeat: false,
+    };
+  }
+
+  function branch(el, name) {
+    return {
+      due: el.dataset[name + 'Due'],
+      state: parseInt(el.dataset[name + 'State'], 10),
+      scheduledDays: parseInt(el.dataset[name + 'ScheduledDays'], 10),
+    };
+  }
+
+  // -- Advance -----------------------------------------------------------
+
+  function showNext() {
+    var idx = -1;
+    for (var i = 0; i < state.queue.length; i++) {
+      if (!state.queue[i].done) { idx = i; break; }
+    }
+    var stage = document.getElementById('review-stage');
+    if (idx === -1) {
+      state.current = null;
+      if (stage) stage.hidden = true;
+      maybeShowDone();
+      return;
+    }
+
+    state.current = idx;
+    var card = state.queue[idx];
+    state.revealStart = null;
+    if (!stage) return;
+    stage.hidden = false;
+    stage.dataset.revealed = 'false';
+    stage.dataset.cardId = card.cardId;
+
+    var q = card.el.querySelector('.card-question');
+    var a = card.el.querySelector('.card-answer');
+    var stageQ = stage.querySelector('.card-question');
+    var stageA = stage.querySelector('.card-answer');
+    if (stageQ && q) stageQ.innerHTML = q.innerHTML;
+    if (stageA && a) { stageA.innerHTML = a.innerHTML; stageA.hidden = true; }
+
+    updateIntervalLabels(card);
+    maybeRequestRefill();
+  }
+
+  function updateIntervalLabels(card) {
+    for (var r = 1; r <= 4; r++) {
+      var el = document.querySelector('[data-interval-for="' + r + '"]');
+      if (el) el.textContent = formatInterval(card.branches[r].scheduledDays);
+    }
+  }
+
+  function formatInterval(days) {
+    if (!(days > 0)) return '<1d';
+    if (days === 1) return '1d';
+    if (days < 30) return days + 'd';
+    if (days < 365) return Math.round(days / 30) + 'mo';
+    return (days / 365).toFixed(1) + 'y';
+  }
+
+  function reveal() {
+    var stage = document.getElementById('review-stage');
+    if (!stage || stage.dataset.revealed === 'true') return;
+    var a = stage.querySelector('.card-answer');
+    if (a) a.hidden = false;
+    stage.dataset.revealed = 'true';
+    state.revealStart = Date.now();
+  }
+
+  function onStageClick(evt) {
+    var ratingBtn = evt.target.closest('button[data-rating]');
+    if (ratingBtn) {
+      grade(parseInt(ratingBtn.dataset.rating, 10));
+      return;
+    }
+    if (evt.target.closest('[data-reveal]')) reveal();
+  }
+
+  function onKeydown(evt) {
+    var tag = evt.target && evt.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (state.current === null) return;
+    var stage = document.getElementById('review-stage');
+    if (!stage) return;
+
+    if (evt.code === 'Space' && stage.dataset.revealed !== 'true') {
+      evt.preventDefault();
+      reveal();
+      return;
+    }
+    var digit = { Digit1: 1, Digit2: 2, Digit3: 3, Digit4: 4 }[evt.code];
+    if (digit && stage.dataset.revealed === 'true') {
+      evt.preventDefault();
+      grade(digit);
+    }
+  }
+
+  // -- Grading, synchronously [§2.6] --------------------------------------
+
+  function grade(rating) {
+    var stage = document.getElementById('review-stage');
+    if (state.current === null || !stage || stage.dataset.revealed !== 'true') return;
+    var card = state.queue[state.current];
+    var branch = card.branches[rating];
+    if (!branch) return;
+
+    var durationMs = state.revealStart ? Math.max(1, Date.now() - state.revealStart) : null;
+    card.done = true;
+
+    var ev = {
+      id: uuidv7(),
+      cardId: card.cardId,
+      rating: rating,
+      reviewedAt: new Date().toISOString(),
+      durationMs: durationMs,
+    };
+    state.pending.push(ev);
+
+    maybeRequeue(card, branch);
+
+    document.body.dispatchEvent(new CustomEvent('card-graded', { detail: ev }));
+    scheduleFlush();
+    showNext();
+  }
+
+  // Cosmetic, never written anywhere (architecture.md §6): requeue a card in-session iff its
+  // graded branch lands it back in Learning/Relearning within 20 minutes, inserted ahead by
+  // max(3, cardsDueBefore) upcoming slots (plan resolved decision 11).
+  function maybeRequeue(card, branch) {
+    if (branch.state !== 1 && branch.state !== 3) return;
+    var dueMs = Date.parse(branch.due);
+    if (isNaN(dueMs) || dueMs - Date.now() > REQUEUE_WINDOW_MS) return;
+
+    var cardsDueBefore = 0;
+    for (var i = 0; i < state.queue.length; i++) {
+      var c = state.queue[i];
+      if (c.done) continue;
+      var d = Date.parse(c.branches[3].due); // Good branch, representative of queue order
+      if (!isNaN(d) && d <= dueMs) cardsDueBefore++;
+    }
+    var ahead = Math.max(3, cardsDueBefore);
+
+    var insertAt = state.queue.length;
+    var remaining = ahead;
+    for (var j = state.current + 1; j < state.queue.length; j++) {
+      if (!state.queue[j].done) {
+        remaining--;
+        if (remaining <= 0) { insertAt = j; break; }
+      }
+    }
+    state.queue.splice(insertAt, 0, {
+      cardId: card.cardId, el: card.el, branches: card.branches, done: false, repeat: true,
+    });
+  }
+
+  // -- Unseen tracking + refill --------------------------------------------
+
+  function maybeRequestRefill() {
+    if (state.exhausted || state.refillInFlight) return;
+    var unseen = 0;
+    for (var i = 0; i < state.queue.length; i++) {
+      var c = state.queue[i];
+      if (!c.done && !c.repeat) unseen++;
+    }
+    if (unseen < REFILL_THRESHOLD) {
+      state.refillInFlight = true;
+      document.body.dispatchEvent(new CustomEvent('refill-needed'));
+    }
+  }
+
+  function maybeShowDone() {
+    var hasUpcoming = false;
+    for (var i = 0; i < state.queue.length; i++) {
+      if (!state.queue[i].done) { hasUpcoming = true; break; }
+    }
+    if (!hasUpcoming && state.exhausted) {
+      var done = document.getElementById('review-done');
+      if (done) done.hidden = false;
+    }
+  }
+
+  // -- Sending, batched with backoff retry --------------------------------
+
+  function scheduleFlush() {
+    if (state.flushTimer) return;
+    var sinceLast = Date.now() - state.lastFlushAt;
+    var delay = sinceLast >= FLUSH_DEBOUNCE_MS ? 0 : FLUSH_DEBOUNCE_MS - sinceLast;
+    state.flushTimer = setTimeout(function () {
+      state.flushTimer = null;
+      flush();
+    }, delay);
+  }
+
+  function flush() {
+    if (state.pending.length === 0 || state.inFlight) return;
+    state.lastFlushAt = Date.now();
+    document.body.dispatchEvent(new CustomEvent('flush-events'));
+  }
+
+  // pagehide's htmx POST is not reliable: browsers routinely abort an in-flight or newly-started
+  // async request once the page starts unloading, which would silently drop the session's last
+  // batch of grades (architecture.md §6 accepts losing unsent events to a hard crash, but not to
+  // an ordinary tab close/navigation that this can catch). navigator.sendBeacon is fire-and-forget
+  // and guaranteed by the browser to complete after the page is gone; there is no response to
+  // react to, so it bypasses htmx and goes straight to takePending().
+  function flushOnUnload() {
+    if (state.pending.length === 0 || !navigator.sendBeacon) {
+      flush();
+      return;
+    }
+    var events = takePending();
+    if (events.length === 0) return;
+    var blob = new Blob([JSON.stringify({ events: events })], { type: 'application/json' });
+    if (!navigator.sendBeacon('/api/reviews/batch', blob)) {
+      state.pending = events.concat(state.pending); // queuing failed; nothing more we can do here
+    }
+  }
+
+  // Called synchronously by htmx's hx-vals `js:` expression when #review-sender issues its POST.
+  function takePending() {
+    if (state.pending.length === 0) return [];
+    state.inFlight = state.pending;
+    state.pending = [];
+    return state.inFlight;
+  }
+
+  function onAfterRequest(evt) {
+    if (!evt.target || evt.target.id !== 'review-sender') return;
+    var sent = state.inFlight;
+    state.inFlight = null;
+    if (!sent) return;
+    var xhr = evt.detail.xhr;
+
+    if (evt.detail.successful) {
+      state.backoffIndex = 0;
+      var results = [];
+      try { results = JSON.parse(xhr.responseText).results || []; } catch (e) { /* malformed body: nothing to reconcile */ }
+      for (var i = 0; i < results.length; i++) {
+        var r = results[i];
+        if (r.status === 'rejected' || r.status === 'forbidden') {
+          console.error('enshu: event ' + r.id + ' ' + r.status + ', dropped permanently');
+          continue;
+        }
+        if (r.after) applyAfter(r.cardId, r.after);
+      }
+      if (state.pending.length > 0) scheduleFlush();
+      return;
+    }
+
+    if (xhr.status >= 400 && xhr.status < 500) {
+      // A malformed batch (400) can never succeed by retrying it unchanged -- drop.
+      console.error('enshu: batch rejected (' + xhr.status + '), dropping ' + sent.length + ' event(s)');
+      return;
+    }
+
+    // Network error or >=500: put the events back and retry with backoff.
+    state.pending = sent.concat(state.pending);
+    var delaySec = BACKOFF_SECONDS[Math.min(state.backoffIndex, BACKOFF_SECONDS.length - 1)];
+    state.backoffIndex++;
+    setTimeout(function () {
+      document.body.dispatchEvent(new CustomEvent('flush-events'));
+    }, delaySec * 1000);
+  }
+
+  // Cosmetic reconciliation only: the card is already graded and off-screen by the time its
+  // server-confirmed <after> arrives (architecture.md §6 -- there is nothing to compare it
+  // against, since the client never computed a value of its own).
+  function applyAfter(cardId, after) {
+    for (var i = 0; i < state.queue.length; i++) {
+      if (state.queue[i].cardId === cardId) { state.queue[i].confirmedAfter = after; }
+    }
+  }
+
+  // -- uuidv7 --------------------------------------------------------------
+
+  // crypto.randomUUID() is v4 and is not a substitute (schema.md specifies UUIDv7 ids).
+  // Monotonicity within a millisecond is not required.
+  function uuidv7() {
+    var bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    var ts = Date.now();
+    for (var i = 5; i >= 0; i--) {
+      bytes[i] = ts % 256;
+      ts = Math.floor(ts / 256);
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x70; // version 7
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10
+    var hex = '';
+    for (var j = 0; j < 16; j++) hex += bytes[j].toString(16).padStart(2, '0');
+    return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
+  }
+
+  window.enshuReview = {
+    deckId: function () { return state.deckId; },
+    cursor: function () { return state.cursor; },
+    takePending: takePending,
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();

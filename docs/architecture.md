@@ -75,6 +75,20 @@ sanitisation via `TypeAnswerInput`/`TypeAnswerExpected`, never through it — se
 [docs/plans/55-note-type-rendering-sanitisation.md](plans/55-note-type-rendering-sanitisation.md)
 for the full design. No route consumes it yet; the reviewer (step 7) is the first caller.
 
+**Build order step 7 (§11) has landed** ([#56](https://github.com/Jolls/enshu/issues/56)): the
+reviewer — `internal/review/` (batch precompute, server-authoritative grading, replay) and
+`internal/http/review.go` (docs/routes.md's three routes), implementing §6 in full: the four
+concurrency mechanisms (advisory locks acquired in ascending sorted-key order, events applied in
+`reviewed_at` order, idempotency via `review_log.id`, out-of-order replay), the reviewedAt
+clamp/reject policy, and the client-side queue module. This is also the first htmx/JS in the
+repo — `web/static/` vendors htmx and a hand-written queue module (no build step), served from a
+new `/static/` route, rather than the CDN load the stack table below describes for Pico CSS; see
+`web/static/README.md`. One deliberate deviation from
+[docs/plans/56-reviewer-batch-grading.md](plans/56-reviewer-batch-grading.md)'s design: rating
+buttons are plain (no per-button `hx-post`) so grading can batch and retry with backoff, which a
+literal per-button POST cannot do — a hidden `#review-sender` element, JS-triggered, is the single
+network-touching sender.
+
 ---
 
 ## 3. Stack
@@ -289,16 +303,21 @@ it does, prefetch media for the next two or three cards only — not for the bat
 **Client-side shape: hidden cards, htmx for the wire.** Every card in a batch — the initial one
 inline in the page response, every refill — renders as a hidden HTML node (e.g.
 `<article hidden data-card-id>`), each carrying its four precomputed rating branches, not a
-client-side template driven by JSON. A small local JS/TS module owns the in-session queue on top
+client-side template driven by JSON. A small local JS module owns the in-session queue on top
 of that: which card is current, the local learning-steps requeue decision, unseen-count
 tracking, and toggling `hidden`/revealing the answer. It never touches the network itself.
-Instead it dispatches plain DOM events (`refill-needed`, `card-graded`) at the right moments,
-and htmx attributes listen for those: a hidden element with
-`hx-trigger="refill-needed from:body" hx-get="/reviews/refill" hx-swap="beforeend"` appends the
-next batch's hidden cards, and `hx-post hx-swap="none"` on each rating button sends the graded
-event in the background. htmx owns the two network-touching pieces; the queue module owns
-everything that doesn't touch the wire, and nothing about it waits on a request completing
-before the UI advances (CLAUDE.md §2.6).
+Instead it dispatches plain DOM events (`refill-needed`, `card-graded`, `flush-events`) at the
+right moments, and htmx attributes listen for those: a hidden element with
+`hx-trigger="refill-needed from:body" hx-get="/api/reviews/next" hx-swap="beforeend"` appends the
+next batch's hidden cards, and a second hidden element with
+`hx-trigger="flush-events from:body" hx-post="/api/reviews/batch" hx-swap="none"` sends whatever
+graded events the queue module has accumulated. Rating buttons are plain — no per-button
+`hx-post` — because sending is batched (§11's "kind to mobile radios") and retried with backoff,
+which a literal one-request-per-button-press design cannot do; the module owns the flush cadence
+and backoff, htmx just listens for the event ([#56](https://github.com/Jolls/enshu/issues/56)).
+htmx owns the two network-touching elements; the queue module owns everything that doesn't touch
+the wire, and nothing about it waits on a request completing before the UI advances
+(CLAUDE.md §2.6).
 
 **Grading, synchronously and locally:**
 

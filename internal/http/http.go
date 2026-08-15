@@ -4,6 +4,7 @@ package http
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -18,14 +19,20 @@ func NewHandler(pool *pgxpool.Pool, a *auth.Service) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
 	}
+	fragments, err := parseFragments()
+	if err != nil {
+		return nil, fmt.Errorf("parse fragments: %w", err)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler(pool))
+	registerStaticRoutes(mux)
 	registerAuthRoutes(mux, a, pages)
 	registerSettingsRoutes(mux, a, pages)
 	registerDeckRoutes(mux, pool, pages)
 	registerNoteTypeRoutes(mux, pool, pages)
 	registerNoteRoutes(mux, pool, pages)
+	registerReviewRoutes(mux, pool, pages, fragments, time.Now)
 	return a.Middleware(mux), nil
 }
 

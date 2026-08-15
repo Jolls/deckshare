@@ -3,6 +3,7 @@
 {{if .Deck.Description}}<p>{{.Deck.Description}}</p>{{end}}
 <p>{{.Counts.NoteCount}} notes, {{.Counts.CardCount}} cards</p>
 <p>
+    <a href="/decks/{{.Deck.ID}}/review">Study</a> ·
     <a href="/decks/{{.Deck.ID}}/notes/new">Add note</a> ·
     <a href="/decks/{{.Deck.ID}}/edit">Edit deck</a> ·
     <a href="/decks">Back to decks</a>

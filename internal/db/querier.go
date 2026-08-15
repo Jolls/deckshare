@@ -58,7 +58,11 @@ type Querier interface {
 	GetDeckAccess(ctx context.Context, arg GetDeckAccessParams) (DeckAccess, error)
 	GetDeckForContentEdit(ctx context.Context, arg GetDeckForContentEditParams) (Deck, error)
 	GetDeckForSettingsEdit(ctx context.Context, arg GetDeckForSettingsEditParams) (Deck, error)
+	GetDeckForStudy(ctx context.Context, arg GetDeckForStudyParams) (Deck, error)
 	GetDeckForUser(ctx context.Context, arg GetDeckForUserParams) (Deck, error)
+	// The per-(user,deck) override if there is one, else the user's global row. deck_id NULLS LAST puts
+	// the override first (CLAUDE.md §2.3, §2.4: never one parameter set across a cohort).
+	GetEffectiveFsrsParams(ctx context.Context, arg GetEffectiveFsrsParamsParams) (GetEffectiveFsrsParamsRow, error)
 	GetField(ctx context.Context, id pgtype.UUID) (Field, error)
 	GetMediaBlob(ctx context.Context, sha256 string) (MediaBlob, error)
 	GetMediaRef(ctx context.Context, arg GetMediaRefParams) (MediaRef, error)
@@ -69,6 +73,13 @@ type Querier interface {
 	GetReviewLogEntry(ctx context.Context, id pgtype.UUID) (ReviewLog, error)
 	GetSession(ctx context.Context, id string) (Session, error)
 	GetSessionUser(ctx context.Context, id string) (GetSessionUserRow, error)
+	// The reviewer's queue (architecture.md §6). Every query here takes user_id and joins deck_access
+	// (CLAUDE.md §9) -- review routes require can_view AND can_study.
+	// The day boundary (docs/schema.md): a per-user rollover hour in the user's own timezone, not
+	// midnight UTC. The arithmetic runs on the LOCAL wall clock, so a DST transition makes the study day
+	// 23 or 25 hours long instead of silently shifting the rollover. `now` is a parameter, not now(), so
+	// handler tests can pin the clock.
+	GetStudyDayWindow(ctx context.Context, arg GetStudyDayWindowParams) (GetStudyDayWindowRow, error)
 	GetTemplate(ctx context.Context, id pgtype.UUID) (Template, error)
 	GetUser(ctx context.Context, id pgtype.UUID) (User, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
@@ -77,16 +88,44 @@ type Querier interface {
 	// A deck's creator gets all six flags (docs/schema.md). A personal deck is the trivial case of
 	// this, not a separate code path.
 	GrantFullDeckAccess(ctx context.Context, arg GrantFullDeckAccessParams) error
+	// Every column except id is computed server-side (CLAUDE.md §2.7). anki_id stays NULL for rows this
+	// reviewer writes. execrows, not exec: 0 rows means the id was already taken and this is a pure retry,
+	// which must NOT be rescheduled from the row it already advanced.
+	InsertReviewLog(ctx context.Context, arg InsertReviewLogParams) (int64, error)
 	// Cards are content addressing only -- no scheduling columns exist here to lose (CLAUDE.md §2.1).
 	// These four statements are the whole of card regeneration; see internal/db/cards.go for the
 	// diff that calls them and docs/schema.md's card-regeneration trap for why it is a diff.
 	ListCardsForNoteForUpdate(ctx context.Context, noteID pgtype.UUID) ([]ListCardsForNoteForUpdateRow, error)
 	ListDecksForUser(ctx context.Context, userID pgtype.UUID) ([]ListDecksForUserRow, error)
+	// The queue. Keyset over (COALESCE(due,'infinity'), card_id): due reviews first by due date, then
+	// never-seen cards by id. 'infinity' (not NULL) keeps the sort key total -- a NULL inside the row
+	// comparison below would silently drop every new card from every refill. Never-seen cards have no
+	// user_card_state row at all, hence the LEFT JOIN and the COALESCEd columns.
+	ListDueCardsForStudy(ctx context.Context, arg ListDueCardsForStudyParams) ([]ListDueCardsForStudyRow, error)
+	// The idempotency check (architecture.md §6). Deliberately NOT scoped to user_id: review_log.id is a
+	// global primary key, so an id taken by anyone is taken here -- scoping it would let ON CONFLICT drop
+	// the row while the state write landed.
+	ListExistingReviewLogIDs(ctx context.Context, ids []pgtype.UUID) ([]pgtype.UUID, error)
 	ListFieldsForNoteType(ctx context.Context, noteTypeID pgtype.UUID) ([]Field, error)
+	ListFieldsForNoteTypes(ctx context.Context, noteTypeIds []pgtype.UUID) ([]ListFieldsForNoteTypesRow, error)
 	ListNoteIDsOfNoteType(ctx context.Context, noteTypeID pgtype.UUID) ([]pgtype.UUID, error)
+	// Note-type CSS for every card in the deck: sanitised once per page, never per card (#55's doc
+	// comment), so a refilled card can never arrive before its styles.
+	ListNoteTypeCSSForDeck(ctx context.Context, arg ListNoteTypeCSSForDeckParams) ([]ListNoteTypeCSSForDeckRow, error)
 	ListNoteTypesForOwner(ctx context.Context, ownerID pgtype.UUID) ([]ListNoteTypesForOwnerRow, error)
 	ListNotesInDeck(ctx context.Context, arg ListNotesInDeckParams) ([]ListNotesInDeckRow, error)
+	// The replay path (architecture.md §6); backed by review_log_card_id_user_id_reviewed_at_idx. Only
+	// rating and reviewed_at are read: a replay re-derives every *_before itself.
+	ListReviewLogForCard(ctx context.Context, arg ListReviewLogForCardParams) ([]ListReviewLogForCardRow, error)
+	// Per-card authorisation for a grade batch, which may span decks. A card missing from the result is
+	// absent, invisible, or not studyable -- deliberately indistinguishable (docs/schema.md).
+	ListStudyableCards(ctx context.Context, arg ListStudyableCardsParams) ([]ListStudyableCardsRow, error)
 	ListTemplatesForNoteType(ctx context.Context, noteTypeID pgtype.UUID) ([]Template, error)
+	// The per-(user,card) advisory lock, held to commit (architecture.md §6). Advisory rather than
+	// SELECT ... FOR UPDATE because a never-seen card has no user_card_state row to lock, and two
+	// concurrent first grades are exactly that case. The key is derived in Go -- see internal/review/
+	// lock.go for the derivation and for why a batch's keys are acquired in ascending key order.
+	LockCardForGrade(ctx context.Context, key int64) error
 	// Locks the deck and authorises an access change. Same 404-shaped no-row contract as
 	// LockDeckForDelete; the shared lock is what serialises concurrent revocations, without which
 	// two callers can each remove "the second-to-last" holder and strand the deck.
@@ -132,6 +171,13 @@ type Querier interface {
 	UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) (int64, error)
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) error
+	// The replay writer: unguarded, because a rebuild from review_log IS the newest truth for this card by
+	// construction (architecture.md §6). Only internal/review.ReplayCard may call this.
+	UpsertUserCardStateFromReplay(ctx context.Context, arg UpsertUserCardStateFromReplayParams) error
+	// Last-write-wins by REVIEW time, not arrival time -- the property that makes a retrying sender safe
+	// (architecture.md §6). suspended / buried_until / flag are user settings, not scheduling output, and
+	// are never touched here.
+	UpsertUserCardStateOnReview(ctx context.Context, arg UpsertUserCardStateOnReviewParams) (int64, error)
 }
 
 var _ Querier = (*Queries)(nil)
