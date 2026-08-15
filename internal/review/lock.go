@@ -29,10 +29,20 @@ func lockKey(userID, cardID pgtype.UUID) int64 {
 // under a hash collision, tuple order and key order could otherwise disagree and a cycle becomes
 // constructible. Sorting the keys makes it unconstructible by construction.
 func lockKeys(userID pgtype.UUID, evs []Event) []int64 {
-	seen := make(map[int64]bool, len(evs))
-	keys := make([]int64, 0, len(evs))
-	for _, ev := range evs {
-		k := lockKey(userID, ev.CardID)
+	cardIDs := make([]pgtype.UUID, len(evs))
+	for i, ev := range evs {
+		cardIDs[i] = ev.CardID
+	}
+	return sortedKeys(userID, cardIDs)
+}
+
+// sortedKeys returns the deduped, ascending lock keys for (userID, cardID) across cardIDs -- the
+// one ordering rule both lockKeys and LockCards share.
+func sortedKeys(userID pgtype.UUID, cardIDs []pgtype.UUID) []int64 {
+	seen := make(map[int64]bool, len(cardIDs))
+	keys := make([]int64, 0, len(cardIDs))
+	for _, cardID := range cardIDs {
+		k := lockKey(userID, cardID)
 		if !seen[k] {
 			seen[k] = true
 			keys = append(keys, k)
@@ -50,4 +60,12 @@ func acquireLocks(ctx context.Context, q *db.Queries, keys []int64) error {
 		}
 	}
 	return nil
+}
+
+// LockCards takes the per-(user, card) advisory lock for every card in cardIDs, in ascending key
+// order -- the same deadlock-avoidance rule GradeBatch follows (architecture.md §6). The .apkg
+// importer needs it because ReplayCard must run under the lock and an import can race a live
+// grade of the same card on a re-import.
+func LockCards(ctx context.Context, q *db.Queries, userID pgtype.UUID, cardIDs []pgtype.UUID) error {
+	return acquireLocks(ctx, q, sortedKeys(userID, cardIDs))
 }

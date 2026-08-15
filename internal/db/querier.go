@@ -27,6 +27,15 @@ type Querier interface {
 	CreateCardsForNewTemplate(ctx context.Context, arg CreateCardsForNewTemplateParams) (int64, error)
 	CreateDeck(ctx context.Context, arg CreateDeckParams) (Deck, error)
 	CreateField(ctx context.Context, arg CreateFieldParams) (Field, error)
+	// The full field row: fields.sql's CreateField carries name only, which would silently drop an
+	// imported field's font/size/rtl/sticky.
+	CreateImportedField(ctx context.Context, arg CreateImportedFieldParams) (Field, error)
+	// Same deck_access authorisation as notes.sql's CreateNote, plus the imported columns. owner_id
+	// comes from the DECK, not the caller (migration 00015's composite FK rejects any other value).
+	CreateImportedNote(ctx context.Context, arg CreateImportedNoteParams) (Note, error)
+	CreateImportedNoteType(ctx context.Context, arg CreateImportedNoteTypeParams) (NoteType, error)
+	// Same reason as CreateImportedField: templates.sql's CreateTemplate has no browser formats.
+	CreateImportedTemplate(ctx context.Context, arg CreateImportedTemplateParams) (Template, error)
 	// Owner_id comes from the DECK, not the caller: notes.owner_id is denormalised from
 	// decks.owner_id and, as of migration 00015, a composite FK rejects any other value.
 	CreateNote(ctx context.Context, arg CreateNoteParams) (Note, error)
@@ -56,6 +65,9 @@ type Querier interface {
 	GetCard(ctx context.Context, id pgtype.UUID) (Card, error)
 	GetDeck(ctx context.Context, id pgtype.UUID) (Deck, error)
 	GetDeckAccess(ctx context.Context, arg GetDeckAccessParams) (DeckAccess, error)
+	// Import (#58). Every statement here is called only from internal/apkg/dbwrite.go, inside the
+	// one transaction an import runs in.
+	GetDeckByOwnerAndName(ctx context.Context, arg GetDeckByOwnerAndNameParams) (Deck, error)
 	GetDeckForContentEdit(ctx context.Context, arg GetDeckForContentEditParams) (Deck, error)
 	GetDeckForSettingsEdit(ctx context.Context, arg GetDeckForSettingsEditParams) (Deck, error)
 	GetDeckForStudy(ctx context.Context, arg GetDeckForStudyParams) (Deck, error)
@@ -67,8 +79,10 @@ type Querier interface {
 	GetMediaBlob(ctx context.Context, sha256 string) (MediaBlob, error)
 	GetMediaRef(ctx context.Context, arg GetMediaRefParams) (MediaRef, error)
 	GetNote(ctx context.Context, id pgtype.UUID) (Note, error)
+	GetNoteByOwnerAndGuid(ctx context.Context, arg GetNoteByOwnerAndGuidParams) (Note, error)
 	GetNoteForContentEdit(ctx context.Context, arg GetNoteForContentEditParams) (Note, error)
 	GetNoteType(ctx context.Context, id pgtype.UUID) (NoteType, error)
+	GetNoteTypeByOwnerAndName(ctx context.Context, arg GetNoteTypeByOwnerAndNameParams) (NoteType, error)
 	GetNoteTypeForOwner(ctx context.Context, arg GetNoteTypeForOwnerParams) (NoteType, error)
 	GetReviewLogEntry(ctx context.Context, id pgtype.UUID) (ReviewLog, error)
 	GetSession(ctx context.Context, id string) (Session, error)
@@ -88,6 +102,12 @@ type Querier interface {
 	// A deck's creator gets all six flags (docs/schema.md). A personal deck is the trivial case of
 	// this, not a separate code path.
 	GrantFullDeckAccess(ctx context.Context, arg GrantFullDeckAccessParams) error
+	// Imported history. id is omitted so the column DEFAULT uuidv7() supplies it -- an imported row
+	// has no client-generated id and this package must not grow a UUID dependency to invent one.
+	// stability_before / difficulty_before / fsrs_version stay NULL: Anki's revlog carries SM-2
+	// values, and writing a fabricated FSRS prior would be permanently wrong training data
+	// (CLAUDE.md §2.5). ON CONFLICT DO NOTHING makes a re-import a no-op on the dedup key.
+	InsertImportedReviewLog(ctx context.Context, arg InsertImportedReviewLogParams) (int64, error)
 	// Every column except id is computed server-side (CLAUDE.md §2.7). anki_id stays NULL for rows this
 	// reviewer writes. execrows, not exec: 0 rows means the id was already taken and this is a pure retry,
 	// which must NOT be rescheduled from the row it already advanced.
@@ -162,8 +182,18 @@ type Querier interface {
 	RehomeNotesOffDeck(ctx context.Context, deckID pgtype.UUID) (int64, error)
 	RenameField(ctx context.Context, arg RenameFieldParams) (int64, error)
 	RenewSession(ctx context.Context, arg RenewSessionParams) error
+	// The seed path for a card that arrives with scheduling state but no review history. DO NOTHING,
+	// not DO UPDATE: an existing row is this user's own live progress and an imported snapshot never
+	// outranks it.
+	SeedImportedUserCardState(ctx context.Context, arg SeedImportedUserCardStateParams) (int64, error)
+	// Re-import reuses the owner's deck of that name (docs/schema.md). anki_id is export fidelity
+	// only and is never a key -- deck id 1 is "Default" everywhere.
+	SetDeckAnkiID(ctx context.Context, arg SetDeckAnkiIDParams) (int64, error)
 	UpdateDeck(ctx context.Context, arg UpdateDeckParams) (int64, error)
 	UpdateDeckAccessRow(ctx context.Context, arg UpdateDeckAccessRowParams) (int64, error)
+	// Re-import updates rather than inserts (CLAUDE.md §2.2, apkg-format.md). deck_id is NOT
+	// touched: a re-import must not silently move a note the user has since filed elsewhere.
+	UpdateImportedNote(ctx context.Context, arg UpdateImportedNoteParams) (int64, error)
 	UpdateNoteContent(ctx context.Context, arg UpdateNoteContentParams) (int64, error)
 	// is_cloze is immutable after creation: flipping it changes what every existing note's cards
 	// mean. Not editable in the form, not settable here.
@@ -171,6 +201,10 @@ type Querier interface {
 	UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) (int64, error)
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) error
+	// cards.deck_id comes from the CARD's own home deck, never flattened to the note's deck
+	// (architecture.md §20). ON CONFLICT keeps the existing card id, and with it its
+	// user_card_state and review_log history (docs/schema.md's card-regeneration trap).
+	UpsertImportedCard(ctx context.Context, arg UpsertImportedCardParams) (Card, error)
 	// The replay writer: unguarded, because a rebuild from review_log IS the newest truth for this card by
 	// construction (architecture.md §6). Only internal/review.ReplayCard may call this.
 	UpsertUserCardStateFromReplay(ctx context.Context, arg UpsertUserCardStateFromReplayParams) error
