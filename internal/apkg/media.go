@@ -28,14 +28,13 @@ func readMediaIndex(b []byte) (map[string]string, error) {
 		}
 		return idx, nil
 	}
-	// The protobuf spelling (modern container) uses mediaEntryField/mediaEntryNameField, which
-	// are unverified placeholders like schema-18's field numbers (ankischema.go, #61) -- fail
-	// loudly rather than risk silently mis-decoding filenames from a real export.
-	return nil, fmt.Errorf("apkg: protobuf media index decoding is not yet supported (see #61): %w", ErrSchema18Config)
+	// The protobuf spelling (modern container) uses mediaEntryField/mediaEntryNameField, both
+	// confirmed against a real export's media filenames (ankischema.go, #61).
+	return decodeProtoMediaIndex(b)
 }
 
-// decodeProtoMediaIndex is the protobuf media-index decode logic, kept separate so it can be
-// exercised directly once #61 verifies mediaEntryField/mediaEntryNameField.
+// decodeProtoMediaIndex is the protobuf media-index decode logic, kept separate for direct
+// testing.
 func decodeProtoMediaIndex(b []byte) (map[string]string, error) {
 	fields, err := decodeProto(b)
 	if err != nil {

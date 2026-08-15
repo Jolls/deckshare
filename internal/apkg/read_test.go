@@ -6,7 +6,6 @@ package apkg
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -29,15 +28,84 @@ func TestRead_Schema11_MatchesSpec(t *testing.T) {
 	assertIRMatches(t, got, want)
 }
 
-func TestRead_Schema18_FailsUntilVerified(t *testing.T) {
+// TestRead_Schema18_MatchesSpec exercises the same synthetic collection as
+// TestRead_Schema11_MatchesSpec, written as a schema-18 package instead. Confirms the wire-format
+// plumbing (protobuf decode, unicase collation registration, deck-kind oneof handling) is
+// correct; it does not and cannot assert real-world field-number correctness on its own -- #61's
+// real fixture (tests/fixtures/apkg/mathematics-schema18.apkg) is what verified those.
+func TestRead_Schema18_MatchesSpec(t *testing.T) {
 	spec := defaultSynthSpec(t)
 	pkg := buildSchema18Package(t, spec)
-	_, err := Read(bytes.NewReader(pkg), int64(len(pkg)), DefaultArchiveLimits())
-	if err == nil {
-		t.Fatal("Read of a schema-18 package succeeded; want ErrSchema18Config (see #61, docs/plans/58-apkg-import.md §10.1)")
+	got := readBytes(t, pkg)
+	want := expectedIR(spec, 18)
+	assertIRMatches(t, got, want)
+}
+
+// TestRead_RealSchema18Fixture reads the real export that closed #61
+// (tests/fixtures/apkg/mathematics-schema18.apkg, see its README) and asserts the facts that
+// were hand-decoded from its raw protobuf bytes to verify ankischema.go's field numbers: a real
+// Cloze note type is detected as cloze, a real Basic-family note type is not, every field/
+// template decodes non-empty, and the deck tree resolves with neither deck marked filtered.
+func TestRead_RealSchema18Fixture(t *testing.T) {
+	col, err := ReadFile("../../tests/fixtures/apkg/mathematics-schema18.apkg", DefaultArchiveLimits())
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
 	}
-	if !errors.Is(err, ErrSchema18Config) {
-		t.Fatalf("Read error = %v, want ErrSchema18Config", err)
+	if col.SchemaVersion != 18 {
+		t.Fatalf("SchemaVersion = %d, want 18", col.SchemaVersion)
+	}
+
+	var basic, cloze *IrNoteType
+	for i := range col.NoteTypes {
+		switch col.NoteTypes[i].Name {
+		case "Basic+":
+			basic = &col.NoteTypes[i]
+		case "Cloze":
+			cloze = &col.NoteTypes[i]
+		}
+	}
+	if basic == nil {
+		t.Fatal("Basic+ note type not found")
+	}
+	if cloze == nil {
+		t.Fatal("Cloze note type not found")
+	}
+	if basic.IsCloze {
+		t.Error("Basic+ note type decoded as cloze (ntConfigKindField wrong)")
+	}
+	if !cloze.IsCloze {
+		t.Error("Cloze note type not decoded as cloze (ntConfigKindField wrong)")
+	}
+	for _, nt := range []*IrNoteType{basic, cloze} {
+		if nt.CSS == "" {
+			t.Errorf("%s: CSS decoded empty (ntConfigCSSField wrong)", nt.Name)
+		}
+		if len(nt.Fields) == 0 {
+			t.Errorf("%s: no fields decoded", nt.Name)
+		}
+		for _, f := range nt.Fields {
+			if f.Font != "Arial" || f.Size != 20 {
+				t.Errorf("%s field %q: font/size = %q/%d, want Arial/20 (fieldConfigFontField/fieldConfigSizeField wrong)", nt.Name, f.Name, f.Font, f.Size)
+			}
+		}
+		for _, tmpl := range nt.Templates {
+			if tmpl.Qfmt == "" || tmpl.Afmt == "" {
+				t.Errorf("%s template %q: qfmt/afmt = %q/%q, want both non-empty (tmplConfigQFmtField/tmplConfigAFmtField wrong)", nt.Name, tmpl.Name, tmpl.Qfmt, tmpl.Afmt)
+			}
+		}
+	}
+
+	if len(col.Decks) == 0 {
+		t.Fatal("no decks decoded")
+	}
+	for _, d := range col.Decks {
+		if d.IsFiltered {
+			t.Errorf("deck %q decoded as filtered; this fixture has no filtered decks (deckKindNormalField wrong)", d.Name)
+		}
+	}
+
+	if len(col.Media) == 0 {
+		t.Fatal("no media decoded (mediaEntryField/mediaEntryNameField wrong)")
 	}
 }
 

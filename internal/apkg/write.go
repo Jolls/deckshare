@@ -26,9 +26,9 @@ func WriteFile(col *IrCollection, path string) error {
 
 // Write serialises col (db -> IR already done by Export) as a .apkg package: a legacy zip
 // container -- no meta member, uncompressed collection.anki21 -- carrying a schema-11 collection
-// (col.models/col.decks JSON blobs). Schema 18 is not written: its protobuf field numbers are
-// unverified against a real export (ankischema.go, #61), and the one real package this codebase
-// has inspected end to end was schema 11 in a legacy container (apkg-format.md).
+// (col.models/col.decks JSON blobs). Schema 18 is never written, verified reader support (#61)
+// notwithstanding: every Anki version can read schema 11, so there is no compatibility reason to
+// ever emit the newer, more complex format.
 func Write(col *IrCollection, w io.Writer) error {
 	collBytes, err := buildCollection(col)
 	if err != nil {

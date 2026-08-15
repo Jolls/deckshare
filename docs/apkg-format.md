@@ -8,17 +8,26 @@ Extracted from [architecture.md](architecture.md) §7. Read this before touching
 > unverified claim as a map of what to look for, not a contract. Verify each against a real
 > export before relying on it, and correct this file in place when you do.
 >
-> **Verification status as of 2026-08-07.** One real export has been inspected: a widely
-> distributed community geography deck, v53, exported ~2025-04, 319 notes / 978 cards / 546
-> media files. It is **schema 11 in a legacy container**, so it verifies that path and says
-> nothing about schema 18. Claims below are tagged:
+> **Verification status as of 2026-08-15.** Two real exports have been inspected:
 >
-> - ✅ **verified** against that export
-> - ❓ **unverified** — still memory only
+> 1. A widely distributed community geography deck, v53, exported ~2025-04, 319 notes / 978
+>    cards / 546 media files. **Schema 11 in a legacy container.**
+> 2. A small hand-built collection, exported by the project's own maintainer specifically to
+>    close [#61](https://github.com/Jolls/enshu/issues/61), committed at
+>    `tests/fixtures/apkg/mathematics-schema18.apkg` — 9 notes / 11 cards / 14 media files, one
+>    Basic-family note type and one real Cloze note type with content. **Schema 18 in a modern
+>    zstd container** (`meta` version 3 — the first version-3 `meta` this doc has seen; the
+>    geography deck's was version 2). This is what closes most of the schema-18 ❓s below.
 >
-> The whole of the schema-18 / protobuf section is ❓. Getting a schema-18 export (any
-> `.colpkg`, or an `.apkg` exported with "support older Anki versions" switched off) is the
-> single highest-value fixture still missing.
+> Claims are tagged:
+>
+> - ✅ **verified** against one of the two exports above
+> - ❓ **unverified** — still memory only, or (for a few schema-18 properties no note/field/deck
+>   in export 2 happens to exercise — RTL/sticky field flags, browser-format template overrides,
+>   a deck description, a filtered deck, non-ASCII filenames in the modern container) still open
+>   even after export 2. `internal/apkg/ankischema.go` does not decode these; they default to
+>   their zero value rather than risk a guessed field number silently mis-decoding a real
+>   collection.
 
 **No Anki-derived code.** File formats are not copyrightable, so the reader/writer is ours.
 Copying `ankitects/anki` source (AGPLv3) would make the licence question permanent and
@@ -32,8 +41,11 @@ codebase.
 `.apkg` is a zip containing:
 
 - a SQLite collection — member named `collection.anki2`, `collection.anki21`, or
-  `collection.anki21b` depending on the exporting version ✅
-- a `media` file: a JSON map of index to filename, `{"0":"cat.jpg","1":"audio.mp3"}` ✅
+  `collection.anki21b` depending on the exporting version ✅ (all three named forms seen: `.anki2`
+  in both exports as the pre-2.1 placeholder, `.anki21` in the geography export's real
+  collection, `.anki21b` in the schema-18 export's real collection)
+- a `media` file: a JSON map of index to filename in the legacy container, `{"0":"cat.jpg"}` ✅;
+  a protobuf list in the modern container ✅ (see below)
 - the media files themselves, named by those numeric indices ✅ (stored uncompressed)
 
 ✅ **A package can carry more than one collection, and the extra one is a trap.** The verified
@@ -43,29 +55,37 @@ one note out of hundreds and reports success. `read.go` prefers `collection.anki
 `collection.anki21`, then `collection.anki2` — newest first — and that order is load-bearing,
 not cosmetic. Regression test: `buildDowngradeStubPackage()`.
 
-✅ **Legacy containers are still in active use.** The 2025 export's `meta` member is two bytes,
-`08 02` — protobuf field 1 = **2**, not 3 — and nothing in the archive is zstd-compressed. Do
-not assume a recent export implies the modern container.
+✅ **Legacy containers are still in active use.** The geography export's `meta` member is two
+bytes, `08 02` — protobuf field 1 = **2**, not 3 — and nothing in the archive is
+zstd-compressed. Do not assume a recent export implies the modern container. (The schema-18
+export's `meta` is also two bytes, `08 03` — field 1 = **3** — so the field-1 version number
+alone does not even tell you the container kind; go by table/member presence, as `read.go`
+already does.)
 
 Newer Anki exports zstd-compress entries and add a protobuf `meta` file. `.colpkg` is the
 same container for a whole collection rather than a deck selection.
 
-**Correction (2026-08-07, `feature/9-apkg-reader`).** The `media` map is only JSON in the
-legacy container ✅. In the modern (`meta`-carrying, zstd) container it is a **protobuf list**
-❓, where an entry's *position* in the list is the zip member name that the legacy JSON spelled
-as an object key.
+✅ **The `media` map is only JSON in the legacy container.** In the modern (`meta`-carrying,
+zstd) container it is a **protobuf list** — confirmed against the schema-18 export's real media
+filenames (`ankischema.go`'s `mediaEntryField`/`mediaEntryNameField`, #61). An entry's
+*position* in the list is the zip member name that the legacy JSON spelled as an object key,
+confirmed the same way. Each entry is itself `{1: name, 2: size, 3: sha1}` — `internal/apkg`
+only reads the name (field 1); size and hash are recomputed from the actual bytes on read
+(`media.go`) rather than trusted from the index, so those two fields are unused but documented
+here for completeness.
 
 `internal/apkg/read.go` therefore does not branch on the package version at all: it
 sniffs the zstd frame magic (`28 B5 2F FD`) and sniffs `{` versus a protobuf tag byte for the
-media index. That is deliberate while this document is unverified — deriving the container
-shape from the bytes cannot be wrong about a version number's meaning.
+media index. That is deliberate: deriving the container shape from the bytes cannot be wrong
+about a version number's meaning, and the schema-18 export above confirms `meta`'s version
+field isn't a reliable discriminant either.
 
-**Only the collection and the `media` index are zstd-compressed; the media files themselves
-are stored as-is.** The reader sniffs those two members and no others. Sniffing every member
-would be actively harmful: media bytes are arbitrary, so a legitimate image or audio file
-whose first four bytes happen to be the zstd magic would be mangled or rejected. *(Which
-members are compressed is itself unverified — if a real export turns out to compress media
-too, this is the line to change.)*
+✅ **Only the collection and the `media` index are zstd-compressed; the media files themselves
+are stored as-is.** Confirmed on the schema-18 export: `collection.anki21b` and `media` both
+start with the zstd magic, every numbered media member does not. The reader sniffs those two
+members and no others. Sniffing every member would be actively harmful: media bytes are
+arbitrary, so a legitimate image or audio file whose first four bytes happen to be the zstd
+magic would be mangled or rejected.
 
 **Packages are untrusted input** (shared decks are other users' bytes, architecture.md §8), so the
 reader enforces ceilings on member count, per-member decompressed size and total decompressed
@@ -81,23 +101,53 @@ Two must both be readable:
 
 - **Schema 11 and earlier** ✅ — note types and decks live as JSON blobs in the single-row
   `col` table (`models`, `decks`, `dconf`, `conf`). Still what a 2025 shared deck exports.
-- **Schema 18+** ❓ — real tables: `notetypes`, `fields`, `templates`, `decks`, `deck_config`,
-  `config`, `tags`. **No real schema-18 file has been inspected.**
+- **Schema 18+** ✅ (core) — real tables: `notetypes`, `fields`, `templates`, `decks`,
+  `deck_config`, `config`, `tags`. Confirmed against the schema-18 export (#61); `deck_config`,
+  `config`, and `tags` are read for table presence (`detectSchema`) but their contents aren't
+  otherwise consumed by `internal/apkg` today.
 
 Shared by both: `notes` (fields joined by `\x1f`, `guid`, `mid`, `csum`, `tags`), `cards`
 (`nid`, `did`, `ord`, `type`, `queue`, `due`, `ivl`, `factor`, `reps`, `lapses`, `odid`,
 `flags`, `data`), `revlog` (`cid`, `ease`, `ivl`, `lastIvl`, `factor`, `time`, `type`),
 `graves`.
 
-**Corrections (2026-08-07, `feature/9-apkg-reader`).** "Real tables" understates the work.
-**Everything in this list about schema 18 is ❓** — the verified export was schema 11, so none
-of it has been checked against a real file:
+**Corrections (2026-08-07, `feature/9-apkg-reader`; updated 2026-08-15 once #61 had a real
+schema-18 export to check against).**
 
 - Schema 18's configuration columns — `notetypes.config`, `fields.config`,
-  `templates.config`, `decks.common`, `decks.kind` — are **protobuf BLOBs, not JSON**. Reading
+  `templates.config`, `decks.common`, `decks.kind` — are **protobuf BLOBs, not JSON** ✅. Reading
   a schema-18 collection needs a protobuf decoder, which is why
   `internal/apkg/protobuf.go` exists. The field numbers it is driven by are recorded in
-  `ankischema.go` and are themselves unverified.
+  `ankischema.go`; most are now ✅ verified against real bytes (kind, css, qfmt, afmt, font,
+  size, the media entry fields, and the deck-kind "Normal variant" wrapper) — two of the
+  original guesses (font, size) turned out **wrong** (real field numbers 3/4, guessed 1/2) and
+  are corrected in `ankischema.go`. RTL/sticky field flags, browser-format template overrides
+  (`bqfmt`/`bafmt`), a deck's description, and a filtered deck's own `kind` variant are still ❓
+  — no field/template/deck in the real export sets a non-default value for any of them, and
+  `read.go` deliberately does not decode them (they default to their zero value) rather than
+  guess a field number that could silently mis-decode a real collection. A filtered deck is
+  still detected correctly without knowing its `kind` variant's field number, though: `kind` is
+  a oneof, so "the confirmed Normal-variant field (1) is absent" reliably means filtered.
+- ✅ **`fields`/`templates` rows can outlive their `notetypes` row.** The schema-18 export has
+  `fields`/`templates` rows for 7 distinct `ntid` values but only 1 row in `notetypes` — Anki
+  left behind the child rows of its other built-in note types (Cloze, Image Occlusion, etc.)
+  after removing (or never using) their `notetypes` row, and does not cascade-delete them. A
+  reader must resolve a note's fields/templates via `notes.mid → notetypes.id`, never by trusting
+  `fields`/`templates.ntid` as a complete note-type list. `read.go` already does this correctly
+  (it builds `ntByID` from `notetypes` and skips any `fields`/`templates` row whose `ntid` isn't
+  in it) — this is recorded here so the reason isn't lost.
+- ✅ **`notetypes`/`fields`/`templates`/`decks`/`tags` all declare `COLLATE unicase` on their
+  `name` column, and it blocks more than `ORDER BY name`.** Confirmed against
+  `modernc.org/sqlite` (the Go reader's driver): *any* query touching one of those tables fails
+  with `no such collation sequence: unicase`, including a bare `SELECT count(*)` with no
+  `ORDER BY` at all — the collation is referenced by a `UNIQUE INDEX` on the table, and the
+  whole table's schema is validated when it's opened, not just the columns a given query
+  touches. `modernc.org/sqlite` *can* register a collation of that name
+  (`sqlite.RegisterCollationUtf8`, called once in `read.go`'s `init()`), which resolves this
+  without needing to replicate Anki's exact Unicode case-folding semantics — the reader never
+  compares or orders by a collated column itself (all its schema-18 queries sort by integer
+  `id`/`ord`), so the registered function's own comparison behaviour never affects what gets
+  imported, only that the name is resolvable at all.
 - **Deck names spell their hierarchy differently in each schema**: schema 11's JSON name uses
   `::`, schema 18's `decks.name` column uses `\x1f`. The IR normalises both to `::`. Missing
   this silently flattens or mangles a deck tree.
@@ -110,11 +160,6 @@ of it has been checked against a real file:
   them as JSON arrays whose order can disagree with the `ord` values, while schema 18 has them
   as real rows. `notes.flds` is indexed by `ord`, so a reader trusting array order maps every
   field value onto the wrong field name — and the two schema readers silently disagree.
-- Real schema-18 collections declare `COLLATE unicase` on the name columns. `better-sqlite3`
-  (the old TypeScript reader's driver) could not register that collation, so any query that
-  would *use* it failed. Whether `modernc.org/sqlite` (the Go reader's driver, architecture.md
-  §4) can register it is unchecked — until verified, keep ordering by integer id only, same as
-  before, and do not add `ORDER BY name`.
 
 ---
 
@@ -300,10 +345,60 @@ Confirmed by reading it end to end with no errors and no warnings:
 - Media stored uncompressed; mimes 319 PNG + 227 SVG.
 - Reading the same file twice produces an identical IR.
 
-Not exercised by it, and therefore still ❓: everything schema-18 (real tables, all protobuf
-field numbers, `COLLATE unicase`), the zstd container, the protobuf media index, FSRS state in
-`cards.data`, `revlog`, `odue`/filtered decks, negative `ivl`, suspension and burial, and
-non-ASCII media filenames — this deck has none of them.
+Not exercised by it, and therefore left to the schema-18 export below (or still ❓): schema 18
+itself, the zstd container, the protobuf media index, FSRS state in `cards.data`, `revlog`,
+`odue`/filtered decks, negative `ivl`, suspension and burial, and non-ASCII media filenames —
+this deck has none of them.
+
+---
+
+## What the schema-18 export confirmed
+
+Inspected 2026-08-15, committed at `tests/fixtures/apkg/mathematics-schema18.apkg` (see its
+README entry) — a small hand-built collection, so unlike the geography deck above it carries no
+third-party licensing question and can live in the repo.
+
+Shape: schema 18, modern zstd container, `meta` = version 3, 2 note types (Basic-family "Basic+"
+with 2 fields, real Cloze with 2 fields and actual `{{c1::}}`/`{{c2::}}`/`{{c3::}}` content), 3
+decks (one two-level), 9 notes, 11 cards, 0 revlog rows, 14 media files.
+
+Confirmed by reading it end to end and hand-decoding the raw protobuf bytes against
+`ankischema.go`'s field-number constants:
+
+- `notetypes.config` field 3 = `css` ✅ (guessed correctly), field 1 = `kind` ✅ (guessed
+  correctly — the real Cloze note type's config starts `08 01`, field 1 varint 1).
+- `fields.config` font is field **3**, size is field **4** — **not** field 1/2 as originally
+  guessed. Confirmed against real `"Arial"` / `20` bytes on every field in the export.
+- `templates.config` field 1 = `qfmt`, field 2 = `afmt` ✅ (both guessed correctly), confirmed
+  against real template HTML for every template in the export.
+- `decks.kind` is a **oneof**, not a flat bool: field 1 wraps a nested message (observed content
+  `{1: 1}`, matching `deck_config.id`) for a non-filtered ("Normal") deck. The original guess —
+  a flat bool at field 1 meaning "filtered" — is wrong in shape, not just number: every deck in
+  this export is non-filtered and every one of them has field 1 *present*, which a "field 1 =
+  filtered" reading would get backwards.
+- `decks.common` field 1, when present, is a **varint**, not a string — so it cannot be `desc`
+  as originally guessed (a string field is always wire-type 2, and wire type is fixed by the
+  field's declared type, not by which deck happens to set it). The Default deck's `common` is
+  `08 01 10 01` (two varint fields, both 1 — plausibly UI-collapse flags); the other two decks'
+  `common` is empty. `desc`'s real field number is still ❓ — no deck in this export sets one.
+- The `media` protobuf list: field 1 = repeated entry, and within each entry field 1 = filename,
+  confirmed against all 14 real `clip_image*.png` names. Each entry also carries field 2 = file
+  size and field 3 = a 20-byte SHA-1 digest, neither of which `internal/apkg` reads (size and
+  hash are recomputed from the actual bytes instead).
+- `fields`/`templates` carry rows for 7 distinct `ntid` values while `notetypes` has only 2 —
+  the other 5 are orphaned children of note types (Cloze template variants, Image Occlusion)
+  that exist in every fresh Anki profile but were never given their own surviving `notetypes`
+  row in this collection. `notes.mid` only ever references the 2 real note types.
+- `notetypes`/`fields`/`templates`/`decks`/`tags` all fail to open with
+  `modernc.org/sqlite` (`no such collation sequence: unicase`) unless a collation of that name
+  is registered first — confirmed this is not limited to `ORDER BY name` queries, a bare
+  `SELECT count(*)` fails too. `sqlite.RegisterCollationUtf8` resolves it.
+- Reading the same file twice produces an identical IR.
+
+Still ❓ even after this export: RTL/sticky field flags, browser-format template overrides
+(`bqfmt`/`bafmt`), a deck description, a filtered deck's own `kind` variant, non-ASCII media
+filenames in the modern container, and `revlog`/FSRS state in the modern container (0 rows here)
+— no field/template/deck/note in this collection exercises any of them.
 
 ---
 

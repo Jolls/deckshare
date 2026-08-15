@@ -437,32 +437,41 @@ func buildSchema18Package(t *testing.T, spec synthSpec) []byte {
 				return err
 			}
 			for _, f := range nt.Fields {
+				// IsRTL/Sticky have no confirmed field number (#61) and read.go doesn't decode
+				// them, so defaultSynthSpec never sets them and they're left unencoded here too.
 				fc := encodeProtoString(fieldConfigFontField, f.Font)
 				fc = append(fc, encodeProtoVarint(fieldConfigSizeField, uint64(f.Size))...)
-				fc = append(fc, encodeProtoVarint(fieldConfigRTLField, boolToUint(f.IsRTL))...)
-				fc = append(fc, encodeProtoVarint(fieldConfigStickyField, boolToUint(f.Sticky))...)
 				if _, err := dbh.Exec("INSERT INTO fields (ntid, ord, name, config) VALUES (?,?,?,?)", nt.AnkiID, f.Ordinal, f.Name, fc); err != nil {
 					return err
 				}
 			}
 			for _, tp := range nt.Templates {
+				// BrowserQfmt/BrowserAfmt likewise unencoded -- see the field comment above.
 				tc := encodeProtoString(tmplConfigQFmtField, tp.Qfmt)
 				tc = append(tc, encodeProtoString(tmplConfigAFmtField, tp.Afmt)...)
-				tc = append(tc, encodeProtoString(tmplConfigBQFmtField, tp.BrowserQfmt)...)
-				tc = append(tc, encodeProtoString(tmplConfigBAFmtField, tp.BrowserAfmt)...)
 				if _, err := dbh.Exec("INSERT INTO templates (ntid, ord, name, config) VALUES (?,?,?,?)", nt.AnkiID, tp.Ordinal, tp.Name, tc); err != nil {
 					return err
 				}
 			}
 		}
 		for _, d := range spec.Decks {
-			common := encodeProtoString(deckCommonDescField, d.Desc)
+			// decks.common's description field has no confirmed number (#61); defaultSynthSpec
+			// never sets Desc, so common is left empty rather than encoding a guess.
 			var kind []byte
 			if d.Dyn != 0 {
-				kind = encodeProtoString(deckKindFilteredField, "")
+				// The filtered variant's real field number is unverified (#61); field 2 here is
+				// a synthetic-only stand-in whose only job is to NOT be deckKindNormalField, so
+				// the decoder's "Normal variant absent means filtered" check has something to
+				// exercise.
+				kind = encodeProtoVarint(2, 1)
+			} else {
+				// Mirrors the real shape confirmed in #61: field 1 wraps a nested message
+				// carrying the deck's config_id. The nested content doesn't matter here, only
+				// that field 1 itself is present.
+				kind = encodeProtoString(deckKindNormalField, string(encodeProtoVarint(1, 1)))
 			}
 			name := normaliseDeckNameToSchema18(d.Name)
-			if _, err := dbh.Exec("INSERT INTO decks (id, name, common, kind) VALUES (?,?,?,?)", d.AnkiID, name, common, kind); err != nil {
+			if _, err := dbh.Exec("INSERT INTO decks (id, name, common, kind) VALUES (?,?,?,?)", d.AnkiID, name, []byte{}, kind); err != nil {
 				return err
 			}
 		}
@@ -470,13 +479,6 @@ func buildSchema18Package(t *testing.T, spec synthSpec) []byte {
 	})
 
 	return zipMembers(t, map[string][]byte{"collection.anki21": collBytes})
-}
-
-func boolToUint(b bool) uint64 {
-	if b {
-		return 1
-	}
-	return 0
 }
 
 func normaliseDeckNameToSchema18(name string) string {
