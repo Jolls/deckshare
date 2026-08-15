@@ -370,8 +370,8 @@ deck_id)`, which is why it's absent from the edges above.
 ## Access & sharing
 
 `deck_access` as the join table between users and decks — the only way a deck reaches someone
-who doesn't own it. Small, but the shape Phase 2 multiuser work (permissions, co-authoring,
-classroom cohorts) builds on.
+who doesn't own it. Small, but the shape Milestone 2's deck sharing and Milestone 3's classroom
+cohorts build on.
 
 ```mermaid
 erDiagram

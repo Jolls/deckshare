@@ -242,15 +242,22 @@ importing user. Both are lossy in one direction only, and both are our code.
 
 ## Roadmap
 
-**Phase 1 — Single-user core**
+**Milestone 1 — Single-user core.** Done.
 Accounts, deck CRUD, note types and templates, the reviewer, local grading against
-server-derived state, `.apkg` import/export. Ship this before anything else. It is a complete
-product for one user.
+server-derived state, `.apkg` import/export. A complete product for one user.
 
-**Phase 2 — Multiuser**
-Shared decks with per-user `deck_access` permissions, so two people can co-author a deck while
-each keeps a private review history. Classroom layer: instructor assigns a deck to a cohort,
-sees per-student retention, due counts, and lapse hotspots.
+**Milestone 2 — LAN multiuser, migration, LLM cards**
+Milestone 1 already lets several accounts share one self-hosted instance on a LAN — but only in
+the AnkiWeb sense, hosting separate collections side by side (see "Why this exists" above).
+Nothing yet lets one of those users share a deck with another: this milestone builds
+`deck_access` grant/revoke so co-authoring a deck while each author keeps a private review
+history actually works; tightens `.apkg`/`.colpkg` import/export fidelity against desktop Anki
+collections (a couple of known scheduling-state gaps on import, plus full-collection `.colpkg`
+export); and adds LLM-generated cards via the documented paste-in text format described below.
+
+**Milestone 3 — Classroom**
+The layer on top of Milestone 2's sharing mechanism: instructor assigns a deck to a cohort, sees
+per-student retention, due counts, and lapse hotspots.
 
 **Explicitly not doing**
 Each of these is a decision rather than a backlog item:

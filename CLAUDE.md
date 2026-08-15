@@ -121,7 +121,7 @@ These are the load-bearing choices. Each one is cheap now and a rewrite later.
    the server is the only place FSRS ever runs. See
    [architecture.md §6](docs/architecture.md#6-the-review-loop).
    Why this is an invariant and not a preference: trust cannot be retrofitted. State written
-   under a client's authority stays unverifiable forever, and Phase 2's instructor dashboard
+   under a client's authority stays unverifiable forever, and Milestone 3's instructor dashboard
    is a report on exactly that data. A student who can POST their own `stability` is a
    student whose retention chart means nothing.
 8. **No Anki-derived code.** File formats are not copyrightable; the reader/writer is ours.
@@ -175,7 +175,7 @@ Priority order, highest first — this reflects where silent wrongness is most e
    `{id, cardId, rating, reviewedAt, durationMs}`; any other field in the request body
    (a `stability`, a `due`, anything else) must be ignored, never read into
    `user_card_state` or `review_log`. This is invariant §2.7, and it is the test that keeps
-   Phase 2's instructor dashboard meaningful. If it ever fails, stop and fix it before
+   Milestone 3's instructor dashboard meaningful. If it ever fails, stop and fix it before
    anything else.
 2. **Batch-preview / grade-time consistency.** The four rating branches precomputed and shipped
    at batch-fetch time match what the server independently recomputes at grade time for the
