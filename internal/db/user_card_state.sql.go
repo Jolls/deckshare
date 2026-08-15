@@ -42,3 +42,106 @@ func (q *Queries) GetUserCardState(ctx context.Context, arg GetUserCardStatePara
 	)
 	return i, err
 }
+
+const upsertUserCardStateFromReplay = `-- name: UpsertUserCardStateFromReplay :exec
+INSERT INTO user_card_state (user_id, card_id, due, stability, difficulty, state, reps, lapses,
+                             elapsed_days, scheduled_days, learning_steps, last_review)
+VALUES ($1, $2, $3, $4,
+        $5, $6, $7, $8,
+        $9, $10, $11,
+        $12)
+ON CONFLICT (user_id, card_id) DO UPDATE SET
+    due = EXCLUDED.due, stability = EXCLUDED.stability, difficulty = EXCLUDED.difficulty,
+    state = EXCLUDED.state, reps = EXCLUDED.reps, lapses = EXCLUDED.lapses,
+    elapsed_days = EXCLUDED.elapsed_days, scheduled_days = EXCLUDED.scheduled_days,
+    learning_steps = EXCLUDED.learning_steps, last_review = EXCLUDED.last_review
+`
+
+type UpsertUserCardStateFromReplayParams struct {
+	UserID        pgtype.UUID        `json:"user_id"`
+	CardID        pgtype.UUID        `json:"card_id"`
+	Due           pgtype.Timestamptz `json:"due"`
+	Stability     float64            `json:"stability"`
+	Difficulty    float64            `json:"difficulty"`
+	State         int16              `json:"state"`
+	Reps          int32              `json:"reps"`
+	Lapses        int32              `json:"lapses"`
+	ElapsedDays   int32              `json:"elapsed_days"`
+	ScheduledDays int32              `json:"scheduled_days"`
+	LearningSteps int16              `json:"learning_steps"`
+	LastReview    pgtype.Timestamptz `json:"last_review"`
+}
+
+// The replay writer: unguarded, because a rebuild from review_log IS the newest truth for this card by
+// construction (architecture.md §6). Only internal/review.ReplayCard may call this.
+func (q *Queries) UpsertUserCardStateFromReplay(ctx context.Context, arg UpsertUserCardStateFromReplayParams) error {
+	_, err := q.db.Exec(ctx, upsertUserCardStateFromReplay,
+		arg.UserID,
+		arg.CardID,
+		arg.Due,
+		arg.Stability,
+		arg.Difficulty,
+		arg.State,
+		arg.Reps,
+		arg.Lapses,
+		arg.ElapsedDays,
+		arg.ScheduledDays,
+		arg.LearningSteps,
+		arg.LastReview,
+	)
+	return err
+}
+
+const upsertUserCardStateOnReview = `-- name: UpsertUserCardStateOnReview :execrows
+INSERT INTO user_card_state (user_id, card_id, due, stability, difficulty, state, reps, lapses,
+                             elapsed_days, scheduled_days, learning_steps, last_review)
+VALUES ($1, $2, $3, $4,
+        $5, $6, $7, $8,
+        $9, $10, $11,
+        $12)
+ON CONFLICT (user_id, card_id) DO UPDATE SET
+    due = EXCLUDED.due, stability = EXCLUDED.stability, difficulty = EXCLUDED.difficulty,
+    state = EXCLUDED.state, reps = EXCLUDED.reps, lapses = EXCLUDED.lapses,
+    elapsed_days = EXCLUDED.elapsed_days, scheduled_days = EXCLUDED.scheduled_days,
+    learning_steps = EXCLUDED.learning_steps, last_review = EXCLUDED.last_review
+WHERE user_card_state.last_review IS NULL OR user_card_state.last_review < EXCLUDED.last_review
+`
+
+type UpsertUserCardStateOnReviewParams struct {
+	UserID        pgtype.UUID        `json:"user_id"`
+	CardID        pgtype.UUID        `json:"card_id"`
+	Due           pgtype.Timestamptz `json:"due"`
+	Stability     float64            `json:"stability"`
+	Difficulty    float64            `json:"difficulty"`
+	State         int16              `json:"state"`
+	Reps          int32              `json:"reps"`
+	Lapses        int32              `json:"lapses"`
+	ElapsedDays   int32              `json:"elapsed_days"`
+	ScheduledDays int32              `json:"scheduled_days"`
+	LearningSteps int16              `json:"learning_steps"`
+	LastReview    pgtype.Timestamptz `json:"last_review"`
+}
+
+// Last-write-wins by REVIEW time, not arrival time -- the property that makes a retrying sender safe
+// (architecture.md §6). suspended / buried_until / flag are user settings, not scheduling output, and
+// are never touched here.
+func (q *Queries) UpsertUserCardStateOnReview(ctx context.Context, arg UpsertUserCardStateOnReviewParams) (int64, error) {
+	result, err := q.db.Exec(ctx, upsertUserCardStateOnReview,
+		arg.UserID,
+		arg.CardID,
+		arg.Due,
+		arg.Stability,
+		arg.Difficulty,
+		arg.State,
+		arg.Reps,
+		arg.Lapses,
+		arg.ElapsedDays,
+		arg.ScheduledDays,
+		arg.LearningSteps,
+		arg.LastReview,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}

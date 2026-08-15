@@ -11,6 +11,34 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getEffectiveFsrsParams = `-- name: GetEffectiveFsrsParams :one
+SELECT fsrs_version, params, desired_retention
+FROM user_fsrs_params
+WHERE user_id = $1 AND (deck_id = $2 OR deck_id IS NULL)
+ORDER BY deck_id NULLS LAST
+LIMIT 1
+`
+
+type GetEffectiveFsrsParamsParams struct {
+	UserID pgtype.UUID `json:"user_id"`
+	DeckID pgtype.UUID `json:"deck_id"`
+}
+
+type GetEffectiveFsrsParamsRow struct {
+	FsrsVersion      int16   `json:"fsrs_version"`
+	Params           []byte  `json:"params"`
+	DesiredRetention float64 `json:"desired_retention"`
+}
+
+// The per-(user,deck) override if there is one, else the user's global row. deck_id NULLS LAST puts
+// the override first (CLAUDE.md §2.3, §2.4: never one parameter set across a cohort).
+func (q *Queries) GetEffectiveFsrsParams(ctx context.Context, arg GetEffectiveFsrsParamsParams) (GetEffectiveFsrsParamsRow, error) {
+	row := q.db.QueryRow(ctx, getEffectiveFsrsParams, arg.UserID, arg.DeckID)
+	var i GetEffectiveFsrsParamsRow
+	err := row.Scan(&i.FsrsVersion, &i.Params, &i.DesiredRetention)
+	return i, err
+}
+
 const getUserFsrsParams = `-- name: GetUserFsrsParams :one
 SELECT id, user_id, deck_id, fsrs_version, params, desired_retention, optimised_at, review_count_at_fit FROM user_fsrs_params WHERE id = $1
 `

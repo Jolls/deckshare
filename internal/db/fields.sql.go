@@ -102,6 +102,38 @@ func (q *Queries) ListFieldsForNoteType(ctx context.Context, noteTypeID pgtype.U
 	return items, nil
 }
 
+const listFieldsForNoteTypes = `-- name: ListFieldsForNoteTypes :many
+SELECT note_type_id, ordinal, name FROM fields
+WHERE note_type_id = ANY($1::uuid[])
+ORDER BY note_type_id, ordinal
+`
+
+type ListFieldsForNoteTypesRow struct {
+	NoteTypeID pgtype.UUID `json:"note_type_id"`
+	Ordinal    int32       `json:"ordinal"`
+	Name       string      `json:"name"`
+}
+
+func (q *Queries) ListFieldsForNoteTypes(ctx context.Context, noteTypeIds []pgtype.UUID) ([]ListFieldsForNoteTypesRow, error) {
+	rows, err := q.db.Query(ctx, listFieldsForNoteTypes, noteTypeIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFieldsForNoteTypesRow
+	for rows.Next() {
+		var i ListFieldsForNoteTypesRow
+		if err := rows.Scan(&i.NoteTypeID, &i.Ordinal, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const renameField = `-- name: RenameField :execrows
 UPDATE fields SET name = $1 WHERE id = $2 AND note_type_id = $3
 `

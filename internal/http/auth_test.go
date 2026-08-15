@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -74,8 +75,9 @@ func countRows(t *testing.T, tx pgx.Tx, query string, args ...any) int64 {
 }
 
 // newTestHandler builds the same route+middleware stack as NewHandler, over a tx-backed auth
-// service, without the DB pool (the /healthz route is not under test here).
-func newTestHandler(t *testing.T, tx pgx.Tx, cfg auth.Config) (http.Handler, *auth.Service) {
+// service, without the DB pool (the /healthz route is not under test here). clocks is variadic so
+// existing call sites are unaffected; pass one func to pin the clock for review-route tests.
+func newTestHandler(t *testing.T, tx pgx.Tx, cfg auth.Config, clocks ...func() time.Time) (http.Handler, *auth.Service) {
 	t.Helper()
 	a, err := auth.New(tx, cfg)
 	if err != nil {
@@ -85,12 +87,22 @@ func newTestHandler(t *testing.T, tx pgx.Tx, cfg auth.Config) (http.Handler, *au
 	if err != nil {
 		t.Fatalf("parseTemplates: %v", err)
 	}
+	fragments, err := parseFragments()
+	if err != nil {
+		t.Fatalf("parseFragments: %v", err)
+	}
+	clock := time.Now
+	if len(clocks) > 0 {
+		clock = clocks[0]
+	}
 	mux := http.NewServeMux()
+	registerStaticRoutes(mux)
 	registerAuthRoutes(mux, a, pages)
 	registerSettingsRoutes(mux, a, pages)
 	registerDeckRoutes(mux, tx, pages)
 	registerNoteTypeRoutes(mux, tx, pages)
 	registerNoteRoutes(mux, tx, pages)
+	registerReviewRoutes(mux, tx, pages, fragments, clock)
 	return a.Middleware(mux), a
 }
 

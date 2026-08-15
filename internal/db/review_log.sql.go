@@ -37,3 +37,129 @@ func (q *Queries) GetReviewLogEntry(ctx context.Context, id pgtype.UUID) (Review
 	)
 	return i, err
 }
+
+const insertReviewLog = `-- name: InsertReviewLog :execrows
+INSERT INTO review_log (
+    id, user_id, card_id, rating, reviewed_at, duration_ms,
+    state_before, learning_steps_before, stability_before, difficulty_before,
+    elapsed_days_before, scheduled_days_after, fsrs_version, review_kind
+) VALUES (
+    $1, $2, $3, $4,
+    $5, $6,
+    $7, $8,
+    $9, $10,
+    $11, $12,
+    $13, $14
+)
+ON CONFLICT (id) DO NOTHING
+`
+
+type InsertReviewLogParams struct {
+	ID                  pgtype.UUID        `json:"id"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	CardID              pgtype.UUID        `json:"card_id"`
+	Rating              int16              `json:"rating"`
+	ReviewedAt          pgtype.Timestamptz `json:"reviewed_at"`
+	DurationMs          pgtype.Int4        `json:"duration_ms"`
+	StateBefore         int16              `json:"state_before"`
+	LearningStepsBefore int16              `json:"learning_steps_before"`
+	StabilityBefore     pgtype.Float8      `json:"stability_before"`
+	DifficultyBefore    pgtype.Float8      `json:"difficulty_before"`
+	ElapsedDaysBefore   int32              `json:"elapsed_days_before"`
+	ScheduledDaysAfter  int32              `json:"scheduled_days_after"`
+	FsrsVersion         pgtype.Int2        `json:"fsrs_version"`
+	ReviewKind          int16              `json:"review_kind"`
+}
+
+// Every column except id is computed server-side (CLAUDE.md §2.7). anki_id stays NULL for rows this
+// reviewer writes. execrows, not exec: 0 rows means the id was already taken and this is a pure retry,
+// which must NOT be rescheduled from the row it already advanced.
+func (q *Queries) InsertReviewLog(ctx context.Context, arg InsertReviewLogParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertReviewLog,
+		arg.ID,
+		arg.UserID,
+		arg.CardID,
+		arg.Rating,
+		arg.ReviewedAt,
+		arg.DurationMs,
+		arg.StateBefore,
+		arg.LearningStepsBefore,
+		arg.StabilityBefore,
+		arg.DifficultyBefore,
+		arg.ElapsedDaysBefore,
+		arg.ScheduledDaysAfter,
+		arg.FsrsVersion,
+		arg.ReviewKind,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const listExistingReviewLogIDs = `-- name: ListExistingReviewLogIDs :many
+SELECT id FROM review_log WHERE id = ANY($1::uuid[])
+`
+
+// The idempotency check (architecture.md §6). Deliberately NOT scoped to user_id: review_log.id is a
+// global primary key, so an id taken by anyone is taken here -- scoping it would let ON CONFLICT drop
+// the row while the state write landed.
+func (q *Queries) ListExistingReviewLogIDs(ctx context.Context, ids []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listExistingReviewLogIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReviewLogForCard = `-- name: ListReviewLogForCard :many
+SELECT id, rating, reviewed_at
+FROM review_log
+WHERE user_id = $1 AND card_id = $2
+ORDER BY reviewed_at, id
+`
+
+type ListReviewLogForCardParams struct {
+	UserID pgtype.UUID `json:"user_id"`
+	CardID pgtype.UUID `json:"card_id"`
+}
+
+type ListReviewLogForCardRow struct {
+	ID         pgtype.UUID        `json:"id"`
+	Rating     int16              `json:"rating"`
+	ReviewedAt pgtype.Timestamptz `json:"reviewed_at"`
+}
+
+// The replay path (architecture.md §6); backed by review_log_card_id_user_id_reviewed_at_idx. Only
+// rating and reviewed_at are read: a replay re-derives every *_before itself.
+func (q *Queries) ListReviewLogForCard(ctx context.Context, arg ListReviewLogForCardParams) ([]ListReviewLogForCardRow, error) {
+	rows, err := q.db.Query(ctx, listReviewLogForCard, arg.UserID, arg.CardID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListReviewLogForCardRow
+	for rows.Next() {
+		var i ListReviewLogForCardRow
+		if err := rows.Scan(&i.ID, &i.Rating, &i.ReviewedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

@@ -1,0 +1,43 @@
+{{define "content"}}
+{{range .CSS}}<style>{{.}}</style>{{end}}
+
+<h1>{{.Deck.Name}}</h1>
+<p><a href="/decks/{{.Deck.ID}}">Back to deck</a></p>
+
+<section id="review-stage" hidden>
+  <div class="card-question"></div>
+  <div class="card-answer" hidden></div>
+  <p>
+    <button type="button" data-reveal>Show Answer</button>
+  </p>
+  <p>
+    <button type="button" data-rating="1">Again <small data-interval-for="1"></small></button>
+    <button type="button" data-rating="2">Hard <small data-interval-for="2"></small></button>
+    <button type="button" data-rating="3">Good <small data-interval-for="3"></small></button>
+    <button type="button" data-rating="4">Easy <small data-interval-for="4"></small></button>
+  </p>
+</section>
+
+<div id="review-queue">{{template "review_cards" .Batch}}</div>
+
+<div id="review-refill" hidden
+     hx-get="/api/reviews/next"
+     hx-trigger="refill-needed from:body"
+     hx-vals='js:{deck: enshuReview.deckId(), cursor: enshuReview.cursor()}'
+     hx-target="#review-queue"
+     hx-swap="beforeend"></div>
+
+<div id="review-sender" hidden
+     hx-post="/api/reviews/batch"
+     hx-ext="json-enc"
+     hx-trigger="flush-events from:body"
+     hx-vals='js:{events: enshuReview.takePending()}'
+     hx-swap="none"></div>
+
+<section id="review-done" hidden>
+  <p>No more cards due. Nice work.</p>
+  <p><a href="/decks/{{.Deck.ID}}">Back to deck</a></p>
+</section>
+
+<script src="/static/review.js" defer data-deck-id="{{.Deck.ID}}" data-study-day-end="{{.StudyDayEnd}}"></script>
+{{end}}
