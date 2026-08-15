@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.18] - 2026-08-15
+
+### Fixed
+- Import page's file picker now accepts `.colpkg` as well as `.apkg` — the reader and handler
+  already supported both containers, but `accept=".apkg"` hid `.colpkg` files from the OS file
+  dialog ([#78](https://github.com/Jolls/enshu/issues/78))
+
 ## [0.1.17] - 2026-08-15
 
 ### Added
