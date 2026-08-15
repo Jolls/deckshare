@@ -3,6 +3,17 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.13] - 2026-08-14
+
+### Added
+- `internal/apkg/`: a database → IR → `.apkg` writer (`Export` + `Write`/`WriteFile`), completing
+  architecture.md §11's build-order step 8. Always writes schema 11 (the only verified format —
+  schema 18 stays reader-only and gated behind [#61](https://github.com/Jolls/enshu/issues/61)),
+  reusing each row's original `anki_id` when one was imported and synthesising one otherwise.
+  Reconstructs the Anki `type`/`queue`/`due` triple from `user_card_state` + FSRS `State`, and
+  synthesises `col.crt` from the earliest exported review-state due date since Enshu persists no
+  package-wide creation instant ([#59](https://github.com/Jolls/enshu/issues/59))
+
 ## [0.1.12] - 2026-08-14
 
 ### Added
