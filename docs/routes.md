@@ -141,7 +141,7 @@ exempts nobody from the guard.
 
 ---
 
-## Settings — `settings.go` (Phase 1: account settings step 3 -- built (#52), FSRS default step 9)
+## Settings — `settings.go` (Phase 1: account settings step 3 -- built (#52), FSRS default step 9 -- built (#63))
 
 | Method | Path | Permission | Purpose |
 |---|---|---|---|
@@ -150,9 +150,6 @@ exempts nobody from the guard.
 | POST | `/settings/password` | session | Change password |
 | POST | `/settings/fsrs` | session | Update the global `desired_retention` default |
 | POST | `/decks/{id}/settings/fsrs` | `can_study` | Per-deck override. Scoped to the caller, not the deck — `user_fsrs_params` keys on `(user_id, deck_id)`, so this is "my retention target for this deck," not a deck-wide setting an admin sets for everyone |
-
-`/settings/fsrs` and `/decks/{id}/settings/fsrs` are step 9 (`user_fsrs_params` isn't a UI concept
-yet) and are not part of #52 — only the profile and password rows above are built.
 
 ---
 

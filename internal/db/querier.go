@@ -80,10 +80,12 @@ type Querier interface {
 	GetDeckForSettingsEdit(ctx context.Context, arg GetDeckForSettingsEditParams) (Deck, error)
 	GetDeckForStudy(ctx context.Context, arg GetDeckForStudyParams) (Deck, error)
 	GetDeckForUser(ctx context.Context, arg GetDeckForUserParams) (Deck, error)
+	GetDeckFsrsRetention(ctx context.Context, arg GetDeckFsrsRetentionParams) (float64, error)
 	// The per-(user,deck) override if there is one, else the user's global row. deck_id NULLS LAST puts
 	// the override first (CLAUDE.md §2.3, §2.4: never one parameter set across a cohort).
 	GetEffectiveFsrsParams(ctx context.Context, arg GetEffectiveFsrsParamsParams) (GetEffectiveFsrsParamsRow, error)
 	GetField(ctx context.Context, id pgtype.UUID) (Field, error)
+	GetGlobalFsrsRetention(ctx context.Context, userID pgtype.UUID) (float64, error)
 	GetMediaBlob(ctx context.Context, sha256 string) (MediaBlob, error)
 	// Used by GET /media/{sha256} (routes.md): a blob is visible to a user only through a deck they
 	// can_view that references it -- the same deck_access join every cross-user read goes through
@@ -228,6 +230,16 @@ type Querier interface {
 	UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) (int64, error)
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) error
+	// Authorisation lives in the SELECT source, not a handler guard (CLAUDE.md §9): a caller
+	// without can_view+can_study on the deck matches zero deck_access rows, so the INSERT touches
+	// nothing and :execrows reports 0 -- the same "0 rows = not found" shape POST /decks/{id}/edit
+	// uses (decks.sql UpdateDeck).
+	UpsertDeckFsrsRetention(ctx context.Context, arg UpsertDeckFsrsRetentionParams) (int64, error)
+	// Global row upsert targets the partial unique index (migration 00012:
+	// user_fsrs_params_user_id_global_key) -- the plain (user_id, deck_id) index does not enforce
+	// "one global row per user" because NULLs never conflict against each other in a btree unique
+	// index, which is exactly why that second, partial index exists.
+	UpsertGlobalFsrsRetention(ctx context.Context, arg UpsertGlobalFsrsRetentionParams) error
 	// cards.deck_id comes from the CARD's own home deck, never flattened to the note's deck
 	// (architecture.md §20). ON CONFLICT keeps the existing card id, and with it its
 	// user_card_state and review_log history (docs/schema.md's card-regeneration trap).

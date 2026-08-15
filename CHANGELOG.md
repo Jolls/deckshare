@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.17] - 2026-08-15
+
+### Added
+- `GET`/`POST /settings/fsrs` and `POST /decks/{id}/settings/fsrs`: set the desired-retention
+  target, globally or per deck, against FSRS's default parameters (no fitting required). The
+  per-deck route is authorised in the upsert query itself — a caller without `can_study` on the
+  deck matches no rows and gets a 404 ([#63](https://github.com/Jolls/enshu/issues/63))
+
 ## [0.1.16] - 2026-08-15
 
 ### Added

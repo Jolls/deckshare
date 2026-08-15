@@ -11,6 +11,22 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getDeckFsrsRetention = `-- name: GetDeckFsrsRetention :one
+SELECT desired_retention FROM user_fsrs_params WHERE user_id = $1 AND deck_id = $2
+`
+
+type GetDeckFsrsRetentionParams struct {
+	UserID pgtype.UUID `json:"user_id"`
+	DeckID pgtype.UUID `json:"deck_id"`
+}
+
+func (q *Queries) GetDeckFsrsRetention(ctx context.Context, arg GetDeckFsrsRetentionParams) (float64, error) {
+	row := q.db.QueryRow(ctx, getDeckFsrsRetention, arg.UserID, arg.DeckID)
+	var desired_retention float64
+	err := row.Scan(&desired_retention)
+	return desired_retention, err
+}
+
 const getEffectiveFsrsParams = `-- name: GetEffectiveFsrsParams :one
 SELECT fsrs_version, params, desired_retention
 FROM user_fsrs_params
@@ -39,6 +55,17 @@ func (q *Queries) GetEffectiveFsrsParams(ctx context.Context, arg GetEffectiveFs
 	return i, err
 }
 
+const getGlobalFsrsRetention = `-- name: GetGlobalFsrsRetention :one
+SELECT desired_retention FROM user_fsrs_params WHERE user_id = $1 AND deck_id IS NULL
+`
+
+func (q *Queries) GetGlobalFsrsRetention(ctx context.Context, userID pgtype.UUID) (float64, error) {
+	row := q.db.QueryRow(ctx, getGlobalFsrsRetention, userID)
+	var desired_retention float64
+	err := row.Scan(&desired_retention)
+	return desired_retention, err
+}
+
 const getUserFsrsParams = `-- name: GetUserFsrsParams :one
 SELECT id, user_id, deck_id, fsrs_version, params, desired_retention, optimised_at, review_count_at_fit FROM user_fsrs_params WHERE id = $1
 `
@@ -57,4 +84,59 @@ func (q *Queries) GetUserFsrsParams(ctx context.Context, id pgtype.UUID) (UserFs
 		&i.ReviewCountAtFit,
 	)
 	return i, err
+}
+
+const upsertDeckFsrsRetention = `-- name: UpsertDeckFsrsRetention :execrows
+INSERT INTO user_fsrs_params (user_id, deck_id, fsrs_version, params, desired_retention)
+SELECT $1, $2, $3, '[]'::jsonb, $4
+FROM deck_access da
+WHERE da.deck_id = $2 AND da.user_id = $1 AND da.can_view AND da.can_study
+ON CONFLICT (user_id, deck_id)
+DO UPDATE SET fsrs_version = EXCLUDED.fsrs_version, desired_retention = EXCLUDED.desired_retention
+`
+
+type UpsertDeckFsrsRetentionParams struct {
+	UserID           pgtype.UUID `json:"user_id"`
+	DeckID           pgtype.UUID `json:"deck_id"`
+	FsrsVersion      int16       `json:"fsrs_version"`
+	DesiredRetention float64     `json:"desired_retention"`
+}
+
+// Authorisation lives in the SELECT source, not a handler guard (CLAUDE.md §9): a caller
+// without can_view+can_study on the deck matches zero deck_access rows, so the INSERT touches
+// nothing and :execrows reports 0 -- the same "0 rows = not found" shape POST /decks/{id}/edit
+// uses (decks.sql UpdateDeck).
+func (q *Queries) UpsertDeckFsrsRetention(ctx context.Context, arg UpsertDeckFsrsRetentionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, upsertDeckFsrsRetention,
+		arg.UserID,
+		arg.DeckID,
+		arg.FsrsVersion,
+		arg.DesiredRetention,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const upsertGlobalFsrsRetention = `-- name: UpsertGlobalFsrsRetention :exec
+INSERT INTO user_fsrs_params (user_id, deck_id, fsrs_version, params, desired_retention)
+VALUES ($1, NULL, $2, '[]'::jsonb, $3)
+ON CONFLICT (user_id) WHERE deck_id IS NULL
+DO UPDATE SET fsrs_version = EXCLUDED.fsrs_version, desired_retention = EXCLUDED.desired_retention
+`
+
+type UpsertGlobalFsrsRetentionParams struct {
+	UserID           pgtype.UUID `json:"user_id"`
+	FsrsVersion      int16       `json:"fsrs_version"`
+	DesiredRetention float64     `json:"desired_retention"`
+}
+
+// Global row upsert targets the partial unique index (migration 00012:
+// user_fsrs_params_user_id_global_key) -- the plain (user_id, deck_id) index does not enforce
+// "one global row per user" because NULLs never conflict against each other in a btree unique
+// index, which is exactly why that second, partial index exists.
+func (q *Queries) UpsertGlobalFsrsRetention(ctx context.Context, arg UpsertGlobalFsrsRetentionParams) error {
+	_, err := q.db.Exec(ctx, upsertGlobalFsrsRetention, arg.UserID, arg.FsrsVersion, arg.DesiredRetention)
+	return err
 }
