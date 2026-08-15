@@ -36,6 +36,14 @@ type Querier interface {
 	CreateImportedNoteType(ctx context.Context, arg CreateImportedNoteTypeParams) (NoteType, error)
 	// Same reason as CreateImportedField: templates.sql's CreateTemplate has no browser formats.
 	CreateImportedTemplate(ctx context.Context, arg CreateImportedTemplateParams) (Template, error)
+	// Dedup is by content, across ALL users (docs/schema.md, Media). ON CONFLICT DO NOTHING because a
+	// blob row is immutable once written: size_bytes/mime are pure functions of the bytes the sha256
+	// already commits to, so a second import of the same content has nothing new to write.
+	CreateMediaBlob(ctx context.Context, arg CreateMediaBlobParams) error
+	// First-seen-wins (docs/schema.md, Media): within one import collectMedia already resolves a
+	// same-name collision before this is ever called; ON CONFLICT DO NOTHING extends the same policy
+	// across re-imports -- the first ref a name ever got, on that deck, is the one kept.
+	CreateMediaRef(ctx context.Context, arg CreateMediaRefParams) error
 	// Owner_id comes from the DECK, not the caller: notes.owner_id is denormalised from
 	// decks.owner_id and, as of migration 00015, a composite FK rejects any other value.
 	CreateNote(ctx context.Context, arg CreateNoteParams) (Note, error)
@@ -77,6 +85,11 @@ type Querier interface {
 	GetEffectiveFsrsParams(ctx context.Context, arg GetEffectiveFsrsParamsParams) (GetEffectiveFsrsParamsRow, error)
 	GetField(ctx context.Context, id pgtype.UUID) (Field, error)
 	GetMediaBlob(ctx context.Context, sha256 string) (MediaBlob, error)
+	// Used by GET /media/{sha256} (routes.md): a blob is visible to a user only through a deck they
+	// can_view that references it -- the same deck_access join every cross-user read goes through
+	// (CLAUDE.md §9). Collapsing "blob doesn't exist" and "blob exists but caller can't see it" into
+	// one pgx.ErrNoRows, like GetDeckForUser does, avoids confirming existence to a caller who can't.
+	GetMediaBlobForUser(ctx context.Context, arg GetMediaBlobForUserParams) (MediaBlob, error)
 	GetMediaRef(ctx context.Context, arg GetMediaRefParams) (MediaRef, error)
 	GetNote(ctx context.Context, id pgtype.UUID) (Note, error)
 	GetNoteByOwnerAndGuid(ctx context.Context, arg GetNoteByOwnerAndGuidParams) (Note, error)

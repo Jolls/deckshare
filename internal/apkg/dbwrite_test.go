@@ -2,7 +2,10 @@ package apkg
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
@@ -22,7 +25,7 @@ func TestImport_FilesCardDeckFromCardsOwnDeck(t *testing.T) {
 	pkg := buildSchema11Package(t, spec)
 	col := readBytes(t, pkg)
 
-	result, err := Import(ctx, tx, ownerID, col, time.Now())
+	result, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t))
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -83,11 +86,11 @@ func TestImport_IdempotentOnOwnerGuid(t *testing.T) {
 	pkg := buildSchema11Package(t, spec)
 	col := readBytes(t, pkg)
 
-	r1, err := Import(ctx, tx, ownerID, col, time.Now())
+	r1, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t))
 	if err != nil {
 		t.Fatalf("first Import: %v", err)
 	}
-	r2, err := Import(ctx, tx, ownerID, col, time.Now())
+	r2, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t))
 	if err != nil {
 		t.Fatalf("second Import: %v", err)
 	}
@@ -113,7 +116,7 @@ func TestImport_ReimportPreservesCardIDsAndState(t *testing.T) {
 	pkg := buildSchema11Package(t, spec)
 	col := readBytes(t, pkg)
 
-	if _, err := Import(ctx, tx, ownerID, col, time.Now()); err != nil {
+	if _, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t)); err != nil {
 		t.Fatalf("first Import: %v", err)
 	}
 	card, err := findCardByAnkiID(ctx, tx, 203) // a card with no revlog -- gets seeded state
@@ -129,7 +132,7 @@ func TestImport_ReimportPreservesCardIDsAndState(t *testing.T) {
 		t.Fatalf("seeding progress: %v", err)
 	}
 
-	if _, err := Import(ctx, tx, ownerID, col, time.Now()); err != nil {
+	if _, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t)); err != nil {
 		t.Fatalf("second Import: %v", err)
 	}
 	card2, err := findCardByAnkiID(ctx, tx, 203)
@@ -157,7 +160,7 @@ func TestImport_ReimportDoesNotMoveNotes(t *testing.T) {
 	spec := defaultSynthSpec(t)
 	pkg := buildSchema11Package(t, spec)
 	col := readBytes(t, pkg)
-	if _, err := Import(ctx, tx, ownerID, col, time.Now()); err != nil {
+	if _, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t)); err != nil {
 		t.Fatalf("first Import: %v", err)
 	}
 
@@ -173,7 +176,7 @@ func TestImport_ReimportDoesNotMoveNotes(t *testing.T) {
 		t.Fatalf("moving note: %v", err)
 	}
 
-	if _, err := Import(ctx, tx, ownerID, col, time.Now()); err != nil {
+	if _, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t)); err != nil {
 		t.Fatalf("second Import: %v", err)
 	}
 	n2, err := q.GetNoteByOwnerAndGuid(ctx, db.GetNoteByOwnerAndGuidParams{OwnerID: ownerID, Guid: "guid-note-1"})
@@ -194,7 +197,7 @@ func TestImport_ReusesDeckAndNoteTypeByName(t *testing.T) {
 	pkg := buildSchema11Package(t, spec)
 	col := readBytes(t, pkg)
 
-	r1, err := Import(ctx, tx, ownerID, col, time.Now())
+	r1, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t))
 	if err != nil {
 		t.Fatalf("first Import: %v", err)
 	}
@@ -202,7 +205,7 @@ func TestImport_ReusesDeckAndNoteTypeByName(t *testing.T) {
 		t.Fatalf("first import: DecksCreated=%d NoteTypesCreated=%d, want 2, 2", r1.DecksCreated, r1.NoteTypesCreated)
 	}
 
-	r2, err := Import(ctx, tx, ownerID, col, time.Now())
+	r2, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t))
 	if err != nil {
 		t.Fatalf("second Import: %v", err)
 	}
@@ -222,7 +225,7 @@ func TestImport_RejectsNoteTypeFieldCountMismatch(t *testing.T) {
 	spec := defaultSynthSpec(t)
 	pkg := buildSchema11Package(t, spec)
 	col := readBytes(t, pkg)
-	if _, err := Import(ctx, tx, ownerID, col, time.Now()); err != nil {
+	if _, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t)); err != nil {
 		t.Fatalf("first Import: %v", err)
 	}
 
@@ -231,7 +234,7 @@ func TestImport_RejectsNoteTypeFieldCountMismatch(t *testing.T) {
 	pkg2 := buildSchema11Package(t, spec2)
 	col2 := readBytes(t, pkg2)
 
-	_, err := Import(ctx, tx, ownerID, col2, time.Now())
+	_, err := Import(ctx, tx, ownerID, col2, time.Now(), testMediaStore(t))
 	if !errors.Is(err, ErrNoteTypeMismatch) {
 		t.Fatalf("err = %v, want ErrNoteTypeMismatch", err)
 	}
@@ -245,7 +248,7 @@ func TestImport_RevlogBecomesReviewLogAndReplays(t *testing.T) {
 	spec := defaultSynthSpec(t)
 	pkg := buildSchema11Package(t, spec)
 	col := readBytes(t, pkg)
-	result, err := Import(ctx, tx, ownerID, col, time.Now())
+	result, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t))
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -304,7 +307,7 @@ func TestImport_SeedsStateOnlyWhenCardHasState(t *testing.T) {
 	}
 	pkg := buildSchema11Package(t, spec)
 	col := readBytes(t, pkg)
-	if _, err := Import(ctx, tx, ownerID, col, time.Now()); err != nil {
+	if _, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t)); err != nil {
 		t.Fatalf("Import: %v", err)
 	}
 
@@ -344,7 +347,7 @@ func TestImport_NeverWritesFactor(t *testing.T) {
 	}
 	pkg := buildSchema11Package(t, spec)
 	col := readBytes(t, pkg)
-	if _, err := Import(ctx, tx, ownerID, col, time.Now()); err != nil {
+	if _, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t)); err != nil {
 		t.Fatalf("Import: %v", err)
 	}
 	card, err := findCardByAnkiID(ctx, tx, 205)
@@ -360,29 +363,100 @@ func TestImport_NeverWritesFactor(t *testing.T) {
 	}
 }
 
-func TestImport_MediaDeferred(t *testing.T) {
+func syntheticMedia(filename string, data []byte) IrMedia {
+	sum := sha256.Sum256(data)
+	return IrMedia{Index: "0", Filename: filename, SHA256: hex.EncodeToString(sum[:]), SizeBytes: int64(len(data)), Data: data}
+}
+
+// The package format doesn't attribute media files to individual decks, so every deck the import
+// touches gets a ref (dbwrite.go's importMedia doc comment) -- asserted here against BOTH of
+// defaultSynthSpec's decks, not just one.
+func TestImport_MediaWrittenToStoreAndDB(t *testing.T) {
 	tx := beginTx(t)
 	ctx := context.Background()
 	ownerID := seedUser(t, tx)
+	store := testMediaStore(t)
+	q := db.New(tx)
 
 	spec := defaultSynthSpec(t)
 	pkg := buildSchema11Package(t, spec)
 	col := readBytes(t, pkg)
-	col.Media = []IrMedia{{Index: "0", Filename: "cat.jpg", SHA256: "abc", SizeBytes: 3}}
+	m := syntheticMedia("cat.jpg", []byte("a fake jpeg"))
+	col.Media = []IrMedia{m}
 
-	result, err := Import(ctx, tx, ownerID, col, time.Now())
+	result, err := Import(ctx, tx, ownerID, col, time.Now(), store)
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
-	if result.MediaDeferred != 1 {
-		t.Errorf("MediaDeferred = %d, want 1", result.MediaDeferred)
+	if result.MediaImported != 1 {
+		t.Errorf("MediaImported = %d, want 1", result.MediaImported)
 	}
+
+	blob, err := q.GetMediaBlob(ctx, m.SHA256)
+	if err != nil {
+		t.Fatalf("GetMediaBlob: %v", err)
+	}
+	if blob.SizeBytes != m.SizeBytes {
+		t.Errorf("SizeBytes = %d, want %d", blob.SizeBytes, m.SizeBytes)
+	}
+
+	f, err := store.Open(m.SHA256)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	got, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatalf("reading blob: %v", err)
+	}
+	if string(got) != string(m.Data) {
+		t.Errorf("blob bytes = %q, want %q", got, m.Data)
+	}
+
+	for _, name := range []string{"Default", "Default::Sub"} {
+		d, err := q.GetDeckByOwnerAndName(ctx, db.GetDeckByOwnerAndNameParams{OwnerID: ownerID, Name: name})
+		if err != nil {
+			t.Fatalf("GetDeckByOwnerAndName(%q): %v", name, err)
+		}
+		ref, err := q.GetMediaRef(ctx, db.GetMediaRefParams{DeckID: d.ID, Filename: m.Filename})
+		if err != nil {
+			t.Fatalf("GetMediaRef for deck %q: %v", name, err)
+		}
+		if ref.Sha256 != m.SHA256 {
+			t.Errorf("deck %q media ref sha256 = %q, want %q", name, ref.Sha256, m.SHA256)
+		}
+	}
+}
+
+// Re-importing the same package a second time must not duplicate the blob row or error on the
+// already-written file (CLAUDE.md §2.2's re-import idempotency, extended to media).
+func TestImport_MediaReimportIsIdempotent(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	ownerID := seedUser(t, tx)
+	store := testMediaStore(t)
+
+	spec := defaultSynthSpec(t)
+	pkg := buildSchema11Package(t, spec)
+	m := syntheticMedia("cat.jpg", []byte("a fake jpeg"))
+
+	col1 := readBytes(t, pkg)
+	col1.Media = []IrMedia{m}
+	if _, err := Import(ctx, tx, ownerID, col1, time.Now(), store); err != nil {
+		t.Fatalf("first Import: %v", err)
+	}
+	col2 := readBytes(t, pkg)
+	col2.Media = []IrMedia{m}
+	if _, err := Import(ctx, tx, ownerID, col2, time.Now(), store); err != nil {
+		t.Fatalf("second Import: %v", err)
+	}
+
 	var count int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM media_blobs`).Scan(&count); err != nil {
 		t.Fatalf("counting media_blobs: %v", err)
 	}
-	if count != 0 {
-		t.Errorf("media_blobs rows = %d, want 0 (media import is #60)", count)
+	if count != 1 {
+		t.Errorf("media_blobs rows = %d, want 1", count)
 	}
 }
 
@@ -394,7 +468,7 @@ func TestImport_FilteredDeckNotCreated(t *testing.T) {
 
 	pkg := buildFilteredDeckPackage(t)
 	col := readBytes(t, pkg)
-	if _, err := Import(ctx, tx, ownerID, col, time.Now()); err != nil {
+	if _, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t)); err != nil {
 		t.Fatalf("Import: %v", err)
 	}
 

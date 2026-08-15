@@ -3,6 +3,22 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.14] - 2026-08-14
+
+### Added
+- `internal/media`: filesystem-backed, content-addressed blob store
+  (`${MEDIA_ROOT}/<sha[0:2]>/<sha>`), written via temp-file-plus-rename so a concurrent reader
+  never observes a partial write ([#60](https://github.com/Jolls/enshu/issues/60))
+- `.apkg` import now writes media into the blob store and records `media_blobs`/`media_refs`
+  rows, refing every deck the import touches (the package format doesn't attribute individual
+  files to individual decks) ([#60](https://github.com/Jolls/enshu/issues/60))
+- `GET /media/{sha256}`: serves a blob to any user with `can_view` on a deck that references it,
+  with long-lived private cache headers ([#60](https://github.com/Jolls/enshu/issues/60))
+
+### Changed
+- `MEDIA_ROOT` is now a required environment variable alongside `DATABASE_URL`
+  ([#60](https://github.com/Jolls/enshu/issues/60))
+
 ## [0.1.13] - 2026-08-14
 
 ### Added

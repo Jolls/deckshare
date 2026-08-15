@@ -15,6 +15,7 @@ import (
 	"github.com/Jolls/enshu/internal/auth"
 	"github.com/Jolls/enshu/internal/db"
 	apphttp "github.com/Jolls/enshu/internal/http"
+	"github.com/Jolls/enshu/internal/media"
 )
 
 func main() {
@@ -32,6 +33,10 @@ func run() error {
 	if addr == "" {
 		addr = ":3000"
 	}
+	mediaRoot := os.Getenv("MEDIA_ROOT")
+	if mediaRoot == "" {
+		return errors.New("MEDIA_ROOT is required")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -48,7 +53,7 @@ func run() error {
 	}
 	go authSvc.Run(ctx, time.Hour)
 
-	handler, err := apphttp.NewHandler(pool, authSvc)
+	handler, err := apphttp.NewHandler(pool, authSvc, media.New(mediaRoot))
 	if err != nil {
 		return fmt.Errorf("build handler: %w", err)
 	}

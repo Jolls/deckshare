@@ -116,7 +116,7 @@ func TestExport_RoundTripsThroughReimport(t *testing.T) {
 	pkg := buildSchema11Package(t, spec)
 	col1 := readBytes(t, pkg)
 
-	if _, err := Import(ctx, tx, ownerA, col1, now); err != nil {
+	if _, err := Import(ctx, tx, ownerA, col1, now, testMediaStore(t)); err != nil {
 		t.Fatalf("first Import: %v", err)
 	}
 
@@ -138,7 +138,7 @@ func TestExport_RoundTripsThroughReimport(t *testing.T) {
 	col3 := readBytes(t, buf.Bytes()) // Write's own output must re-parse cleanly
 
 	ownerB := seedUser(t, tx)
-	if _, err := Import(ctx, tx, ownerB, col3, now); err != nil {
+	if _, err := Import(ctx, tx, ownerB, col3, now, testMediaStore(t)); err != nil {
 		t.Fatalf("second Import: %v", err)
 	}
 

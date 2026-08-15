@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Jolls/enshu/internal/db"
+	"github.com/Jolls/enshu/internal/media"
 	"github.com/Jolls/enshu/internal/review"
 )
 
@@ -26,14 +28,14 @@ type ImportResult struct {
 	ReviewsInserted    int
 	CardStatesSeeded   int
 	CardStatesReplayed int
-	MediaDeferred      int // len(col.Media); #60 wires these up, this issue counts them
+	MediaImported      int
 	Warnings           []string
 }
 
-// Import files col into the database under ownerID. Must be called inside a transaction it does
-// not own; the caller commits. Idempotent: re-importing the same package updates rather than
-// duplicates (CLAUDE.md §2.2).
-func Import(ctx context.Context, tx pgx.Tx, ownerID pgtype.UUID, col *IrCollection, now time.Time) (ImportResult, error) {
+// Import files col into the database under ownerID, writing media bytes into blobs. Must be
+// called inside a transaction it does not own; the caller commits. Idempotent: re-importing the
+// same package updates rather than duplicates (CLAUDE.md §2.2).
+func Import(ctx context.Context, tx pgx.Tx, ownerID pgtype.UUID, col *IrCollection, now time.Time, blobs *media.Store) (ImportResult, error) {
 	q := db.New(tx)
 	result := ImportResult{Warnings: append([]string(nil), col.Warnings...)}
 
@@ -76,12 +78,46 @@ func Import(ctx context.Context, tx pgx.Tx, ownerID pgtype.UUID, col *IrCollecti
 		return ImportResult{}, err
 	}
 
-	result.MediaDeferred = len(col.Media)
-	if result.MediaDeferred > 0 {
-		result.Warnings = append(result.Warnings, fmt.Sprintf("media: %d files present in the package were not imported (#60)", result.MediaDeferred))
+	deckIDs := make([]pgtype.UUID, 0, len(deckByAnkiID))
+	for _, id := range deckByAnkiID {
+		deckIDs = append(deckIDs, id)
+	}
+	if err := importMedia(ctx, q, blobs, deckIDs, col.Media, &result); err != nil {
+		return ImportResult{}, err
 	}
 
 	return result, nil
+}
+
+// importMedia writes each media file's bytes into blobs under its sha256, records the blob's
+// metadata, and refs it from every deck this import touched. The package format does not
+// attribute individual media files to individual decks -- Anki's own exporter only ever bundles
+// the media actually referenced by the notes it exports, so crediting every deck in the import is
+// the closest available approximation without parsing filename references out of note HTML.
+func importMedia(ctx context.Context, q *db.Queries, blobs *media.Store, deckIDs []pgtype.UUID, mediaFiles []IrMedia, result *ImportResult) error {
+	for _, m := range mediaFiles {
+		if err := blobs.Put(m.SHA256, m.Data); err != nil {
+			return fmt.Errorf("apkg: writing media blob %q (%s): %w", m.Filename, m.SHA256, err)
+		}
+		if err := q.CreateMediaBlob(ctx, db.CreateMediaBlobParams{
+			Sha256:    m.SHA256,
+			SizeBytes: m.SizeBytes,
+			Mime:      http.DetectContentType(m.Data),
+		}); err != nil {
+			return fmt.Errorf("apkg: recording media blob %q (%s): %w", m.Filename, m.SHA256, err)
+		}
+		for _, deckID := range deckIDs {
+			if err := q.CreateMediaRef(ctx, db.CreateMediaRefParams{
+				DeckID:   deckID,
+				Filename: m.Filename,
+				Sha256:   m.SHA256,
+			}); err != nil {
+				return fmt.Errorf("apkg: recording media ref %q (%s): %w", m.Filename, m.SHA256, err)
+			}
+		}
+		result.MediaImported++
+	}
+	return nil
 }
 
 // importDecks creates or reuses each deck by (owner, name). A filtered deck is never created --

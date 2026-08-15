@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Jolls/enshu/internal/db"
+	"github.com/Jolls/enshu/internal/media"
 )
 
 var (
@@ -50,6 +51,11 @@ func beginTx(t *testing.T) pgx.Tx {
 var seq atomic.Int64
 
 func nextSeq() int64 { return seq.Add(1) }
+
+func testMediaStore(t *testing.T) *media.Store {
+	t.Helper()
+	return media.New(t.TempDir())
+}
 
 func seedUser(t *testing.T, tx pgx.Tx) pgtype.UUID {
 	t.Helper()

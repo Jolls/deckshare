@@ -21,8 +21,10 @@ Thumbs.db
 /enshu.exe
 *.test
 coverage.out
+/media
 
 # run-app skill's tracked server process
 .claude/skills/run-app/.server.pid
 .claude/skills/run-app/.server.log
 .claude/skills/run-app/.enshu-server.exe
+.claude/skills/run-app/.media/

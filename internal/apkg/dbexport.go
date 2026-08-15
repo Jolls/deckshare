@@ -19,8 +19,9 @@ import (
 //
 // Lossy in one direction by definition (apkg-format.md's Export section): a shared deck's other
 // users' progress cannot fit in a single Anki collection, so this exports only ownerID's own
-// user_card_state and review_log rows on ownerID's own cards. Media is never exported: the blob
-// store (#60) does not exist yet, so col.Media is always empty.
+// user_card_state and review_log rows on ownerID's own cards. Media is never exported: #60 built
+// the blob store for import only, so col.Media is always empty. Export wiring is a separate
+// follow-up.
 func Export(ctx context.Context, tx pgx.Tx, ownerID pgtype.UUID, now time.Time) (*IrCollection, error) {
 	q := db.New(tx)
 

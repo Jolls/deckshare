@@ -11,6 +11,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createMediaRef = `-- name: CreateMediaRef :exec
+INSERT INTO media_refs (deck_id, filename, sha256) VALUES ($1, $2, $3)
+ON CONFLICT (deck_id, filename) DO NOTHING
+`
+
+type CreateMediaRefParams struct {
+	DeckID   pgtype.UUID `json:"deck_id"`
+	Filename string      `json:"filename"`
+	Sha256   string      `json:"sha256"`
+}
+
+// First-seen-wins (docs/schema.md, Media): within one import collectMedia already resolves a
+// same-name collision before this is ever called; ON CONFLICT DO NOTHING extends the same policy
+// across re-imports -- the first ref a name ever got, on that deck, is the one kept.
+func (q *Queries) CreateMediaRef(ctx context.Context, arg CreateMediaRefParams) error {
+	_, err := q.db.Exec(ctx, createMediaRef, arg.DeckID, arg.Filename, arg.Sha256)
+	return err
+}
+
 const getMediaRef = `-- name: GetMediaRef :one
 SELECT deck_id, filename, sha256 FROM media_refs WHERE deck_id = $1 AND filename = $2
 `
