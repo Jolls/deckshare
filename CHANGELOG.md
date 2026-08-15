@@ -3,6 +3,26 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.12] - 2026-08-14
+
+### Added
+- `internal/apkg/`: `.apkg`/`.colpkg` reader (legacy zip and modern zstd containers, schema-11
+  fully working, schema-18 gated behind unverified protobuf field numbers pending
+  [#61](https://github.com/Jolls/enshu/issues/61)) and an IR → database writer, idempotent on
+  `(owner_id, guid)`, filing each card's `deck_id` from that card's own home deck rather than the
+  note's (architecture.md §20) ([#58](https://github.com/Jolls/enshu/issues/58))
+- `review.LockCards`, an exported per-`(user, card)` advisory-lock helper shared by the importer
+  and `GradeBatch` ([#58](https://github.com/Jolls/enshu/issues/58))
+- Synthetic in-memory `.apkg` fixture builders (`internal/apkg/synthetic_test.go`) covering
+  schema 11/18, the zstd container, out-of-order `ord` arrays, a filtered-deck card, and archive
+  ceiling violations — no committed binary fixtures, per `tests/fixtures/apkg/README.md`
+  ([#58](https://github.com/Jolls/enshu/issues/58))
+
+### Security
+- `.apkg` reading enforces archive ceilings (member count, per-member and total decompressed
+  size) and checks a zstd frame's declared size before decompressing, so an uploaded package
+  cannot exhaust memory ([#58](https://github.com/Jolls/enshu/issues/58))
+
 ## [0.1.11] - 2026-08-14
 
 ### Security
