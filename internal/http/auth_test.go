@@ -106,7 +106,9 @@ func newTestHandler(t *testing.T, tx pgx.Tx, cfg auth.Config, clocks ...func() t
 	registerNoteTypeRoutes(mux, tx, pages)
 	registerNoteRoutes(mux, tx, pages)
 	registerReviewRoutes(mux, tx, pages, fragments, clock)
-	registerMediaRoutes(mux, tx, media.New(t.TempDir()))
+	blobs := media.New(t.TempDir())
+	registerMediaRoutes(mux, tx, blobs)
+	registerImportRoutes(mux, tx, pages, blobs, clock)
 	return securityHeaders(a.Middleware(mux)), a
 }
 
@@ -153,6 +155,7 @@ func TestRoutes_NoSession(t *testing.T) {
 		{"GET", "/signup", 200, ""},
 		{"GET", "/settings", 303, "/login"},
 		{"GET", "/media/" + testSHA, 303, "/login"},
+		{"GET", "/import", 303, "/login"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
