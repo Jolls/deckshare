@@ -238,6 +238,55 @@ func TestDeckQueueCounts_RequiresCanStudy(t *testing.T) {
 	}
 }
 
+// The per-deck daily new-card limit (#101): editable from the deck edit page, persists, and an
+// absent field on a later edit leaves the stored value untouched rather than resetting it.
+func TestDeckEditRoute_NewPerDay(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	w := doRequest(handler, "POST", "/decks", "name=My Deck", cookie, "http://example.com")
+	deckPath := w.Header().Get("Location")
+
+	w = doRequest(handler, "GET", deckPath+"/edit", "", cookie, "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `value="20"`) {
+		t.Fatalf("new deck should default to new_per_day=20, got status %d:\n%s", w.Code, w.Body.String())
+	}
+
+	w = doRequest(handler, "POST", deckPath+"/edit", "name=My Deck&description=&new_per_day=5", cookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("POST edit status = %d, want 303: %s", w.Code, w.Body.String())
+	}
+	w = doRequest(handler, "GET", deckPath+"/edit", "", cookie, "")
+	if !strings.Contains(w.Body.String(), `value="5"`) {
+		t.Errorf("edit page should reflect new_per_day=5:\n%s", w.Body.String())
+	}
+
+	t.Run("absent field leaves value untouched", func(t *testing.T) {
+		w := doRequest(handler, "POST", deckPath+"/edit", "name=My Deck&description=", cookie, "http://example.com")
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("status = %d, want 303: %s", w.Code, w.Body.String())
+		}
+		w = doRequest(handler, "GET", deckPath+"/edit", "", cookie, "")
+		if !strings.Contains(w.Body.String(), `value="5"`) {
+			t.Errorf("new_per_day should remain 5 when the field is absent:\n%s", w.Body.String())
+		}
+	})
+
+	for _, v := range []string{"abc", "-1", "10000"} {
+		t.Run("rejects new_per_day="+v, func(t *testing.T) {
+			w := doRequest(handler, "POST", deckPath+"/edit", "name=My Deck&description=&new_per_day="+v, cookie, "http://example.com")
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400", w.Code)
+			}
+			w = doRequest(handler, "GET", deckPath+"/edit", "", cookie, "")
+			if !strings.Contains(w.Body.String(), `value="5"`) {
+				t.Errorf("deck should be unchanged after a rejected new_per_day:\n%s", w.Body.String())
+			}
+		})
+	}
+}
+
 func TestDeckRoutes_DuplicateName_409(t *testing.T) {
 	tx := beginTx(t)
 	handler, a := newTestHandler(t, tx, auth.Config{})

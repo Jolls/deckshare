@@ -123,6 +123,30 @@ var seq atomic.Int64
 
 func nextSeq() int64 { return seq.Add(1) }
 
+// seedCards adds n further never-seen cards to f's deck, sharing its note type and template.
+// Returns their ids in insertion order (#101 batch_test.go).
+func seedCards(t *testing.T, tx pgx.Tx, f fixture, n int) []pgtype.UUID {
+	t.Helper()
+	ctx := context.Background()
+	ids := make([]pgtype.UUID, n)
+	for i := range ids {
+		var noteID pgtype.UUID
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO notes (guid, owner_id, note_type_id, deck_id, fields, checksum) VALUES ($1, $2, $3, $4, '["Q","A"]'::jsonb, 1) RETURNING id`,
+			fmt.Sprintf("guid-%d", nextSeq()), f.UserID, f.NoteTypeID, f.DeckID,
+		).Scan(&noteID); err != nil {
+			t.Fatalf("insert note: %v", err)
+		}
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO cards (note_id, template_id, ordinal, deck_id) VALUES ($1, $2, 0, $3) RETURNING id`,
+			noteID, f.TemplateID, f.DeckID,
+		).Scan(&ids[i]); err != nil {
+			t.Fatalf("insert card: %v", err)
+		}
+	}
+	return ids
+}
+
 func getUserCardState(t *testing.T, tx pgx.Tx, userID, cardID pgtype.UUID) db.UserCardState {
 	t.Helper()
 	row, err := db.New(tx).GetUserCardState(context.Background(), db.GetUserCardStateParams{UserID: userID, CardID: cardID})

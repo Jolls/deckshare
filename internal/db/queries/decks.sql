@@ -38,7 +38,17 @@ INSERT INTO decks (owner_id, name, description) VALUES ($1, $2, $3) RETURNING *;
 
 -- name: UpdateDeck :execrows
 UPDATE decks d
-SET name = sqlc.arg(name), description = sqlc.arg(description), modified_at = now()
+SET name = sqlc.arg(name),
+    description = sqlc.arg(description),
+    -- #101: nested-merge, not jsonb_set. jsonb_set('{}', '{new,perDay}', …, true) is a no-op when
+    -- the parent object is missing, which every deck's default '{}' preset is. NULL leaves preset
+    -- untouched so a form that doesn't carry the field can't wipe the setting.
+    preset = CASE WHEN sqlc.narg(new_per_day)::int IS NULL THEN d.preset
+                  ELSE d.preset || jsonb_build_object('new',
+                         COALESCE(d.preset -> 'new', '{}'::jsonb)
+                         || jsonb_build_object('perDay', sqlc.narg(new_per_day)::int))
+             END,
+    modified_at = now()
 FROM deck_access da
 WHERE d.id = sqlc.arg(deck_id) AND da.deck_id = d.id AND da.user_id = sqlc.arg(user_id)
   AND da.can_view AND da.can_edit_settings;

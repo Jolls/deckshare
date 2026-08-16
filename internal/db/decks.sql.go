@@ -218,15 +218,26 @@ func (q *Queries) ListDecksForUser(ctx context.Context, userID pgtype.UUID) ([]L
 
 const updateDeck = `-- name: UpdateDeck :execrows
 UPDATE decks d
-SET name = $1, description = $2, modified_at = now()
+SET name = $1,
+    description = $2,
+    -- #101: nested-merge, not jsonb_set. jsonb_set('{}', '{new,perDay}', …, true) is a no-op when
+    -- the parent object is missing, which every deck's default '{}' preset is. NULL leaves preset
+    -- untouched so a form that doesn't carry the field can't wipe the setting.
+    preset = CASE WHEN $3::int IS NULL THEN d.preset
+                  ELSE d.preset || jsonb_build_object('new',
+                         COALESCE(d.preset -> 'new', '{}'::jsonb)
+                         || jsonb_build_object('perDay', $3::int))
+             END,
+    modified_at = now()
 FROM deck_access da
-WHERE d.id = $3 AND da.deck_id = d.id AND da.user_id = $4
+WHERE d.id = $4 AND da.deck_id = d.id AND da.user_id = $5
   AND da.can_view AND da.can_edit_settings
 `
 
 type UpdateDeckParams struct {
 	Name        string      `json:"name"`
 	Description string      `json:"description"`
+	NewPerDay   pgtype.Int4 `json:"new_per_day"`
 	DeckID      pgtype.UUID `json:"deck_id"`
 	UserID      pgtype.UUID `json:"user_id"`
 }
@@ -235,6 +246,7 @@ func (q *Queries) UpdateDeck(ctx context.Context, arg UpdateDeckParams) (int64, 
 	result, err := q.db.Exec(ctx, updateDeck,
 		arg.Name,
 		arg.Description,
+		arg.NewPerDay,
 		arg.DeckID,
 		arg.UserID,
 	)

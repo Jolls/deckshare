@@ -55,8 +55,8 @@ contract for `POST /api/reviews/batch` is pinned down there in full and is not r
 | GET | `/decks/new` | — | New-deck form |
 | POST | `/decks` | — | Create deck; creator gets a `deck_access` row with all six flags true |
 | GET | `/decks/{id}` | `can_view` | Detail: notes list, note/card counts. Due counts deferred to step 7 (the reviewer) — they need `StudyDayStart`/`StudyDayEnd`, which don't exist yet, and there are no `user_card_state` rows at all before step 7 regardless |
-| GET | `/decks/{id}/edit` | `can_edit_settings` | Edit form (name, description only — `preset` is not yet editable; its shape isn't read by any code until the reviewer's learning-steps config lands) |
-| POST | `/decks/{id}/edit` | `can_edit_settings` | Update |
+| GET | `/decks/{id}/edit` | `can_edit_settings` | Edit form: name, description, and new-cards-per-day (#101) |
+| POST | `/decks/{id}/edit` | `can_edit_settings` | Update name, description, and new-cards-per-day (#101) |
 | POST | `/decks/{id}/delete` | `can_view`, `can_delete` | Delete deck, its cards, and any note left with no cards anywhere; notes with cards in other decks are re-homed. Query layer: `db.DeleteDeck` requires both flags — `can_view` is normally granted alongside every other flag by convention (schema.md), and requiring it here keeps a caller who somehow holds `can_delete` without `can_view` from learning the deck exists via a different error shape ([#51](https://github.com/Jolls/enshu/issues/51)); handler is Phase 1 step 5 |
 
 ---
