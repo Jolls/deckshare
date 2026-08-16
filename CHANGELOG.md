@@ -3,6 +3,15 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.23] - 2026-08-15
+
+### Added
+- One-command local test-DB reset: `.claude/skills/run-app/reset-db.sh` wipes the `pgdata`
+  volume, brings Postgres back up, reapplies goose migrations, and seeds a test user with two
+  empty decks (`cmd/seed`), replacing the manual `docker compose down -v` reset agents were
+  improvising when DB-backed tests failed on stale state
+  ([#95](https://github.com/Jolls/enshu/issues/95))
+
 ## [0.1.22] - 2026-08-15
 
 ### Added

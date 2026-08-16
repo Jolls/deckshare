@@ -325,6 +325,11 @@ Windows 11, PowerShell primary (Bash tool also available — each takes its own 
 - Line endings: set `.gitattributes` (`* text=auto eol=lf`) at scaffold time so this repo
   never develops the mixed CRLF/LF problem. Do it in the first commit — retrofitting it
   rewrites every file.
+- **Stale local Postgres data breaks DB-backed tests.** The `compose.yaml` `pgdata` volume
+  persists across `run-app` sessions; leftover rows from manual testing make `go test ./...`
+  fail in ways that look like code bugs. Run
+  `bash .claude/skills/run-app/reset-db.sh` to wipe the volume, reapply migrations, and reseed
+  a test user/decks — don't improvise `docker compose down -v` by hand.
 - Go-specific, once the scaffold exists: `go generate` regenerates `sqlc` output — run it and
   commit the result, don't hand-edit generated files. Docker images are multi-arch, so builds
   cross-compile (`GOOS`/`GOARCH`), not just build for the host.

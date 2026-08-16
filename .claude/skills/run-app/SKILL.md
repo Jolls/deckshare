@@ -11,3 +11,10 @@ Run `bash .claude/skills/run-app/run.sh {start|stop|status}`.
 - `stop` kills the tracked server PID and runs `docker compose down` (keeps
   the `pgdata` volume; only add `-v` if the user wants the DB wiped too).
 - `.env.example` documents `DATABASE_URL` / `ORIGIN` for non-default setups.
+
+If DB-backed tests fail on stale state (leftover rows from a prior `run-app`
+session — see issue #95), run
+`bash .claude/skills/run-app/reset-db.sh` to wipe the `pgdata` volume, bring
+Postgres back up, reapply goose migrations, and seed a test user
+(`test@enshu.local` / `testpassword123`) with two empty decks. Never
+improvise `docker compose down -v` by hand.
