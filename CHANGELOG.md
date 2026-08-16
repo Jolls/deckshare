@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.24] - 2026-08-15
+
+### Added
+- App version now displayed on the Settings page, read from a hardcoded constant bumped
+  alongside this changelog on every release, making it easy to tell which version is running
+  ([#102](https://github.com/Jolls/enshu/issues/102))
+
 ## [0.1.23] - 2026-08-15
 
 ### Added
