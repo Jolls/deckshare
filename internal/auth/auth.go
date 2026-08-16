@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"net/mail"
 	"net/url"
 	"strings"
@@ -66,6 +67,7 @@ type Config struct {
 // settings all go through it.
 type Service struct {
 	q         *db.Queries
+	beginner  db.Beginner
 	cfg       Config
 	dummyHash string
 	// origin is cfg.Origin parsed once at construction, rather than on every state-changing
@@ -79,9 +81,10 @@ type Service struct {
 	changePassword *limiter
 }
 
-// New builds the service over any DBTX -- a *pgxpool.Pool in production, a pgx.Tx in tests. It
-// computes the fixed dummy argon2id hash once, which is what makes login timing-safe.
-func New(dbtx db.DBTX, cfg Config) (*Service, error) {
+// New builds the service over any Beginner -- a *pgxpool.Pool in production, a pgx.Tx in tests
+// (where Begin opens a savepoint). It computes the fixed dummy argon2id hash once, which is what
+// makes login timing-safe.
+func New(dbtx db.Beginner, cfg Config) (*Service, error) {
 	dummyHash, err := argon2id.CreateHash(dummyPassword, argon2id.DefaultParams)
 	if err != nil {
 		return nil, fmt.Errorf("compute dummy hash: %w", err)
@@ -95,6 +98,7 @@ func New(dbtx db.DBTX, cfg Config) (*Service, error) {
 	}
 	return &Service{
 		q:              db.New(dbtx),
+		beginner:       dbtx,
 		cfg:            cfg,
 		dummyHash:      dummyHash,
 		origin:         origin,
@@ -162,6 +166,12 @@ func (s *Service) Signup(ctx context.Context, ip, email, password, displayName s
 			return db.User{}, "", ErrEmailTaken
 		}
 		return db.User{}, "", fmt.Errorf("create user: %w", err)
+	}
+
+	// Best-effort: a user with no note types can't create a single note, but a seeding failure
+	// here must never take down signup itself.
+	if err := s.seedDefaultNoteTypes(ctx, user.ID); err != nil {
+		log.Printf("seed default note types for user %s: %v", user.ID, err)
 	}
 
 	token, err := s.createSession(ctx, user.ID)

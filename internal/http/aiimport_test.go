@@ -21,7 +21,7 @@ func TestAIImportRoutes_GoldenPath(t *testing.T) {
 	if err := tx.QueryRow(ctx, `SELECT id FROM decks LIMIT 1`).Scan(&deckID); err != nil {
 		t.Fatalf("lookup deck: %v", err)
 	}
-	if err := tx.QueryRow(ctx, `SELECT id FROM note_types LIMIT 1`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
 
@@ -78,7 +78,7 @@ func TestAIImportRoutes_BadLine_AllOrNothing(t *testing.T) {
 	if err := tx.QueryRow(ctx, `SELECT id FROM decks LIMIT 1`).Scan(&deckID); err != nil {
 		t.Fatalf("lookup deck: %v", err)
 	}
-	if err := tx.QueryRow(ctx, `SELECT id FROM note_types LIMIT 1`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
 
@@ -101,12 +101,12 @@ func TestAIImportRoutes_FieldCountMismatch_400(t *testing.T) {
 	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
 	ctx := context.Background()
 
-	setupDeckAndNoteType(t, handler, cookie) // "Basic" has 2 fields
+	setupDeckAndNoteType(t, handler, cookie) // "Basic2" has 2 fields
 	var deckID, noteTypeID string
 	if err := tx.QueryRow(ctx, `SELECT id FROM decks LIMIT 1`).Scan(&deckID); err != nil {
 		t.Fatalf("lookup deck: %v", err)
 	}
-	if err := tx.QueryRow(ctx, `SELECT id FROM note_types LIMIT 1`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
 
@@ -136,7 +136,7 @@ func TestAIImportRoutes_ClozeWithoutMarkers_400(t *testing.T) {
 	}
 
 	ntBody := url.Values{}
-	ntBody.Set("name", "Cloze")
+	ntBody.Set("name", "Cloze2")
 	ntBody.Set("css", "")
 	ntBody.Add("is_cloze", "on")
 	ntBody.Add("field_name[]", "Text")
@@ -148,7 +148,7 @@ func TestAIImportRoutes_ClozeWithoutMarkers_400(t *testing.T) {
 		t.Fatalf("create cloze note type status = %d: %s", w.Code, w.Body.String())
 	}
 	var noteTypeID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE is_cloze`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Cloze2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup cloze note type: %v", err)
 	}
 
@@ -174,7 +174,7 @@ func TestAIImportRoutes_AccessControl(t *testing.T) {
 	if err := tx.QueryRow(ctx, `SELECT id FROM decks LIMIT 1`).Scan(&deckID); err != nil {
 		t.Fatalf("lookup deck: %v", err)
 	}
-	if err := tx.QueryRow(ctx, `SELECT id FROM note_types LIMIT 1`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
 

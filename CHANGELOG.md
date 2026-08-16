@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.22] - 2026-08-15
+
+### Added
+- New users are seeded with stock **Basic** and **Cloze** note types on signup, matching Anki's
+  own out-of-the-box set, so a new user can create a note immediately instead of hand-building a
+  note type (and its `qfmt`/`afmt`) from scratch. Best-effort: a seeding failure is logged, never
+  blocks or fails signup itself ([#97](https://github.com/Jolls/enshu/issues/97))
 ## [0.1.21] - 2026-08-15
 
 ### Fixed

@@ -153,7 +153,7 @@ func TestReviewPage_StyleSrcUnsafeInlineIsLoadBearing(t *testing.T) {
 	deckPath := w.Header().Get("Location")
 
 	ntBody := url.Values{}
-	ntBody.Set("name", "Basic")
+	ntBody.Set("name", "Basic2")
 	ntBody.Set("css", ".card { color: red; }")
 	ntBody.Add("field_name[]", "Front")
 	ntBody.Add("field_name[]", "Back")
@@ -166,7 +166,7 @@ func TestReviewPage_StyleSrcUnsafeInlineIsLoadBearing(t *testing.T) {
 	}
 
 	var noteTypeID string
-	if err := tx.QueryRow(context.Background(), `SELECT id FROM note_types LIMIT 1`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(context.Background(), `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
 
