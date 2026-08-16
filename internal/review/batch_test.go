@@ -51,11 +51,14 @@ func gradeCards(t *testing.T, tx pgx.Tx, userID pgtype.UUID, reviewedAt time.Tim
 
 // insertDueCard gives cardID a review-state user_card_state row due inside window and last
 // reviewed the day before, so it is eligible today under every filter except the new-card cap
-// (which does not apply to it -- it already has a user_card_state row).
+// (which does not apply to it -- it already has a user_card_state row). Stability/difficulty are
+// non-zero: fsrs.PreviewAll rejects a non-New card below its minimum (schedule.go), which a
+// zero-value review-state row would otherwise trip.
 func insertDueCard(t *testing.T, tx pgx.Tx, userID, cardID pgtype.UUID, window StudyDay) {
 	t.Helper()
 	if _, err := tx.Exec(context.Background(),
-		`INSERT INTO user_card_state (user_id, card_id, due, state, reps, last_review) VALUES ($1, $2, $3, 2, 1, $4)`,
+		`INSERT INTO user_card_state (user_id, card_id, due, state, reps, stability, difficulty, last_review)
+		 VALUES ($1, $2, $3, 2, 1, 2.5, 5.0, $4)`,
 		userID, cardID, window.Start.Add(2*time.Hour), window.Start.Add(-24*time.Hour),
 	); err != nil {
 		t.Fatalf("insert due card: %v", err)
@@ -195,22 +198,27 @@ func TestBuildBatch_FreshStudyDayResets(t *testing.T) {
 		t.Fatalf("day1 refetch: got %d cards, want 0 (allowance exhausted)", len(batch1b.Cards))
 	}
 
+	// day2's fetch may legitimately also return some of the 20 day1 cards as due reviews (FSRS
+	// can schedule a first "Good" rating's next interval as soon as tomorrow) -- that's correct
+	// scheduling, not a cap concern. What resetting the allowance means is specifically that the
+	// 5 never-introduced cards are servable again as unseen.
 	day2 := testStudyDay(1)
 	now2 := day2.Start.Add(time.Hour)
 	batch2, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", day2, DefaultNewPerDay, Cursor{AtStart: true}, 30, now2)
 	if err != nil {
 		t.Fatalf("BuildBatch day2: %v", err)
 	}
-	if len(batch2.Cards) != 5 {
-		t.Fatalf("day2: got %d cards, want 5 (the remaining unseen cards)", len(batch2.Cards))
-	}
+	unseenDay2 := map[pgtype.UUID]bool{}
 	for _, c := range batch2.Cards {
-		if !c.Unseen {
-			t.Errorf("day2: card %s unseen=false, want true", c.CardID.String())
+		if c.Unseen {
+			unseenDay2[c.CardID] = true
+			if served[c.CardID] {
+				t.Errorf("day2: card %s was already introduced on day1 but reappeared as unseen", c.CardID.String())
+			}
 		}
-		if served[c.CardID] {
-			t.Errorf("day2: card %s was already introduced on day1", c.CardID.String())
-		}
+	}
+	if len(unseenDay2) != 5 {
+		t.Errorf("day2: got %d unseen cards, want 5 (the remaining never-introduced cards)", len(unseenDay2))
 	}
 }
 
