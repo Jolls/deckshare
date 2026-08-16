@@ -11,6 +11,106 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countQueueForDeck = `-- name: CountQueueForDeck :one
+SELECT count(*) FILTER (WHERE ucs.user_id IS NULL)   AS new_count,
+       count(*) FILTER (WHERE ucs.state IN (1, 3))   AS learning_count,
+       count(*) FILTER (WHERE ucs.state = 2)         AS due_count
+FROM cards c
+JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $1
+                   AND da.can_view AND da.can_study
+LEFT JOIN user_card_state ucs ON ucs.user_id = $1 AND ucs.card_id = c.id
+WHERE c.deck_id = $2
+  AND NOT COALESCE(ucs.suspended, false)
+  AND (ucs.buried_until IS NULL OR ucs.buried_until <= ($3::timestamptz)::date)
+  AND (ucs.due IS NULL OR ucs.due < $4::timestamptz)
+  AND (ucs.last_review IS NULL OR ucs.last_review < $3::timestamptz)
+`
+
+type CountQueueForDeckParams struct {
+	UserID        pgtype.UUID        `json:"user_id"`
+	DeckID        pgtype.UUID        `json:"deck_id"`
+	StudyDayStart pgtype.Timestamptz `json:"study_day_start"`
+	StudyDayEnd   pgtype.Timestamptz `json:"study_day_end"`
+}
+
+type CountQueueForDeckRow struct {
+	NewCount      int64 `json:"new_count"`
+	LearningCount int64 `json:"learning_count"`
+	DueCount      int64 `json:"due_count"`
+}
+
+// Queue summary (New/Learning/Due) for one deck's study page (#80). Same eligibility filters as
+// ListDueCardsForStudy -- suspended, buried, due-before-window-end, not already reviewed today --
+// so the counts agree with what /decks/{id}/review actually serves. Learning folds together
+// state 1 (learning) and 3 (relearning); Due is state 2 (review).
+func (q *Queries) CountQueueForDeck(ctx context.Context, arg CountQueueForDeckParams) (CountQueueForDeckRow, error) {
+	row := q.db.QueryRow(ctx, countQueueForDeck,
+		arg.UserID,
+		arg.DeckID,
+		arg.StudyDayStart,
+		arg.StudyDayEnd,
+	)
+	var i CountQueueForDeckRow
+	err := row.Scan(&i.NewCount, &i.LearningCount, &i.DueCount)
+	return i, err
+}
+
+const countQueueForUser = `-- name: CountQueueForUser :many
+SELECT c.deck_id                                     AS deck_id,
+       count(*) FILTER (WHERE ucs.user_id IS NULL)   AS new_count,
+       count(*) FILTER (WHERE ucs.state IN (1, 3))   AS learning_count,
+       count(*) FILTER (WHERE ucs.state = 2)         AS due_count
+FROM cards c
+JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $1
+                   AND da.can_view AND da.can_study
+LEFT JOIN user_card_state ucs ON ucs.user_id = $1 AND ucs.card_id = c.id
+WHERE NOT COALESCE(ucs.suspended, false)
+  AND (ucs.buried_until IS NULL OR ucs.buried_until <= ($2::timestamptz)::date)
+  AND (ucs.due IS NULL OR ucs.due < $3::timestamptz)
+  AND (ucs.last_review IS NULL OR ucs.last_review < $2::timestamptz)
+GROUP BY c.deck_id
+`
+
+type CountQueueForUserParams struct {
+	UserID        pgtype.UUID        `json:"user_id"`
+	StudyDayStart pgtype.Timestamptz `json:"study_day_start"`
+	StudyDayEnd   pgtype.Timestamptz `json:"study_day_end"`
+}
+
+type CountQueueForUserRow struct {
+	DeckID        pgtype.UUID `json:"deck_id"`
+	NewCount      int64       `json:"new_count"`
+	LearningCount int64       `json:"learning_count"`
+	DueCount      int64       `json:"due_count"`
+}
+
+// Same queue summary, grouped by deck, for the /decks list (#80). One query for every deck the
+// user can view rather than one CountQueueForDeck call per row.
+func (q *Queries) CountQueueForUser(ctx context.Context, arg CountQueueForUserParams) ([]CountQueueForUserRow, error) {
+	rows, err := q.db.Query(ctx, countQueueForUser, arg.UserID, arg.StudyDayStart, arg.StudyDayEnd)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountQueueForUserRow
+	for rows.Next() {
+		var i CountQueueForUserRow
+		if err := rows.Scan(
+			&i.DeckID,
+			&i.NewCount,
+			&i.LearningCount,
+			&i.DueCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getDeckForStudy = `-- name: GetDeckForStudy :one
 SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id
 FROM decks d

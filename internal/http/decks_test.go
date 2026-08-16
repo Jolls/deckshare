@@ -3,8 +3,10 @@ package http
 import (
 	"context"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Jolls/enshu/internal/auth"
 )
@@ -136,6 +138,103 @@ func TestDeckFsrsRoute_DeniesWithoutCanStudy(t *testing.T) {
 	}
 	if n := countRows(t, tx, `SELECT count(*) FROM user_fsrs_params WHERE user_id = $1 AND deck_id = $2`, viewerID, deckID); n != 0 {
 		t.Error("no row should have been written without can_study")
+	}
+}
+
+// The queue summary (#80) counts New, Learning, and Due using the same eligibility rules as the
+// review queue itself (reviews.sql). state/due/last_review are set directly rather than through
+// grading, since a card graded today is deliberately excluded from today's queue (same-day
+// last_review guard) and would not exercise the Learning/Due buckets otherwise.
+func TestDeckQueueCounts(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	clock := time.Date(2026, 3, 2, 12, 0, 0, 0, time.UTC) // study day: 03-02 04:00Z .. 03-03 04:00Z
+	handler, a := newTestHandler(t, tx, auth.Config{}, func() time.Time { return clock })
+	email := testEmail()
+	cookie := loginCookie(t, tx, a, email, "correct-horse-battery")
+
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	var noteTypeID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types LIMIT 1`).Scan(&noteTypeID); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+	addNotes(t, handler, cookie, deckPath, noteTypeID, 3)
+
+	rows, err := tx.Query(ctx, `SELECT id FROM cards WHERE deck_id = $1 ORDER BY id`, deckID)
+	if err != nil {
+		t.Fatalf("list cards: %v", err)
+	}
+	var cardIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan card id: %v", err)
+		}
+		cardIDs = append(cardIDs, id)
+	}
+	rows.Close()
+	if len(cardIDs) != 3 {
+		t.Fatalf("got %d cards, want 3", len(cardIDs))
+	}
+	id := userID(t, ctx, tx, email)
+
+	// cardIDs[0] stays unseen (New). cardIDs[1] is mid-learning from yesterday, due now.
+	// cardIDs[2] is a review card from yesterday, due now.
+	yesterday := clock.Add(-24 * time.Hour)
+	if _, err := tx.Exec(ctx, `INSERT INTO user_card_state (user_id, card_id, due, state, last_review)
+		VALUES ($1, $2, $3, 1, $4)`, id, cardIDs[1], clock, yesterday); err != nil {
+		t.Fatalf("insert learning state: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO user_card_state (user_id, card_id, due, state, last_review)
+		VALUES ($1, $2, $3, 2, $4)`, id, cardIDs[2], clock, yesterday); err != nil {
+		t.Fatalf("insert review state: %v", err)
+	}
+
+	w := doRequest(handler, "GET", deckPath, "", cookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET %s status = %d", deckPath, w.Code)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "New: 1") || !strings.Contains(body, "Learning: 1") || !strings.Contains(body, "Due: 1") {
+		t.Errorf("deck page body missing expected queue summary:\n%s", body)
+	}
+
+	w = doRequest(handler, "GET", "/decks", "", cookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /decks status = %d", w.Code)
+	}
+	body := w.Body.String()
+	rowRe := regexp.MustCompile(`<td>3</td>\s*<td>1</td>\s*<td>1</td>\s*<td>1</td>`)
+	if !rowRe.MatchString(body) {
+		t.Errorf("/decks body missing expected Cards/New/Learning/Due row:\n%s", body)
+	}
+}
+
+// A collaborator with can_view but not can_study must not see queue counts for a deck they
+// cannot actually study (#80) -- the same collapse-to-nothing rule the review queue itself
+// applies (ListDueCardsForStudy requires can_view AND can_study).
+func TestDeckQueueCounts_RequiresCanStudy(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	ownerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	viewerEmail := testEmail()
+	viewerCookie := loginCookie(t, tx, a, viewerEmail, "correct-horse-battery")
+	viewerID := userID(t, ctx, tx, viewerEmail)
+
+	deckID, _ := setupOneCard(t, tx, handler, ownerCookie)
+	deckPath := "/decks/" + deckID
+
+	if _, err := tx.Exec(ctx, `INSERT INTO deck_access (deck_id, user_id, can_view) VALUES ($1, $2, true)`, deckID, viewerID); err != nil {
+		t.Fatalf("grant viewer access: %v", err)
+	}
+
+	w := doRequest(handler, "GET", deckPath, "", viewerCookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET %s status = %d", deckPath, w.Code)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "New: 0") || !strings.Contains(body, "Learning: 0") || !strings.Contains(body, "Due: 0") {
+		t.Errorf("view-only collaborator should see zero queue counts, got:\n%s", body)
 	}
 }
 

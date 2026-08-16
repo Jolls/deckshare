@@ -71,6 +71,41 @@ WHERE c.deck_id = sqlc.arg(deck_id)
 ORDER BY queue_key, c.id
 LIMIT sqlc.arg(batch_size);
 
+-- Queue summary (New/Learning/Due) for one deck's study page (#80). Same eligibility filters as
+-- ListDueCardsForStudy -- suspended, buried, due-before-window-end, not already reviewed today --
+-- so the counts agree with what /decks/{id}/review actually serves. Learning folds together
+-- state 1 (learning) and 3 (relearning); Due is state 2 (review).
+-- name: CountQueueForDeck :one
+SELECT count(*) FILTER (WHERE ucs.user_id IS NULL)   AS new_count,
+       count(*) FILTER (WHERE ucs.state IN (1, 3))   AS learning_count,
+       count(*) FILTER (WHERE ucs.state = 2)         AS due_count
+FROM cards c
+JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = sqlc.arg(user_id)
+                   AND da.can_view AND da.can_study
+LEFT JOIN user_card_state ucs ON ucs.user_id = sqlc.arg(user_id) AND ucs.card_id = c.id
+WHERE c.deck_id = sqlc.arg(deck_id)
+  AND NOT COALESCE(ucs.suspended, false)
+  AND (ucs.buried_until IS NULL OR ucs.buried_until <= (sqlc.arg(study_day_start)::timestamptz)::date)
+  AND (ucs.due IS NULL OR ucs.due < sqlc.arg(study_day_end)::timestamptz)
+  AND (ucs.last_review IS NULL OR ucs.last_review < sqlc.arg(study_day_start)::timestamptz);
+
+-- Same queue summary, grouped by deck, for the /decks list (#80). One query for every deck the
+-- user can view rather than one CountQueueForDeck call per row.
+-- name: CountQueueForUser :many
+SELECT c.deck_id                                     AS deck_id,
+       count(*) FILTER (WHERE ucs.user_id IS NULL)   AS new_count,
+       count(*) FILTER (WHERE ucs.state IN (1, 3))   AS learning_count,
+       count(*) FILTER (WHERE ucs.state = 2)         AS due_count
+FROM cards c
+JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = sqlc.arg(user_id)
+                   AND da.can_view AND da.can_study
+LEFT JOIN user_card_state ucs ON ucs.user_id = sqlc.arg(user_id) AND ucs.card_id = c.id
+WHERE NOT COALESCE(ucs.suspended, false)
+  AND (ucs.buried_until IS NULL OR ucs.buried_until <= (sqlc.arg(study_day_start)::timestamptz)::date)
+  AND (ucs.due IS NULL OR ucs.due < sqlc.arg(study_day_end)::timestamptz)
+  AND (ucs.last_review IS NULL OR ucs.last_review < sqlc.arg(study_day_start)::timestamptz)
+GROUP BY c.deck_id;
+
 -- Note-type CSS for every card in the deck: sanitised once per page, never per card (#55's doc
 -- comment), so a refilled card can never arrive before its styles.
 -- name: ListNoteTypeCSSForDeck :many

@@ -31,7 +31,7 @@ func NewHandler(pool *pgxpool.Pool, a *auth.Service, blobs *media.Store) (http.H
 	registerStaticRoutes(mux)
 	registerAuthRoutes(mux, a, pages)
 	registerSettingsRoutes(mux, a, pool, pages)
-	registerDeckRoutes(mux, pool, pages)
+	registerDeckRoutes(mux, pool, pages, time.Now)
 	registerNoteTypeRoutes(mux, pool, pages)
 	registerNoteRoutes(mux, pool, pages)
 	registerReviewRoutes(mux, pool, pages, fragments, time.Now)

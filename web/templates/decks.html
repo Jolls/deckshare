@@ -5,13 +5,17 @@
 {{if .Decks}}
 <table>
     <thead>
-        <tr><th>Name</th><th>Cards</th><th></th></tr>
+        <tr><th>Name</th><th>Cards</th><th>New</th><th>Learning</th><th>Due</th><th></th></tr>
     </thead>
     <tbody>
         {{range .Decks}}
+        {{$counts := index $.Counts .ID}}
         <tr>
             <td><a href="/decks/{{.ID}}">{{.Name}}</a></td>
             <td>{{.CardCount}}</td>
+            <td>{{$counts.New}}</td>
+            <td>{{$counts.Learning}}</td>
+            <td>{{$counts.Due}}</td>
             <td><a href="/decks/{{.ID}}/edit">Edit</a></td>
         </tr>
         {{end}}

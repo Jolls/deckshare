@@ -17,6 +17,14 @@ type Querier interface {
 	CountDeckAccessHolders(ctx context.Context, deckID pgtype.UUID) (CountDeckAccessHoldersRow, error)
 	CountDeckContents(ctx context.Context, arg CountDeckContentsParams) (CountDeckContentsRow, error)
 	CountNotesOfNoteType(ctx context.Context, noteTypeID pgtype.UUID) (int64, error)
+	// Queue summary (New/Learning/Due) for one deck's study page (#80). Same eligibility filters as
+	// ListDueCardsForStudy -- suspended, buried, due-before-window-end, not already reviewed today --
+	// so the counts agree with what /decks/{id}/review actually serves. Learning folds together
+	// state 1 (learning) and 3 (relearning); Due is state 2 (review).
+	CountQueueForDeck(ctx context.Context, arg CountQueueForDeckParams) (CountQueueForDeckRow, error)
+	// Same queue summary, grouped by deck, for the /decks list (#80). One query for every deck the
+	// user can view rather than one CountQueueForDeck call per row.
+	CountQueueForUser(ctx context.Context, arg CountQueueForUserParams) ([]CountQueueForUserRow, error)
 	// Called once per card in the create set (§0.3's "create" batch is small -- at most one row
 	// per template/cloze ordinal) rather than as a single multi-row statement: sqlc's query
 	// analyzer cannot resolve a two-array unnest(...) without a live database catalog.

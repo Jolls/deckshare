@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.19] - 2026-08-15
+
+### Added
+- `/decks` and `/decks/{id}` show a New/Learning/Due queue summary, using the same eligibility
+  rules and `can_study` access check as the review queue itself
+  ([#80](https://github.com/Jolls/enshu/issues/80))
+
 ## [0.1.18] - 2026-08-15
 
 ### Fixed

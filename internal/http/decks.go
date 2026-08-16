@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -17,15 +18,41 @@ import (
 	"github.com/Jolls/enshu/internal/review"
 )
 
-func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]*template.Template) {
+// queueCounts is the New/Learning/Due summary shown on the decks list and the deck page (#80).
+type queueCounts struct {
+	New      int64
+	Learning int64
+	Due      int64
+}
+
+func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]*template.Template, now func() time.Time) {
 	mux.Handle("GET /decks", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, _ := auth.UserFromContext(r.Context())
-		decks, err := db.New(store).ListDecksForUser(r.Context(), user.ID)
+		q := db.New(store)
+		decks, err := q.ListDecksForUser(r.Context(), user.ID)
 		if err != nil {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
-		render(w, pages["decks"], http.StatusOK, map[string]any{"User": user, "Decks": decks})
+		window, err := studyDayWindow(r.Context(), q, user.ID, now())
+		if err != nil {
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		rows, err := q.CountQueueForUser(r.Context(), db.CountQueueForUserParams{
+			UserID:        user.ID,
+			StudyDayStart: pgtype.Timestamptz{Time: window.Start, Valid: true},
+			StudyDayEnd:   pgtype.Timestamptz{Time: window.End, Valid: true},
+		})
+		if err != nil {
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		counts := make(map[pgtype.UUID]queueCounts, len(rows))
+		for _, row := range rows {
+			counts[row.DeckID] = queueCounts{New: row.NewCount, Learning: row.LearningCount, Due: row.DueCount}
+		}
+		render(w, pages["decks"], http.StatusOK, map[string]any{"User": user, "Decks": decks, "Counts": counts})
 	})))
 
 	mux.Handle("GET /decks/new", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -107,9 +134,25 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
+		window, err := studyDayWindow(r.Context(), q, user.ID, now())
+		if err != nil {
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		queueRow, err := q.CountQueueForDeck(r.Context(), db.CountQueueForDeckParams{
+			UserID:        user.ID,
+			DeckID:        deckID,
+			StudyDayStart: pgtype.Timestamptz{Time: window.Start, Valid: true},
+			StudyDayEnd:   pgtype.Timestamptz{Time: window.End, Valid: true},
+		})
+		if err != nil {
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
 		render(w, pages["deck"], http.StatusOK, map[string]any{
 			"User": user, "Deck": deck, "Counts": counts, "Notes": notes,
 			"DesiredRetention": params.DesiredRetention(),
+			"Queue":            queueCounts{New: queueRow.NewCount, Learning: queueRow.LearningCount, Due: queueRow.DueCount},
 		})
 	})))
 
