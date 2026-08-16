@@ -1,9 +1,13 @@
 package auth
 
 import (
+	"bytes"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -89,6 +93,30 @@ func TestMiddleware_CSRFBlocksBeforeHandler(t *testing.T) {
 	}
 	if called {
 		t.Error("handler should not have been called")
+	}
+}
+
+func TestMiddleware_CSRFRejectionIsLogged(t *testing.T) {
+	s := &Service{cfg: Config{}}
+	handler := s.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not have been called")
+	}))
+
+	r := httptest.NewRequest(http.MethodPost, "http://example.com/x", nil)
+	r.Host = "example.com"
+	r.Header.Set("Origin", "https://evil.com")
+	w := httptest.NewRecorder()
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	handler.ServeHTTP(w, r)
+
+	got := buf.String()
+	for _, want := range []string{"POST", "/x", `Origin="https://evil.com"`, `Host="example.com"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log output %q missing %q", got, want)
+		}
 	}
 }
 

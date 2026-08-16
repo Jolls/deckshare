@@ -1,9 +1,10 @@
 // The reviewer's in-session queue (architecture.md §6). Owns everything that doesn't touch the
 // network: which card is current, the local learning-steps requeue heuristic, unseen-count
-// tracking, and revealing/advancing. It dispatches plain DOM events (refill-needed, flush-events)
-// that htmx listens for; htmx owns the two network-touching elements (#review-refill,
-// #review-sender). Grading never awaits anything and never computes an FSRS value -- it looks up
-// a precomputed branch already present on the hidden card node (CLAUDE.md §2.6, §2.7).
+// tracking, and revealing/advancing. It dispatches a refill-needed DOM event that htmx listens
+// for on #review-refill; the grade batch POST is sent directly with fetch() (not through htmx --
+// see flush()'s comment for why). Grading never awaits anything and never computes an FSRS
+// value -- it looks up a precomputed branch already present on the hidden card node
+// (CLAUDE.md §2.6, §2.7).
 (function () {
   'use strict';
 
@@ -36,7 +37,6 @@
 
     document.addEventListener('keydown', onKeydown);
     document.body.addEventListener('htmx:afterSwap', onAfterSwap);
-    document.body.addEventListener('htmx:afterRequest', onAfterRequest);
     var stage = document.getElementById('review-stage');
     if (stage) stage.addEventListener('click', onStageClick);
     window.addEventListener('pagehide', flushOnUnload);
@@ -287,18 +287,37 @@
     }, delay);
   }
 
+  // Sent with a direct fetch(), not through htmx: htmx's json-enc extension re-evaluates
+  // hx-vals a second time to recover typed values (its own base parameter pass flattens an
+  // array of objects to FormData "[object Object]" entries first), and when that array has 2+
+  // events, its same-key merge logic pushes the array into itself, throwing inside
+  // encodeParameters -- htmx catches that silently and falls back to its default
+  // (non-JSON) encoder, so the batch is sent malformed. See docs/plans/57-csp-reviewer.md
+  // §Open question 1 (predicted this) and docs/plans/99-grading-persistence.md (confirmed it).
   function flush() {
     if (state.pending.length === 0 || state.inFlight) return;
     state.lastFlushAt = Date.now();
-    document.body.dispatchEvent(new CustomEvent('flush-events'));
+    var events = takePending();
+
+    fetch('/api/reviews/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ events: events }),
+    }).then(function (res) {
+      return res.text().then(function (text) {
+        onBatchSettled(events, res.ok, res.status, text);
+      });
+    }, function () {
+      onBatchSettled(events, false, 0, null); // fetch itself rejected: network error
+    });
   }
 
-  // pagehide's htmx POST is not reliable: browsers routinely abort an in-flight or newly-started
+  // pagehide's fetch is not reliable: browsers routinely abort an in-flight or newly-started
   // async request once the page starts unloading, which would silently drop the session's last
   // batch of grades (architecture.md §6 accepts losing unsent events to a hard crash, but not to
   // an ordinary tab close/navigation that this can catch). navigator.sendBeacon is fire-and-forget
   // and guaranteed by the browser to complete after the page is gone; there is no response to
-  // react to, so it bypasses htmx and goes straight to takePending().
+  // react to, so it goes straight to takePending() instead of through flush().
   function flushOnUnload() {
     if (state.pending.length === 0 || !navigator.sendBeacon) {
       flush();
@@ -312,7 +331,9 @@
     }
   }
 
-  // Called synchronously by htmx's hx-vals `js:` expression when #review-sender issues its POST.
+  // Drains and returns state.pending, stashing the result in state.inFlight so a failure can put
+  // it back. Called exactly once per flush cycle (flush() itself, or flushOnUnload's sendBeacon
+  // fallback -- never both, since each checks state.pending/state.inFlight first).
   function takePending() {
     if (state.pending.length === 0) return [];
     state.inFlight = state.pending;
@@ -320,21 +341,19 @@
     return state.inFlight;
   }
 
-  function onAfterRequest(evt) {
-    if (!evt.target || evt.target.id !== 'review-sender') return;
-    var sent = state.inFlight;
+  function onBatchSettled(sent, successful, status, text) {
     state.inFlight = null;
-    if (!sent) return;
-    var xhr = evt.detail.xhr;
 
-    if (evt.detail.successful) {
+    if (successful) {
       state.backoffIndex = 0;
+      clearDeliveryError();
       var results = [];
-      try { results = JSON.parse(xhr.responseText).results || []; } catch (e) { /* malformed body: nothing to reconcile */ }
+      try { results = JSON.parse(text).results || []; } catch (e) { /* malformed body: nothing to reconcile */ }
       for (var i = 0; i < results.length; i++) {
         var r = results[i];
         if (r.status === 'rejected' || r.status === 'forbidden') {
           console.error('enshu: event ' + r.id + ' ' + r.status + ', dropped permanently');
+          showDeliveryError('A grade could not be saved (' + r.status + '). Check your device clock or deck access.');
           continue;
         }
         if (r.after) applyAfter(r.cardId, r.after);
@@ -343,9 +362,10 @@
       return;
     }
 
-    if (xhr.status >= 400 && xhr.status < 500) {
+    if (status >= 400 && status < 500) {
       // A malformed batch (400) can never succeed by retrying it unchanged -- drop.
-      console.error('enshu: batch rejected (' + xhr.status + '), dropping ' + sent.length + ' event(s)');
+      console.error('enshu: batch rejected (' + status + '), dropping ' + sent.length + ' event(s)');
+      showDeliveryError('Some grades failed to save (status ' + status + '). Reload the page and try again.');
       return;
     }
 
@@ -353,9 +373,17 @@
     state.pending = sent.concat(state.pending);
     var delaySec = BACKOFF_SECONDS[Math.min(state.backoffIndex, BACKOFF_SECONDS.length - 1)];
     state.backoffIndex++;
-    setTimeout(function () {
-      document.body.dispatchEvent(new CustomEvent('flush-events'));
-    }, delaySec * 1000);
+    setTimeout(flush, delaySec * 1000);
+  }
+
+  function showDeliveryError(msg) {
+    var el = document.getElementById('review-error');
+    if (el) { el.textContent = msg; el.hidden = false; }
+  }
+
+  function clearDeliveryError() {
+    var el = document.getElementById('review-error');
+    if (el) el.hidden = true;
   }
 
   // Cosmetic reconciliation only: the card is already graded and off-screen by the time its

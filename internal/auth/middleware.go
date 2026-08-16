@@ -29,6 +29,7 @@ func UserFromContext(ctx context.Context) (db.User, bool) {
 func (s *Service) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isStateChanging(r.Method) && !s.checkOrigin(r) {
+			log.Printf("csrf: rejected %s %s (Origin=%q Host=%q)", r.Method, r.URL.Path, r.Header.Get("Origin"), r.Host)
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
