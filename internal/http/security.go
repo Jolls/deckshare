@@ -18,12 +18,13 @@ import "net/http"
 //	script-src 'self'       All JS is served from /static/ (web/templates/layout.html,
 //	                        review.html). No template has an inline <script>, an inline event
 //	                        handler, or a javascript: URL.
-//	          'unsafe-eval' Forced by htmx 2.0.10: hx-vals="js:{...}" on #review-refill and
-//	                        #review-sender (web/templates/review.html) is evaluated through the
-//	                        Function constructor, which 'unsafe-eval' governs. Without it htmx
-//	                        raises htmx:evalDisallowedError and both refill and grade-send break.
-//	                        This is the one source we want gone and cannot remove yet --
-//	                        docs/plans/57-csp-reviewer.md, Open question 1.
+//	          'unsafe-eval' Forced by htmx 2.0.10: hx-vals="js:{...}" on #review-refill
+//	                        (web/templates/review.html) is evaluated through the Function
+//	                        constructor, which 'unsafe-eval' governs. Without it htmx raises
+//	                        htmx:evalDisallowedError and refill breaks. This is the one source we
+//	                        want gone and cannot remove yet -- docs/plans/57-csp-reviewer.md, Open
+//	                        question 1. The grade-send POST no longer needs it: #99 moved it off
+//	                        htmx (hx-vals/json-enc) to a direct fetch() in review.js.
 //	style-src 'self'        For a stylesheet vendored under /static/ later.
 //	          'unsafe-inline'  Forced, and a nonce would be strictly worse. Sanitised card HTML
 //	                        carries inline style="" attributes on arbitrary elements
@@ -47,7 +48,7 @@ import "net/http"
 //	        data:           Pico's own form-control icons are data:image/svg+xml URIs. Safe: an
 //	                        SVG loaded through <img>/background-image is script-disabled by spec,
 //	                        and sanitise.go's scheme allowlist keeps data: off card <img src>.
-//	connect-src 'self'      htmx's XHR to /api/reviews/{next,batch} and review.js's
+//	connect-src 'self'      htmx's XHR to /api/reviews/next, review.js's fetch() and
 //	                        navigator.sendBeacon to /api/reviews/batch (sendBeacon is governed by
 //	                        connect-src -- omitting this silently breaks grade delivery).
 //	form-action 'self'      Every form in web/templates/ posts same-origin. <form> is not in

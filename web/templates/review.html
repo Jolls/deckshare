@@ -4,6 +4,8 @@
 <h1>{{.Deck.Name}}</h1>
 <p><a href="/decks/{{.Deck.ID}}">Back to deck</a></p>
 
+<p id="review-error" hidden></p>
+
 <section id="review-stage" hidden>
   <div class="card-question"></div>
   <div class="card-answer" hidden></div>
@@ -26,13 +28,6 @@
      hx-vals='js:{deck: enshuReview.deckId(), cursor: enshuReview.cursor()}'
      hx-target="#review-queue"
      hx-swap="beforeend"></div>
-
-<div id="review-sender" hidden
-     hx-post="/api/reviews/batch"
-     hx-ext="json-enc"
-     hx-trigger="flush-events from:body"
-     hx-vals='js:{events: enshuReview.takePending()}'
-     hx-swap="none"></div>
 
 <section id="review-done" hidden>
   <p>No more cards due. Nice work.</p>

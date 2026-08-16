@@ -42,7 +42,7 @@ func TestContentSecurityPolicy_Directives(t *testing.T) {
 		{"script-src", []string{"'self'", "'unsafe-eval'"}, "all JS is served from /static/; 'unsafe-eval' is htmx's hx-vals js: Function() -- plan Open question 1"},
 		{"style-src", []string{"'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"}, `card HTML carries inline style="" attributes that cannot take a nonce; layout.html loads Pico from jsDelivr`},
 		{"img-src", []string{"'self'", "data:"}, "card media is same-origin only; data: is Pico's own form-control icons"},
-		{"connect-src", []string{"'self'"}, "htmx XHR + review.js's navigator.sendBeacon to /api/reviews/*"},
+		{"connect-src", []string{"'self'"}, "htmx XHR to /api/reviews/next + review.js's fetch()/navigator.sendBeacon to /api/reviews/batch"},
 		{"form-action", []string{"'self'"}, "every form in web/templates/ posts same-origin"},
 		{"frame-ancestors", []string{"'none'"}, "clickjacking against the rating buttons -- internal/render/css.go"},
 		{"base-uri", []string{"'none'"}, "a <base> would repoint every relative card-media URL at once"},
