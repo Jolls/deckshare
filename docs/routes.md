@@ -75,7 +75,8 @@ its owner's decks.
 | POST | `/note-types/{id}/edit` | owns row | Update name/css/field-and-template renames, append new fields/templates. **Removing or reordering an existing field or template is refused with 409 while the note type has any notes** — `notes.fields` is a positional array, and a template removal would delete cards. Free while the note type has zero notes. Follow-up issue: field/template removal-and-reorder with positional note remap |
 | POST | `/note-types/{id}/delete` | owns row | Delete — blocked while any note references it, enforced by `notes.note_type_id ON DELETE RESTRICT`; `fields` and `templates` cascade |
 
-**Open question — not a route table decision, needs a call before Phase 2:** rendering a note
+**Open question — not a route table decision, needs a call before Milestone 2's deck sharing:**
+rendering a note
 in a shared deck requires reading its note type's fields/templates, but `note_types` has no
 `deck_access`-style row — only `owner_id`. A user with only `can_view`/`can_study` on a deck
 whose notes use someone else's note type currently has no path to read it. Either note-type
@@ -119,10 +120,10 @@ duplicate the pseudocode.
 
 ---
 
-## Access — `access.go` (Phase 2)
+## Access — `access.go` (Milestone 2)
 
-Schema (`deck_access`) exists from Phase 1 step 2 even though nothing grants a second user
-access until Phase 2 (architecture.md §11).
+Schema (`deck_access`) exists from Milestone 1 step 2 even though nothing grants a second user
+access until Milestone 2 (architecture.md §11).
 
 | Method | Path | Permission | Purpose |
 |---|---|---|---|
@@ -163,8 +164,8 @@ exempts nobody from the guard.
 
 Synchronous upload is a Simplicity First choice for MVP — no job queue. Revisit if a large
 collection makes the request time out; nothing here blocks adding an async path later.
-Full-collection `.colpkg` export isn't scoped yet — not required by any Phase 1 step, open if
-demand shows up.
+Full-collection `.colpkg` export isn't scoped yet — not required by any Milestone 1 step;
+Milestone 2 scope (architecture.md §11).
 
 ---
 

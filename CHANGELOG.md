@@ -10,6 +10,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   own out-of-the-box set, so a new user can create a note immediately instead of hand-building a
   note type (and its `qfmt`/`afmt`) from scratch. Best-effort: a seeding failure is logged, never
   blocks or fails signup itself ([#97](https://github.com/Jolls/enshu/issues/97))
+## [0.1.21] - 2026-08-15
+
+### Fixed
+- Grading a card in the reviewer never persisted: the batch POST was sent through htmx's
+  `hx-vals`/`json-enc` mechanism, which re-evaluates the vals expression a second time to recover
+  typed values and, for a 2+ event batch, merges repeated array entries by pushing the array into
+  itself — a circular reference that made `JSON.stringify` throw inside htmx's extension, silently
+  caught, and fell back to a malformed non-JSON body the server correctly rejected. The batch send
+  is now a direct `fetch()` in `review.js`, bypassing htmx's parameter pipeline entirely; the
+  now-unused `json-enc` vendored extension was removed. Also: review grading failures (a
+  rejected/forbidden result, or the batch POST itself failing) are now shown to the user in the
+  reviewer instead of only logged to the browser console, and CSRF/Origin rejections are now
+  logged server-side — a session's worth of grades could previously be lost with no visible
+  failure and no server-side trace to diagnose it from
+  ([#99](https://github.com/Jolls/enshu/issues/99))
 
 ## [0.1.20] - 2026-08-15
 

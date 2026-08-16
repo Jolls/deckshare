@@ -554,11 +554,12 @@ each item closes a specific attack, not a generic one:
 
 ## 11. Build order
 
-**Phase 1 — single-user core.** A complete product for one user; ship before anything else.
+**Milestone 1 — single-user core.** A complete product for one user; ship before anything else.
+Done.
 
 1. Scaffold: Go, Postgres, `sqlc`, CI running `go vet`/lint + unit tests.
 2. Schema §5 in full — *including* `deck_access` and the `user_id` in `user_card_state`,
-   even though Phase 1 has one user per deck. The columns are free now and structural later.
+   even though Milestone 1 has one user per deck. The columns are free now and structural later.
 3. Auth + accounts.
 4. `internal/fsrs/` (`go-fsrs` wrapper) + batch-preview/grade-time consistency tests
    (CLAUDE.md §10.2).
@@ -570,10 +571,30 @@ each item closes a specific attack, not a generic one:
 10. Per-user parameter optimisation — **deferred out of MVP** (§12). `review_log` accumulates
     from day one regardless (invariant §2.5), so this is purely additive whenever it's built.
 
-**Phase 2 — multiuser.** `deck_access` permissions enforced; co-authoring a deck while each author
-keeps a private review history; classroom cohorts with per-student retention, due counts, and
-lapse hotspots. The seam in CLAUDE.md §2.1 is what makes all of it possible, and §2.7 is what makes the
-per-student numbers worth showing.
+**Milestone 2 — LAN multiuser, hardened, plus migration and LLM cards.** Milestone 1 already
+leaves multiple accounts usable against one self-hosted instance on a LAN — but only in the
+AnkiWeb sense, hosting many separate collections (README "Why this exists"). Nothing yet lets
+one of those users actually *share* a deck with another. This milestone closes that gap and two
+adjacent ones, without reaching into the classroom layer:
+
+- **Deck sharing.** Build the `access.go` route group (routes.md "Access") — grant/revoke
+  `deck_access` rows. The query-layer enforcement has existed since Milestone 1 step 2
+  (CLAUDE.md §9), but nothing currently grants a second user a row, so it's never exercised
+  outside tests. Building it also forces the open note-type-read-authorisation call
+  (routes.md, "Note types") — a shared deck's notes reference note types that currently have no
+  `deck_access`-shaped read path.
+- **Desktop Anki migration, made faithful.** `.apkg`/`.colpkg` import already lands a collection
+  intact; two known fidelity gaps remain open (desired retention and new-card queue order both
+  silently diverge from the source collection on import), and full-collection `.colpkg` export
+  — the round trip back out — isn't scoped yet (routes.md, "Import / export").
+- **LLM-generated cards**, in the shape the "Explicitly not doing" bullet below already commits
+  to: a documented paste-in text format, not an API integration.
+
+**Milestone 3 — classroom.** Co-authoring a deck while each author keeps a private review
+history falls out of Milestone 2's `deck_access` mechanism directly (invariant §2.1) — no
+separate work item. What's left is the classroom-specific layer on top: cohorts (instructor
+assigns a deck to a group of students) and the instructor dashboard (per-student retention, due
+counts, lapse hotspots). §2.7 is what makes those per-student numbers trustworthy enough to show.
 
 **Explicitly not doing.** Each of these is a decision, not a backlog:
 
@@ -591,9 +612,9 @@ per-student numbers worth showing.
   concrete demands it.
 - **Native mobile apps.** The web app is the mobile story.
 - **Plugin system.**
-- **LLM-generated cards** as a feature that calls a model API. The acceptable shape is a
-  documented text format the user pastes, produced by whatever model they already use — no
-  API key, no per-token cost, no vendor in the dependency tree.
+- **LLM-generated cards** as a feature that calls a model API — no API key, no per-token cost,
+  no vendor in the dependency tree. The paste-in text-format shape is not cut by this bullet;
+  it's Milestone 2 scope, above.
 
 ---
 

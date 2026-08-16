@@ -112,10 +112,15 @@ pun died with the feature, and the romanisation reads cutesy), **Fukushu** (homo
 
 ## Roadmap
 
-- **Phase 1 — single-user core.** Accounts, decks, note types, the reviewer, local grading
-  against server-derived state, `.apkg` import/export. Complete product for one user.
-- **Phase 2 — multiuser.** Shared decks with per-user permissions, co-authoring with separate
-  histories, classroom cohorts and progress reporting.
+- **Milestone 1 — single-user core.** Done. Accounts, decks, note types, the reviewer, local
+  grading against server-derived state, `.apkg` import/export. Complete product for one user.
+- **Milestone 2 — LAN multiuser, migration, LLM cards.** Milestone 1 already gets several
+  accounts sharing one LAN instance, but not sharing a deck with each other: build
+  `deck_access` grant/revoke, tighten `.apkg`/`.colpkg` import/export fidelity against desktop
+  Anki, add LLM-generated cards via paste-in text format.
+- **Milestone 3 — classroom.** The layer on top: cohorts and progress reporting (per-student
+  retention, due counts, lapse hotspots). Co-authoring with separate histories falls out of
+  Milestone 2's sharing mechanism directly.
 
 Explicitly not doing — decisions, not backlog: sync protocol, full offline study, deck forking,
 a public deck directory, native mobile apps, a plugin system, and LLM-generated cards as a
