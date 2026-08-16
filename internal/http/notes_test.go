@@ -29,7 +29,7 @@ func TestNoteRoutes_GoldenPath(t *testing.T) {
 
 	deckPath := setupDeckAndNoteType(t, handler, cookie)
 	var noteTypeID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM note_types LIMIT 1`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
 
@@ -85,7 +85,7 @@ func TestNoteRoutes_ClozeGeneratesCardsByOrdinal(t *testing.T) {
 	deckPath := w.Header().Get("Location")
 
 	ntBody := url.Values{}
-	ntBody.Set("name", "Cloze")
+	ntBody.Set("name", "Cloze2")
 	ntBody.Set("css", "")
 	ntBody.Add("is_cloze", "on")
 	ntBody.Add("field_name[]", "Text")
@@ -97,7 +97,7 @@ func TestNoteRoutes_ClozeGeneratesCardsByOrdinal(t *testing.T) {
 		t.Fatalf("create cloze note type status = %d: %s", w.Code, w.Body.String())
 	}
 	var noteTypeID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE is_cloze`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Cloze2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup cloze note type: %v", err)
 	}
 
@@ -126,9 +126,9 @@ func TestNoteRoutes_FieldCountMismatch_400(t *testing.T) {
 	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
 	ctx := context.Background()
 
-	deckPath := setupDeckAndNoteType(t, handler, cookie) // note type "Basic" has 2 fields
+	deckPath := setupDeckAndNoteType(t, handler, cookie) // note type "Basic2" has 2 fields
 	var noteTypeID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM note_types LIMIT 1`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
 
@@ -163,7 +163,7 @@ func TestNoteRoutes_ClozeWithoutMarkers_400(t *testing.T) {
 	ntBody.Add("afmt[]", "{{cloze:Text}}")
 	doRequest(handler, "POST", "/note-types", ntBody.Encode(), cookie, "http://example.com")
 	var noteTypeID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE is_cloze`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Cloze2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup cloze note type: %v", err)
 	}
 
@@ -187,12 +187,12 @@ func TestNoteRoutes_CreateAgainstNoteTypeWithNoTemplates_400(t *testing.T) {
 
 	deckPath := setupDeckAndNoteType(t, handler, cookie)
 	var noteTypeID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM note_types LIMIT 1`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
 
 	editBody := url.Values{}
-	editBody.Set("name", "Basic")
+	editBody.Set("name", "Basic2")
 	editBody.Set("css", "")
 	editBody.Add("field_id[]", "")
 	editBody.Add("field_name[]", "Front")
@@ -251,7 +251,7 @@ func TestNoteRoutes_AccessControl(t *testing.T) {
 
 	deckPath := setupDeckAndNoteType(t, handler, ownerCookie)
 	var noteTypeID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM note_types LIMIT 1`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
 	noteBody := url.Values{}

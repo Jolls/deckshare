@@ -9,9 +9,12 @@ import (
 	"github.com/Jolls/enshu/internal/auth"
 )
 
+// newNoteTypeBody's name is "Basic2", not "Basic" -- every test user already has a seeded
+// "Basic" note type from signup (#97), so tests that create their own must use a name that
+// doesn't collide with it.
 func newNoteTypeBody() string {
 	v := url.Values{}
-	v.Set("name", "Basic")
+	v.Set("name", "Basic2")
 	v.Set("css", "")
 	v.Add("field_name[]", "Front")
 	v.Add("field_name[]", "Back")
@@ -36,13 +39,14 @@ func TestNoteTypeRoutes_GoldenPath(t *testing.T) {
 		t.Fatalf("GET /note-types status = %d, want 200", w.Code)
 	}
 
-	if countRows(t, tx, `SELECT count(*) FROM note_types WHERE name = 'Basic'`) != 1 {
-		t.Error("note type row should exist")
+	var noteTypeID string
+	if err := tx.QueryRow(context.Background(), `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
+		t.Fatalf("note type row should exist: %v", err)
 	}
-	if countRows(t, tx, `SELECT count(*) FROM fields`) != 2 {
+	if countRows(t, tx, `SELECT count(*) FROM fields WHERE note_type_id = $1`, noteTypeID) != 2 {
 		t.Error("both fields should have been created")
 	}
-	if countRows(t, tx, `SELECT count(*) FROM templates`) != 1 {
+	if countRows(t, tx, `SELECT count(*) FROM templates WHERE note_type_id = $1`, noteTypeID) != 1 {
 		t.Error("template should have been created")
 	}
 }
@@ -58,7 +62,7 @@ func TestNoteTypeEdit_StructureLockedWithNotes(t *testing.T) {
 	doRequest(handler, "POST", "/note-types", newNoteTypeBody(), cookie, "http://example.com")
 
 	var noteTypeID, frontFieldID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM note_types LIMIT 1`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
 	if err := tx.QueryRow(ctx, `SELECT id FROM fields WHERE note_type_id = $1 ORDER BY ordinal LIMIT 1`, noteTypeID).Scan(&frontFieldID); err != nil {
@@ -78,7 +82,7 @@ func TestNoteTypeEdit_StructureLockedWithNotes(t *testing.T) {
 
 	// Attempt to remove the "Back" field (omit its field_id[]/field_name[] pair) while a note exists.
 	editBody := url.Values{}
-	editBody.Set("name", "Basic")
+	editBody.Set("name", "Basic2")
 	editBody.Set("css", "")
 	editBody.Add("field_id[]", frontFieldID)
 	editBody.Add("field_name[]", "Front")
@@ -99,12 +103,12 @@ func TestNoteTypeEdit_MalformedFieldID_400(t *testing.T) {
 
 	doRequest(handler, "POST", "/note-types", newNoteTypeBody(), cookie, "http://example.com")
 	var noteTypeID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM note_types LIMIT 1`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
 
 	editBody := url.Values{}
-	editBody.Set("name", "Basic")
+	editBody.Set("name", "Basic2")
 	editBody.Set("css", "")
 	editBody.Add("field_id[]", "not-a-uuid")
 	editBody.Add("field_name[]", "Front")
@@ -140,7 +144,7 @@ func TestNoteTypeEdit_DuplicateName_409(t *testing.T) {
 	}
 
 	editBody := url.Values{}
-	editBody.Set("name", "Basic") // collides with the first note type
+	editBody.Set("name", "Basic2") // collides with the first note type
 	editBody.Set("css", "")
 	editBody.Add("field_id[]", soloFieldID)
 	editBody.Add("field_name[]", "Solo")
@@ -160,7 +164,7 @@ func TestNoteTypeEdit_InsertFieldInMiddle_LandsAtSubmittedPosition(t *testing.T)
 
 	doRequest(handler, "POST", "/note-types", newNoteTypeBody(), cookie, "http://example.com")
 	var noteTypeID, frontID, backID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM note_types LIMIT 1`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
 	if err := tx.QueryRow(ctx, `SELECT id FROM fields WHERE note_type_id = $1 AND name = 'Front'`, noteTypeID).Scan(&frontID); err != nil {
@@ -171,7 +175,7 @@ func TestNoteTypeEdit_InsertFieldInMiddle_LandsAtSubmittedPosition(t *testing.T)
 	}
 
 	editBody := url.Values{}
-	editBody.Set("name", "Basic")
+	editBody.Set("name", "Basic2")
 	editBody.Set("css", "")
 	editBody.Add("field_id[]", frontID)
 	editBody.Add("field_name[]", "Front")
@@ -218,7 +222,7 @@ func TestNoteTypeRoutes_AccessControl(t *testing.T) {
 
 	doRequest(handler, "POST", "/note-types", newNoteTypeBody(), ownerCookie, "http://example.com")
 	var noteTypeID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM note_types LIMIT 1`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
 
@@ -242,7 +246,7 @@ func TestNoteTypeEdit_RejectsSecondTemplateOnClozeNoteType(t *testing.T) {
 	ctx := context.Background()
 
 	ntBody := url.Values{}
-	ntBody.Set("name", "Cloze")
+	ntBody.Set("name", "Cloze2")
 	ntBody.Set("css", "")
 	ntBody.Add("is_cloze", "on")
 	ntBody.Add("field_name[]", "Text")
@@ -252,7 +256,7 @@ func TestNoteTypeEdit_RejectsSecondTemplateOnClozeNoteType(t *testing.T) {
 	doRequest(handler, "POST", "/note-types", ntBody.Encode(), cookie, "http://example.com")
 
 	var noteTypeID, templateID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE is_cloze`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Cloze2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup cloze note type: %v", err)
 	}
 	if err := tx.QueryRow(ctx, `SELECT id FROM templates WHERE note_type_id = $1`, noteTypeID).Scan(&templateID); err != nil {
@@ -260,7 +264,7 @@ func TestNoteTypeEdit_RejectsSecondTemplateOnClozeNoteType(t *testing.T) {
 	}
 
 	editBody := url.Values{}
-	editBody.Set("name", "Cloze")
+	editBody.Set("name", "Cloze2")
 	editBody.Set("css", "")
 	editBody.Add("template_id[]", templateID)
 	editBody.Add("template_name[]", "Cloze")

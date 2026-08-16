@@ -31,7 +31,7 @@ func newTestEventID() string {
 	return fmt.Sprintf("018f5b3e-0000-7000-8000-%012d", evSeq.Add(1))
 }
 
-// setupOneCard creates a deck, a "Basic" note type, and one note (one card) via the ordinary
+// setupOneCard creates a deck, a "Basic2" note type, and one note (one card) via the ordinary
 // handler routes, and returns the deck and card ids as path-ready strings.
 func setupOneCard(t *testing.T, tx pgx.Tx, handler http.Handler, cookie *http.Cookie) (deckID, cardID string) {
 	t.Helper()
@@ -39,7 +39,7 @@ func setupOneCard(t *testing.T, tx pgx.Tx, handler http.Handler, cookie *http.Co
 	deckID = strings.TrimPrefix(deckPath, "/decks/")
 
 	var noteTypeID string
-	if err := tx.QueryRow(context.Background(), `SELECT id FROM note_types LIMIT 1`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(context.Background(), `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
 	noteBody := url.Values{}
@@ -391,7 +391,7 @@ func setupSecondCard(t *testing.T, tx pgx.Tx, handler http.Handler, cookie *http
 	if err := tx.QueryRow(ctx, `SELECT id FROM decks LIMIT 1`).Scan(&deckID); err != nil {
 		t.Fatalf("lookup deck: %v", err)
 	}
-	if err := tx.QueryRow(ctx, `SELECT id FROM note_types LIMIT 1`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
 	deckPath = "/decks/" + deckID
@@ -665,7 +665,7 @@ func TestReviewNext_KeysetAndExhaustion(t *testing.T) {
 	deckPath := setupDeckAndNoteType(t, handler, cookie)
 	deckID := strings.TrimPrefix(deckPath, "/decks/")
 	var noteTypeID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM note_types LIMIT 1`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
 	addNotes(t, handler, cookie, deckPath, noteTypeID, 25)

@@ -156,7 +156,7 @@ func TestDeckQueueCounts(t *testing.T) {
 	deckPath := setupDeckAndNoteType(t, handler, cookie)
 	deckID := strings.TrimPrefix(deckPath, "/decks/")
 	var noteTypeID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM note_types LIMIT 1`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
 	addNotes(t, handler, cookie, deckPath, noteTypeID, 3)
