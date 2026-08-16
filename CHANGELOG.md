@@ -3,6 +3,17 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.20] - 2026-08-15
+
+### Added
+- `GET`/`POST /import/ai`: paste-in import for AI-generated cards — pick a deck + note type,
+  copy a generated prompt (with a cloze-depth dial for how much text a cloze card blanks) into
+  whatever AI you already use, and paste the reply back in. Parses NDJSON via a streaming JSON
+  decoder rather than newline-splitting, so it's insensitive to how the reply is
+  separated/wrapped; all-or-nothing per paste, using the same note/card-authoring pipeline as
+  manual note creation — no model API call from Enshu itself
+  ([#85](https://github.com/Jolls/enshu/issues/85))
+
 ## [0.1.19] - 2026-08-15
 
 ### Added

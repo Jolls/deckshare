@@ -109,6 +109,7 @@ func newTestHandler(t *testing.T, tx pgx.Tx, cfg auth.Config, clocks ...func() t
 	blobs := media.New(t.TempDir())
 	registerMediaRoutes(mux, tx, blobs)
 	registerImportRoutes(mux, tx, pages, blobs, clock)
+	registerAIImportRoutes(mux, tx, pages)
 	return securityHeaders(a.Middleware(mux)), a
 }
 
