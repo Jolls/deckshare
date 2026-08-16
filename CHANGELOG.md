@@ -3,7 +3,7 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.1.21] - 2026-08-15
+## [0.1.22] - 2026-08-15
 
 ### Added
 - New users are seeded with stock **Basic** and **Cloze** note types on signup, matching Anki's
