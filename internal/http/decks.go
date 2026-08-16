@@ -172,7 +172,9 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
-		render(w, pages["deck_edit"], http.StatusOK, map[string]any{"User": user, "Deck": deck})
+		render(w, pages["deck_edit"], http.StatusOK, map[string]any{
+				"User": user, "Deck": deck, "NewPerDay": review.NewPerDay(deck.Preset),
+			})
 	})))
 
 	mux.Handle("POST /decks/{id}/edit", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -192,9 +194,18 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
+		newPerDay := pgtype.Int4{} // absent or empty -> leave preset untouched
+		if raw := strings.TrimSpace(r.PostForm.Get("new_per_day")); raw != "" {
+			v, err := strconv.Atoi(raw)
+			if err != nil || v < 0 || int32(v) > review.MaxNewPerDay {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			newPerDay = pgtype.Int4{Int32: int32(v), Valid: true}
+		}
 
 		n, err := db.New(store).UpdateDeck(r.Context(), db.UpdateDeckParams{
-			Name: name, Description: description, DeckID: deckID, UserID: user.ID,
+			Name: name, Description: description, NewPerDay: newPerDay, DeckID: deckID, UserID: user.ID,
 		})
 		if err != nil {
 			if db.IsUniqueViolation(err, "decks_owner_id_name_key") {

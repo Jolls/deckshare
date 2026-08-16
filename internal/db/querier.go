@@ -16,6 +16,13 @@ type Querier interface {
 	// means the deck has been stranded and the caller must roll back.
 	CountDeckAccessHolders(ctx context.Context, deckID pgtype.UUID) (CountDeckAccessHoldersRow, error)
 	CountDeckContents(ctx context.Context, arg CountDeckContentsParams) (CountDeckContentsRow, error)
+	// New-card introductions inside the current study day, for one deck (#101). A card is introduced
+	// by the one review that takes it out of FSRS state New, so review_log.state_before = 0 is the
+	// exact marker: a lapse carries 2, a relearning step 3, a same-day learning-step repeat 1, and
+	// none of them can be mistaken for an introduction. count(DISTINCT card_id), not count(*): the
+	// out-of-order replay path (architecture.md §6) can leave two state_before = 0 rows for one card,
+	// and a card is introduced once.
+	CountNewIntroducedToday(ctx context.Context, arg CountNewIntroducedTodayParams) (int64, error)
 	CountNotesOfNoteType(ctx context.Context, noteTypeID pgtype.UUID) (int64, error)
 	// Queue summary (New/Learning/Due) for one deck's study page (#80). Same eligibility filters as
 	// ListDueCardsForStudy -- suspended, buried, due-before-window-end, not already reviewed today --

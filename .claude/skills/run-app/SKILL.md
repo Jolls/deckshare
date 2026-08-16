@@ -16,5 +16,5 @@ If DB-backed tests fail on stale state (leftover rows from a prior `run-app`
 session — see issue #95), run
 `bash .claude/skills/run-app/reset-db.sh` to wipe the `pgdata` volume, bring
 Postgres back up, reapply goose migrations, and seed a test user
-(`test@enshu.local` / `testpassword123`) with two empty decks. Never
+(`test@test.com` / `password`) with two empty decks. Never
 improvise `docker compose down -v` by hand.

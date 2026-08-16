@@ -26,8 +26,8 @@ import (
 )
 
 const (
-	testEmail       = "test@enshu.local"
-	testPassword    = "testpassword123"
+	testEmail       = "test@test.com"
+	testPassword    = "password"
 	testDisplayName = "Test User"
 
 	basicDeckName = "Test Deck A"

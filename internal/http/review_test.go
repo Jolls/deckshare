@@ -669,6 +669,12 @@ func TestReviewNext_KeysetAndExhaustion(t *testing.T) {
 		t.Fatalf("lookup note type: %v", err)
 	}
 	addNotes(t, handler, cookie, deckPath, noteTypeID, 25)
+	// Raise the deck's daily new-card allowance (#101) above the 25 seeded here -- this test is
+	// about keyset pagination and exhaustion, not the cap, and the default of 20 would otherwise
+	// truncate page1 at the cap instead of the page size.
+	if _, err := tx.Exec(ctx, `UPDATE decks SET preset = '{"new":{"perDay":30}}' WHERE id = $1`, deckID); err != nil {
+		t.Fatalf("raise new-card limit: %v", err)
+	}
 
 	page1 := doRequest(handler, "GET", "/api/reviews/next?deck="+deckID+"&cursor=", "", cookie, "")
 	if page1.Code != http.StatusOK {

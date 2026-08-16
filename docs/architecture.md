@@ -140,6 +140,11 @@ to `can_view AND can_study`, so a caller lacking either matches zero rows and th
 `0` affected — the handler then 404s, the same collapse-existence shape `UpdateDeck` (decks.sql)
 already uses for `can_edit_settings`.
 
+**Per-deck daily new-card limit has landed** ([#101](https://github.com/Jolls/enshu/issues/101)):
+`ListDueCardsForStudy` caps never-seen cards at the deck's `preset` `new.perDay` (default 20,
+Anki's own shape), editable from `/decks/{id}/edit`; `/decks` and `/decks/{id}` keep showing the
+raw uncapped unseen-card count until [#106](https://github.com/Jolls/enshu/issues/106).
+
 ---
 
 ## 3. Stack

@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.25] - 2026-08-16
+
+### Added
+- Per-deck daily new-card limit: the reviewer's queue now caps never-seen cards at the deck's
+  `new cards/day` setting (default 20, Anki's own `new.perDay`), editable from the deck edit
+  page, instead of serving every new card in the deck at once
+  ([#101](https://github.com/Jolls/enshu/issues/101))
+
 ## [0.1.23] - 2026-08-15
 
 ### Added

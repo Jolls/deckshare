@@ -72,15 +72,29 @@ func lastSubdeck(name string) string {
 // grade will be recomputed server-side at its own reviewedAt, so a branch going stale as
 // wall-clock advances is expected (architecture.md §6), not a bug. A render error on one card
 // fails the whole batch: a card that cannot render cannot be graded honestly.
+//
+// New (never-seen) cards are capped at the deck's preset new/perDay minus the introductions
+// already logged this study day (#101); due and learning cards are never capped.
 func BuildBatch(ctx context.Context, store db.DBTX, p fsrs.Params, userID, deckID pgtype.UUID,
-	deckName string, window StudyDay, cur Cursor, limit int32, now time.Time) (Batch, error) {
+	deckName string, window StudyDay, newPerDay int32, cur Cursor, limit int32, now time.Time) (Batch, error) {
 	q := db.New(store)
+
+	introduced, err := q.CountNewIntroducedToday(ctx, db.CountNewIntroducedTodayParams{
+		UserID:        userID,
+		DeckID:        deckID,
+		StudyDayStart: pgtype.Timestamptz{Time: window.Start, Valid: true},
+		StudyDayEnd:   pgtype.Timestamptz{Time: window.End, Valid: true},
+	})
+	if err != nil {
+		return Batch{}, fmt.Errorf("review: count new introduced today: %w", err)
+	}
 
 	rows, err := q.ListDueCardsForStudy(ctx, db.ListDueCardsForStudyParams{
 		UserID:        userID,
 		DeckID:        deckID,
 		StudyDayStart: pgtype.Timestamptz{Time: window.Start, Valid: true},
 		StudyDayEnd:   pgtype.Timestamptz{Time: window.End, Valid: true},
+		NewRemaining:  NewRemaining(newPerDay, introduced),
 		CursorDue:     cur.dueArg(),
 		CursorCardID:  cur.cardIDArg(),
 		BatchSize:     limit,

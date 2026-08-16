@@ -7,6 +7,10 @@
     <label for="description">Description</label>
     <textarea id="description" name="description">{{.Deck.Description}}</textarea>
 
+    <label for="new_per_day">New cards per day</label>
+    <input type="number" id="new_per_day" name="new_per_day" min="0" max="9999" step="1" value="{{.NewPerDay}}" required>
+    <small>0 introduces no new cards from this deck. Due and learning cards are never limited.</small>
+
     <button type="submit">Save</button>
 </form>
 
