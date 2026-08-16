@@ -168,6 +168,20 @@ demand shows up.
 
 ---
 
+## AI paste-in import — `aiimport.go` (Milestone 2 -- built (#85))
+
+| Method | Path | Permission | Purpose |
+|---|---|---|---|
+| GET | `/import/ai` | session | No `deck_id`/`note_type_id` query params: pick a deck + note type. Both present (and owned): show the generated prompt for that note type |
+| POST | `/import/ai` | session | Parse the pasted NDJSON reply (`internal/textimport.Parse`); on any parse or field-validation error, re-render the prompt step with every line's error and nothing written. Otherwise create all notes + cards in one transaction (`notes.go`'s `validateNoteFields`/`desiredCards`/`randomGuid`/`db.CreateNoteWithCards`, no `internal/apkg` involvement) and redirect to the deck |
+
+No API key, no model call from Enshu itself (architecture.md §11) — the user runs the generated
+prompt through whatever AI they already have and pastes the reply back in. All-or-nothing per
+paste, synchronous, capped at `maxAIImportNotes` — the same "no job queue for MVP" call as
+`/import` above.
+
+---
+
 ## Media — `media.go` (Phase 1, step 8 — blob store itself is [#60](https://github.com/Jolls/enshu/issues/60))
 
 | Method | Path | Permission | Purpose |

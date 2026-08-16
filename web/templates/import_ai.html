@@ -1,0 +1,65 @@
+{{define "content"}}
+{{if not .Deck}}
+<h1>Import cards made by an AI</h1>
+{{if and .Decks .NoteTypes}}
+<form method="get" action="/import/ai">
+    <label for="deck_id">Deck</label>
+    <select id="deck_id" name="deck_id" required>
+        {{range .Decks}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+    </select>
+    {{template "noteTypeAndDepthFields" .}}
+    <button type="submit">Continue</button>
+</form>
+{{else if not .Decks}}
+<p>You don't have any decks yet. <a href="/decks/new">Create one</a> first.</p>
+{{else}}
+<p>You don't have any note types yet. <a href="/note-types/new">Create one</a> first.</p>
+{{end}}
+
+{{else if not .NoteType}}
+<h1>Import cards made by an AI into {{.Deck.Name}}</h1>
+{{if .NoteTypes}}
+<form method="get" action="/import/ai">
+    <input type="hidden" name="deck_id" value="{{.Deck.ID}}">
+    {{template "noteTypeAndDepthFields" .}}
+    <button type="submit">Continue</button>
+</form>
+{{else}}
+<p>You don't have any note types yet. <a href="/note-types/new">Create one</a> first.</p>
+{{end}}
+
+{{else}}
+<h1>Import cards made by an AI into {{.Deck.Name}}</h1>
+{{if .Errors}}
+<ul style="color: red;">
+    {{range .Errors}}<li>{{.}}</li>{{end}}
+</ul>
+{{end}}
+<p>Copy the prompt below into whatever AI you already use, followed by your source material.
+Paste its reply back in underneath.</p>
+<textarea id="prompt" rows="14" readonly>{{.Prompt}}</textarea>
+<button type="button" id="copy-prompt">Copy prompt</button>
+<script src="/static/import_ai.js" defer></script>
+<form method="post" action="/import/ai">
+    <input type="hidden" name="deck_id" value="{{.Deck.ID}}">
+    <input type="hidden" name="note_type_id" value="{{.NoteType.ID}}">
+    <input type="hidden" name="depth" value="{{.Depth}}">
+    <label for="text">AI's reply</label>
+    <textarea id="text" name="text" rows="14" required>{{.Pasted}}</textarea>
+    <button type="submit">Import</button>
+</form>
+{{end}}
+<p><a href="/decks">Back to decks</a></p>
+{{end}}
+
+{{define "noteTypeAndDepthFields"}}
+<label for="note_type_id">Note type</label>
+<select id="note_type_id" name="note_type_id" required>
+    {{range .NoteTypes}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+</select>
+<label for="depth">Cloze depth (only used if the note type is a cloze type)</label>
+<select id="depth" name="depth">
+    {{$depth := .Depth}}
+    {{range .ClozeDepths}}<option value="{{.Value}}"{{if eq .Value $depth}} selected{{end}}>{{.Label}}</option>{{end}}
+</select>
+{{end}}
