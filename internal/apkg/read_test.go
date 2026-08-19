@@ -109,6 +109,17 @@ func TestRead_RealSchema18Fixture(t *testing.T) {
 	}
 }
 
+// TestRead_QuotedModelID reproduces a real import failure: a 2020-vintage AnkiWeb shared deck
+// writes col.models' and col.decks' own "id" fields as quoted strings, which a strict int64
+// field rejects even though the map key carrying the same id is always a string.
+func TestRead_QuotedModelID(t *testing.T) {
+	spec := defaultSynthSpec(t)
+	pkg := buildQuotedModelIDPackage(t)
+	got := readBytes(t, pkg)
+	want := expectedIR(spec, 11)
+	assertIRMatches(t, got, want)
+}
+
 func TestRead_OutOfOrderOrdArrays(t *testing.T) {
 	pkg := buildOutOfOrderOrdPackage(t)
 	got := readBytes(t, pkg)

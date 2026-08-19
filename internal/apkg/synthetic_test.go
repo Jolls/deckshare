@@ -378,12 +378,12 @@ func buildSchema11Package(t *testing.T, spec synthSpec) []byte {
 			typ = 1
 		}
 		models[fmt.Sprintf("%d", nt.AnkiID)] = ankiModel11{
-			ID: nt.AnkiID, Name: nt.Name, Type: typ, Sortf: nt.SortIdx, CSS: nt.CSS, Flds: flds, Tmpls: tmpls,
+			ID: ankiIntOrString(nt.AnkiID), Name: nt.Name, Type: typ, Sortf: nt.SortIdx, CSS: nt.CSS, Flds: flds, Tmpls: tmpls,
 		}
 	}
 	decks := map[string]ankiDeck11{}
 	for _, d := range spec.Decks {
-		decks[fmt.Sprintf("%d", d.AnkiID)] = ankiDeck11{ID: d.AnkiID, Name: d.Name, Desc: d.Desc, Dyn: d.Dyn}
+		decks[fmt.Sprintf("%d", d.AnkiID)] = ankiDeck11{ID: ankiIntOrString(d.AnkiID), Name: d.Name, Desc: d.Desc, Dyn: d.Dyn}
 	}
 	modelsJSON, err := json.Marshal(models)
 	if err != nil {
@@ -615,6 +615,80 @@ func buildFilteredDeckPackage(t *testing.T) []byte {
 		Type: ankiTypeReview, Queue: ankiQueueReview, Due: -12345, Odue: 7,
 	})
 	return buildSchema11Package(t, spec)
+}
+
+// buildQuotedModelIDPackage is defaultSynthSpec with col.models' and col.decks' own "id" fields
+// written as quoted strings ("1001" rather than 1001) -- the real-world shape observed
+// 2026-08-18 in a 2020-vintage AnkiWeb shared deck export, which a strict int64 field rejects
+// outright even though the map key carrying the same id is (and must be) always a string.
+func buildQuotedModelIDPackage(t *testing.T) []byte {
+	t.Helper()
+	spec := defaultSynthSpec(t)
+
+	models := map[string]json.RawMessage{}
+	for _, nt := range spec.NoteTypes {
+		flds := make([]ankiField11, len(nt.Fields))
+		for i, f := range nt.Fields {
+			flds[i] = ankiField11{Name: f.Name, Ord: f.Ordinal, Font: f.Font, Size: f.Size, RTL: f.IsRTL, Sticky: f.Sticky}
+		}
+		tmpls := make([]ankiTemplate11, len(nt.Templates))
+		for i, tp := range nt.Templates {
+			tmpls[i] = ankiTemplate11{Name: tp.Name, Ord: tp.Ordinal, Qfmt: tp.Qfmt, Afmt: tp.Afmt, Bqfmt: tp.BrowserQfmt, Bafmt: tp.BrowserAfmt}
+		}
+		typ := 0
+		if nt.IsCloze {
+			typ = 1
+		}
+		body := struct {
+			ID    string           `json:"id"`
+			Name  string           `json:"name"`
+			Type  int              `json:"type"`
+			Sortf int32            `json:"sortf"`
+			CSS   string           `json:"css"`
+			Flds  []ankiField11    `json:"flds"`
+			Tmpls []ankiTemplate11 `json:"tmpls"`
+		}{ID: fmt.Sprintf("%d", nt.AnkiID), Name: nt.Name, Type: typ, Sortf: nt.SortIdx, CSS: nt.CSS, Flds: flds, Tmpls: tmpls}
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshalling quoted-id model: %v", err)
+		}
+		models[fmt.Sprintf("%d", nt.AnkiID)] = raw
+	}
+	decks := map[string]json.RawMessage{}
+	for _, d := range spec.Decks {
+		body := struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+			Desc string `json:"desc"`
+			Dyn  int    `json:"dyn"`
+		}{ID: fmt.Sprintf("%d", d.AnkiID), Name: d.Name, Desc: d.Desc, Dyn: d.Dyn}
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshalling quoted-id deck: %v", err)
+		}
+		decks[fmt.Sprintf("%d", d.AnkiID)] = raw
+	}
+	modelsJSON, err := json.Marshal(models)
+	if err != nil {
+		t.Fatalf("marshalling col.models: %v", err)
+	}
+	decksJSON, err := json.Marshal(decks)
+	if err != nil {
+		t.Fatalf("marshalling col.decks: %v", err)
+	}
+
+	ddl := []string{
+		"CREATE TABLE col (id integer primary key, crt integer, ver integer, models text, decks text)",
+		sharedTableDDL,
+	}
+	collBytes := writeSQLite(t, ddl, func(dbh *sql.DB) error {
+		if _, err := dbh.Exec("INSERT INTO col (id, crt, ver, models, decks) VALUES (1,?,11,?,?)", spec.Crt.Unix(), string(modelsJSON), string(decksJSON)); err != nil {
+			return err
+		}
+		return insertNotesCardsRevlog(dbh, spec)
+	})
+
+	return zipMembers(t, map[string][]byte{"collection.anki21": collBytes})
 }
 
 // buildOversizePackage returns a package whose "media" INDEX member (the only media-related

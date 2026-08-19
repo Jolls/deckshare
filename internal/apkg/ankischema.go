@@ -1,5 +1,10 @@
 package apkg
 
+import (
+	"strconv"
+	"strings"
+)
+
 // Anki's SQLite shapes and constants. No behaviour beyond decoding the JSON/protobuf blobs.
 
 // Schema-11 queries. col.models / col.decks are JSON objects keyed by id-as-string.
@@ -24,14 +29,35 @@ const (
 )
 
 // ankiModel11 is one entry of col.models (schema 11), keyed by id-as-string in the JSON object.
+// ID uses ankiIntOrString, not a plain int64: some Anki export versions (observed 2026-08-18,
+// a 2020-vintage AnkiWeb shared deck) write the body's own "id" field as a quoted string rather
+// than a number, which a strict int64 field rejects outright.
 type ankiModel11 struct {
-	ID    int64            `json:"id"`
+	ID    ankiIntOrString  `json:"id"`
 	Name  string           `json:"name"`
 	Type  int              `json:"type"` // 0 standard, 1 cloze
 	Sortf int32            `json:"sortf"`
 	CSS   string           `json:"css"`
 	Flds  []ankiField11    `json:"flds"`
 	Tmpls []ankiTemplate11 `json:"tmpls"`
+}
+
+// ankiIntOrString decodes a JSON number or a quoted numeric string into an int64, and always
+// encodes back out as a number -- matching what real Anki writes.
+type ankiIntOrString int64
+
+func (n ankiIntOrString) MarshalJSON() ([]byte, error) {
+	return []byte(strconv.FormatInt(int64(n), 10)), nil
+}
+
+func (n *ankiIntOrString) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(string(b), `"`)
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return err
+	}
+	*n = ankiIntOrString(v)
+	return nil
 }
 
 type ankiField11 struct {
@@ -53,11 +79,13 @@ type ankiTemplate11 struct {
 }
 
 // ankiDeck11 is one entry of col.decks (schema 11), keyed by id-as-string in the JSON object.
+// ID uses ankiIntOrString for the same reason as ankiModel11.ID: the same exporter that quotes
+// the model's own "id" field quotes the deck's too.
 type ankiDeck11 struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"` // "::"-separated
-	Desc string `json:"desc"`
-	Dyn  int    `json:"dyn"` // 1 = filtered
+	ID   ankiIntOrString `json:"id"`
+	Name string          `json:"name"` // "::"-separated
+	Desc string          `json:"desc"`
+	Dyn  int             `json:"dyn"` // 1 = filtered
 }
 
 // Anki cards.queue values.

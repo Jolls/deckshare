@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.27] - 2026-08-18
+
+### Fixed
+- `.apkg` import no longer rejects `collection.anki21` files where `col.models`' or
+  `col.decks`' own `"id"` field is written as a quoted string instead of a number (observed in
+  a 2020-vintage AnkiWeb shared deck export) — a strict `int64` field rejected these outright
+  even though the map key carrying the same id is always a string.
+
 ## [0.1.26] - 2026-08-18
 
 ### Fixed
