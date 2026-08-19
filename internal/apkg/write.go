@@ -183,7 +183,7 @@ func encodeModelsAndDecks(noteTypes []IrNoteType, decks []IrDeck) (modelsJSON, d
 			typ = 1
 		}
 		models[strconv.FormatInt(nt.AnkiID, 10)] = ankiModel11{
-			ID: nt.AnkiID, Name: nt.Name, Type: typ, Sortf: nt.SortFieldIdx, CSS: nt.CSS, Flds: flds, Tmpls: tmpls,
+			ID: ankiIntOrString(nt.AnkiID), Name: nt.Name, Type: typ, Sortf: nt.SortFieldIdx, CSS: nt.CSS, Flds: flds, Tmpls: tmpls,
 		}
 	}
 
@@ -193,7 +193,7 @@ func encodeModelsAndDecks(noteTypes []IrNoteType, decks []IrDeck) (modelsJSON, d
 		if d.IsFiltered {
 			dyn = 1
 		}
-		deckMap[strconv.FormatInt(d.AnkiID, 10)] = ankiDeck11{ID: d.AnkiID, Name: d.Name, Desc: d.Description, Dyn: dyn}
+		deckMap[strconv.FormatInt(d.AnkiID, 10)] = ankiDeck11{ID: ankiIntOrString(d.AnkiID), Name: d.Name, Desc: d.Description, Dyn: dyn}
 	}
 
 	modelsJSON, err = json.Marshal(models)

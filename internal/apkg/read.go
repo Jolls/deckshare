@@ -428,7 +428,7 @@ func readSchema11(dbh *sql.DB) ([]IrNoteType, []IrDeck, error) {
 	noteTypes := make([]IrNoteType, 0, len(models))
 	for _, m := range models {
 		nt := IrNoteType{
-			AnkiID:       m.ID,
+			AnkiID:       int64(m.ID),
 			Name:         m.Name,
 			CSS:          m.CSS,
 			IsCloze:      m.Type == 1,
@@ -465,7 +465,7 @@ func readSchema11(dbh *sql.DB) ([]IrNoteType, []IrDeck, error) {
 	decks := make([]IrDeck, 0, len(deckMap))
 	for _, d := range deckMap {
 		decks = append(decks, IrDeck{
-			AnkiID:      d.ID,
+			AnkiID:      int64(d.ID),
 			Name:        normaliseDeckName(d.Name),
 			Description: d.Desc,
 			IsFiltered:  d.Dyn != 0,
