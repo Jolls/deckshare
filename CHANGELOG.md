@@ -3,6 +3,15 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.26] - 2026-08-18
+
+### Fixed
+- `ORIGIN` now accepts a comma-separated list of allowed origins, instead of exactly one. A
+  single fixed origin couldn't be satisfied by deployments reachable at more than one address at
+  once (StartOS exposing the same instance over LAN and Tor simultaneously), so every
+  state-changing request — including signup — 403'd from any origin but the one configured
+  ([#111](https://github.com/Jolls/enshu/issues/111))
+
 ## [0.1.25] - 2026-08-16
 
 ### Added

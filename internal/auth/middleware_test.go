@@ -51,16 +51,22 @@ func TestCheckOrigin(t *testing.T) {
 		{"wrong host vs config origin", "https://evil.com", "https://enshu.example", "ignored.internal", false},
 		{"wrong scheme vs config origin", "http://enshu.example", "https://enshu.example", "ignored.internal", false},
 		{"wrong port vs config origin", "https://enshu.example:8080", "https://enshu.example", "ignored.internal", false},
+
+		{"matches first of multiple config origins", "https://enshu.example", "https://enshu.example,https://abc.onion", "ignored.internal", true},
+		{"matches second of multiple config origins", "https://abc.onion", "https://enshu.example,https://abc.onion", "ignored.internal", true},
+		{"matches none of multiple config origins", "https://evil.com", "https://enshu.example,https://abc.onion", "ignored.internal", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &Service{cfg: Config{Origin: tt.configOrigin}}
 			if tt.configOrigin != "" {
-				var err error
-				s.origin, err = url.Parse(tt.configOrigin)
-				if err != nil {
-					t.Fatalf("parse configOrigin: %v", err)
+				for _, o := range strings.Split(tt.configOrigin, ",") {
+					parsed, err := url.Parse(o)
+					if err != nil {
+						t.Fatalf("parse configOrigin: %v", err)
+					}
+					s.origins = append(s.origins, parsed)
 				}
 			}
 			r := httptest.NewRequest(http.MethodPost, "http://"+tt.host+"/x", nil)

@@ -60,7 +60,11 @@ func (e *RateLimitError) Unwrap() error { return ErrRateLimited }
 
 // Config carries the deployment-dependent knobs. Zero values are the dev defaults.
 type Config struct {
-	Origin string // e.g. "https://enshu.example"; empty means compare Origin's host to r.Host
+	// Origin is a comma-separated list of allowed origins, e.g. "https://enshu.example" or
+	// "https://enshu.example,https://abc123.onion" for an instance reachable at more than one
+	// address (StartOS commonly exposes the same instance over LAN and Tor simultaneously).
+	// Empty means compare the request Origin's host to r.Host.
+	Origin string
 }
 
 // Service is the auth package's entry point: session, signup, login, logout, and account
@@ -70,10 +74,11 @@ type Service struct {
 	beginner  db.Beginner
 	cfg       Config
 	dummyHash string
-	// origin is cfg.Origin parsed once at construction, rather than on every state-changing
-	// request in checkOrigin -- it's a fixed deployment setting, never rechecked mid-process.
-	// Nil when cfg.Origin is empty (the dev fallback: compare against r.Host per request).
-	origin *url.URL
+	// origins is cfg.Origin split and parsed once at construction, rather than on every
+	// state-changing request in checkOrigin -- it's a fixed deployment setting, never
+	// rechecked mid-process. Nil when cfg.Origin is empty (the dev fallback: compare against
+	// r.Host per request).
+	origins []*url.URL
 
 	loginIP        *limiter
 	loginEmail     *limiter
@@ -89,11 +94,14 @@ func New(dbtx db.Beginner, cfg Config) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("compute dummy hash: %w", err)
 	}
-	var origin *url.URL
+	var origins []*url.URL
 	if cfg.Origin != "" {
-		origin, err = url.Parse(cfg.Origin)
-		if err != nil {
-			return nil, fmt.Errorf("parse Config.Origin: %w", err)
+		for _, s := range strings.Split(cfg.Origin, ",") {
+			parsed, err := url.Parse(strings.TrimSpace(s))
+			if err != nil {
+				return nil, fmt.Errorf("parse Config.Origin: %w", err)
+			}
+			origins = append(origins, parsed)
 		}
 	}
 	return &Service{
@@ -101,7 +109,7 @@ func New(dbtx db.Beginner, cfg Config) (*Service, error) {
 		beginner:       dbtx,
 		cfg:            cfg,
 		dummyHash:      dummyHash,
-		origin:         origin,
+		origins:        origins,
 		loginIP:        newLimiter(loginIPLimit, loginIPWindow),
 		loginEmail:     newLimiter(loginEmailLimit, loginEmailWindow),
 		signupIP:       newLimiter(signupIPLimit, signupIPWindow),

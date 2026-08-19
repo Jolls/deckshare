@@ -108,8 +108,13 @@ func (s *Service) checkOrigin(r *http.Request) bool {
 		return false
 	}
 
-	if s.origin != nil {
-		return strings.EqualFold(parsed.Scheme, s.origin.Scheme) && strings.EqualFold(parsed.Host, s.origin.Host)
+	if s.origins != nil {
+		for _, o := range s.origins {
+			if strings.EqualFold(parsed.Scheme, o.Scheme) && strings.EqualFold(parsed.Host, o.Host) {
+				return true
+			}
+		}
+		return false
 	}
 	return strings.EqualFold(parsed.Host, r.Host)
 }
