@@ -164,6 +164,21 @@ These are the load-bearing choices. Each one is cheap now and a rewrite later.
   the mapping.
 - Comment density matches surrounding code. The `apkg` package earns comments (it encodes
   external format facts); HTTP handlers do not.
+- **Avoid shell scripting.** One-off commands, pipes, and file edits are fine — `grep -rn foo
+  src/`, `gh pr list`, `sed -i 's/old/new/' file`, `cat > file <<'EOF'`. But once it needs a
+  loop, a conditional, a function, error handling, or JSON parsing, write it in a real
+  language instead — Go once the scaffold exists (matching the rest of the repo), something
+  else only if Go genuinely doesn't fit. Bash gets fragile fast at that size and is hard to
+  test. Prefer a script on disk over `python3 -c '...'`, `node -e '...'`, or a heredoc piped
+  into an interpreter — a file can be read, edited, re-run, and kept. This covers standalone
+  scripts only; GitHub Actions `run:` steps, git hooks, and Makefile recipes can stay shell,
+  since that's what those tools expect.
+- **Scripts worth keeping go in `scripts/`** (architecture.md §4), not the session scratchpad.
+  A script earns a place there only if it's something you'd plausibly run again — a db reset,
+  fixture regen, a recurring check. A genuine one-off stays inline or in scratchpad and isn't
+  saved. Give each saved script a short header comment (purpose + usage) and a descriptive
+  name; there's no separate index — `ls scripts/` is the index, and keeping one in sync would
+  just go stale.
 
 ---
 

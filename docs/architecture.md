@@ -247,7 +247,7 @@ enshu/
 │  └─ templates/           html/template source
 ├─ tests/
 │  └─ fixtures/apkg/       real exports from multiple Anki versions — see CLAUDE.md §10
-└─ scripts/
+└─ scripts/                dev/build/release tooling worth keeping — see CLAUDE.md §9
 ```
 
 **Boundary rules**
