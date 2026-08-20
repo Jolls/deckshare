@@ -45,3 +45,27 @@ func (q *Queries) GetMediaRef(ctx context.Context, arg GetMediaRefParams) (Media
 	err := row.Scan(&i.DeckID, &i.Filename, &i.Sha256)
 	return i, err
 }
+
+const listMediaRefsForDeck = `-- name: ListMediaRefsForDeck :many
+SELECT deck_id, filename, sha256 FROM media_refs WHERE deck_id = $1
+`
+
+func (q *Queries) ListMediaRefsForDeck(ctx context.Context, deckID pgtype.UUID) ([]MediaRef, error) {
+	rows, err := q.db.Query(ctx, listMediaRefsForDeck, deckID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MediaRef
+	for rows.Next() {
+		var i MediaRef
+		if err := rows.Scan(&i.DeckID, &i.Filename, &i.Sha256); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

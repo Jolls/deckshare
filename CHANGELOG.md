@@ -3,6 +3,18 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.28] - 2026-08-19
+
+### Fixed
+- Imported `.apkg` images now render in the reviewer. Note fields keep Anki's raw
+  `<img src="filename.jpg">` convention untouched on import; the reviewer's render path now
+  resolves each filename against the deck's `media_refs` and rewrites it to `/media/{sha256}`
+  before the card reaches the browser, where it previously 404'd against the app's own origin.
+- `.apkg` media import now detects MIME type from the original filename's extension first,
+  falling back to byte-sniffing only when the extension is unknown. Byte-sniffing alone
+  misidentified SVG (XML, no fixed magic bytes) as `text/plain`, which browsers refuse to
+  render inside `<img>`.
+
 ## [0.1.27] - 2026-08-18
 
 ### Fixed

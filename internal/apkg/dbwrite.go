@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -111,6 +113,18 @@ func Import(ctx context.Context, tx pgx.Tx, ownerID pgtype.UUID, col *IrCollecti
 	return result, nil
 }
 
+// detectMediaMime prefers the original filename's extension: http.DetectContentType's byte
+// sniffing has no signature for SVG (XML with no fixed magic bytes) and misidentifies it as
+// text/plain, which browsers refuse to render in an <img>. mime.TypeByExtension covers SVG and
+// every other extension Anki media commonly uses; sniffing is the fallback for an unknown or
+// missing extension.
+func detectMediaMime(filename string, data []byte) string {
+	if t := mime.TypeByExtension(filepath.Ext(filename)); t != "" {
+		return t
+	}
+	return http.DetectContentType(data)
+}
+
 // importMedia writes each media file's bytes into blobs under its sha256, records the blob's
 // metadata, and refs it from every deck this import touched. The package format does not
 // attribute individual media files to individual decks -- Anki's own exporter only ever bundles
@@ -124,7 +138,7 @@ func importMedia(ctx context.Context, q *db.Queries, blobs *media.Store, deckIDs
 		if err := q.CreateMediaBlob(ctx, db.CreateMediaBlobParams{
 			Sha256:    m.SHA256,
 			SizeBytes: m.SizeBytes,
-			Mime:      http.DetectContentType(m.Data),
+			Mime:      detectMediaMime(m.Filename, m.Data),
 		}); err != nil {
 			return fmt.Errorf("apkg: recording media blob %q (%s): %w", m.Filename, m.SHA256, err)
 		}
