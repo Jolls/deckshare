@@ -74,9 +74,11 @@ func lastSubdeck(name string) string {
 // fails the whole batch: a card that cannot render cannot be graded honestly.
 //
 // New (never-seen) cards are capped at the deck's preset new/perDay minus the introductions
-// already logged this study day (#101); due and learning cards are never capped.
+// already logged this study day (#101); review-state cards are capped independently at the
+// deck's preset rev/perDay minus reviews already logged today (#115). Learning/relearning cards
+// are never capped.
 func BuildBatch(ctx context.Context, store db.DBTX, p fsrs.Params, userID, deckID pgtype.UUID,
-	deckName string, window StudyDay, newPerDay int32, cur Cursor, limit int32, now time.Time) (Batch, error) {
+	deckName string, window StudyDay, newPerDay, revPerDay int32, cur Cursor, limit int32, now time.Time) (Batch, error) {
 	q := db.New(store)
 
 	introduced, err := q.CountNewIntroducedToday(ctx, db.CountNewIntroducedTodayParams{
@@ -89,12 +91,23 @@ func BuildBatch(ctx context.Context, store db.DBTX, p fsrs.Params, userID, deckI
 		return Batch{}, fmt.Errorf("review: count new introduced today: %w", err)
 	}
 
+	reviewed, err := q.CountReviewedToday(ctx, db.CountReviewedTodayParams{
+		UserID:        userID,
+		DeckID:        deckID,
+		StudyDayStart: pgtype.Timestamptz{Time: window.Start, Valid: true},
+		StudyDayEnd:   pgtype.Timestamptz{Time: window.End, Valid: true},
+	})
+	if err != nil {
+		return Batch{}, fmt.Errorf("review: count reviewed today: %w", err)
+	}
+
 	rows, err := q.ListDueCardsForStudy(ctx, db.ListDueCardsForStudyParams{
 		UserID:        userID,
 		DeckID:        deckID,
 		StudyDayStart: pgtype.Timestamptz{Time: window.Start, Valid: true},
 		StudyDayEnd:   pgtype.Timestamptz{Time: window.End, Valid: true},
 		NewRemaining:  NewRemaining(newPerDay, introduced),
+		RevRemaining:  RevRemaining(revPerDay, reviewed),
 		CursorDue:     cur.dueArg(),
 		CursorCardID:  cur.cardIDArg(),
 		BatchSize:     limit,

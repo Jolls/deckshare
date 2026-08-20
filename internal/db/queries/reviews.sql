@@ -61,6 +61,24 @@ JOIN notes n       ON n.id = c.note_id
 JOIN note_types nt ON nt.id = n.note_type_id
 JOIN templates t   ON t.id = c.template_id
 LEFT JOIN user_card_state ucs ON ucs.user_id = sqlc.arg(user_id) AND ucs.card_id = c.id
+-- The review cutoff for the per-deck daily review cap (#115): the (due, id) of the card ranked
+-- last within the deck's remaining review allowance, in the same order this query serves
+-- review-state cards in. LATERAL + "ON true" makes it an uncorrelated one-row subquery Postgres
+-- evaluates once per fetch, same InitPlan shape as the new-card cutoff below; a LEFT JOIN so a
+-- deck with fewer review-state cards than the allowance still returns a row (cutoff_due NULL).
+LEFT JOIN LATERAL (
+    SELECT u2.due AS cutoff_due, c2.id AS cutoff_id
+    FROM cards c2
+    JOIN user_card_state u2 ON u2.user_id = sqlc.arg(user_id) AND u2.card_id = c2.id
+    WHERE c2.deck_id = sqlc.arg(deck_id) AND u2.state = 2
+      AND NOT u2.suspended
+      AND (u2.buried_until IS NULL OR u2.buried_until <= (sqlc.arg(study_day_start)::timestamptz)::date)
+      AND u2.due < sqlc.arg(study_day_end)::timestamptz
+      AND (u2.last_review IS NULL OR u2.last_review < sqlc.arg(study_day_start)::timestamptz)
+    ORDER BY u2.due, c2.id
+    OFFSET GREATEST(sqlc.arg(rev_remaining)::int - 1, 0)
+    LIMIT 1
+) rev_cutoff ON true
 WHERE c.deck_id = sqlc.arg(deck_id)
   AND NOT COALESCE(ucs.suspended, false)
   AND (ucs.buried_until IS NULL OR ucs.buried_until <= (sqlc.arg(study_day_start)::timestamptz)::date)
@@ -89,6 +107,16 @@ WHERE c.deck_id = sqlc.arg(deck_id)
                  OFFSET GREATEST(sqlc.arg(new_remaining)::int - 1, 0)
                  LIMIT 1
                ), 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid)))
+  -- The per-deck daily review cap (#115), independent of the new-card cap above. rev_remaining is
+  -- the deck's configured limit minus what's already been reviewed today; the caller computes it.
+  -- Row comparison against rev_cutoff (the (due,id) at the allowance boundary, computed above)
+  -- keeps a review-state card in only if it ranks at or before that boundary; rev_cutoff_due NULL
+  -- means fewer review-state cards exist than the allowance, so nothing is excluded. Never-seen
+  -- and learning/relearning cards (state 0, 1, 3) are unaffected.
+  AND (ucs.state IS DISTINCT FROM 2
+       OR (sqlc.arg(rev_remaining)::int > 0
+           AND (rev_cutoff.cutoff_due IS NULL
+                OR (ucs.due, c.id) <= (rev_cutoff.cutoff_due, rev_cutoff.cutoff_id))))
   AND (COALESCE(ucs.due, 'infinity'::timestamptz), c.id)
       > (sqlc.arg(cursor_due)::timestamptz, sqlc.arg(cursor_card_id)::uuid)
 ORDER BY queue_key, c.id
@@ -109,6 +137,23 @@ JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = sqlc.arg(user_id)
 WHERE rl.user_id = sqlc.arg(user_id)
   AND c.deck_id = sqlc.arg(deck_id)
   AND rl.state_before = 0
+  AND rl.reviewed_at >= sqlc.arg(study_day_start)::timestamptz
+  AND rl.reviewed_at <  sqlc.arg(study_day_end)::timestamptz;
+
+-- Review-state (state=2) cards answered inside the current study day, for one deck (#115), the
+-- rev.perDay counterpart to CountNewIntroducedToday above. rl.state_before = 2 marks "this card
+-- was already in review state when answered" -- the same marker ListDueCardsForStudy's rev_cutoff
+-- excludes past the allowance. count(DISTINCT card_id), not count(*), for the same out-of-order
+-- replay reason as CountNewIntroducedToday.
+-- name: CountReviewedToday :one
+SELECT count(DISTINCT rl.card_id)::bigint AS reviewed_count
+FROM review_log rl
+JOIN cards c       ON c.id = rl.card_id
+JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = sqlc.arg(user_id)
+                   AND da.can_view AND da.can_study
+WHERE rl.user_id = sqlc.arg(user_id)
+  AND c.deck_id = sqlc.arg(deck_id)
+  AND rl.state_before = 2
   AND rl.reviewed_at >= sqlc.arg(study_day_start)::timestamptz
   AND rl.reviewed_at <  sqlc.arg(study_day_end)::timestamptz;
 

@@ -145,6 +145,13 @@ already uses for `can_edit_settings`.
 Anki's own shape), editable from `/decks/{id}/edit`; `/decks` and `/decks/{id}` keep showing the
 raw uncapped unseen-card count until [#106](https://github.com/Jolls/enshu/issues/106).
 
+**Per-deck daily review-card limit has landed** ([#115](https://github.com/Jolls/enshu/issues/115)
+item 1): the same position-based-cutoff shape as the new-card cap above, independently enforced —
+`ListDueCardsForStudy` caps review-state (state=2) cards at `preset` `rev.perDay` (default 200,
+Anki's own default), editable alongside `new.perDay` from `/decks/{id}/edit`. The issue's second
+item — an optional combined new+due total cap with a priority split — depends on
+[#116](https://github.com/Jolls/enshu/issues/116)'s two-query new/review merge and has not landed.
+
 ---
 
 ## 3. Stack

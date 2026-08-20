@@ -149,6 +149,43 @@ func (q *Queries) CountQueueForUser(ctx context.Context, arg CountQueueForUserPa
 	return items, nil
 }
 
+const countReviewedToday = `-- name: CountReviewedToday :one
+SELECT count(DISTINCT rl.card_id)::bigint AS reviewed_count
+FROM review_log rl
+JOIN cards c       ON c.id = rl.card_id
+JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $1
+                   AND da.can_view AND da.can_study
+WHERE rl.user_id = $1
+  AND c.deck_id = $2
+  AND rl.state_before = 2
+  AND rl.reviewed_at >= $3::timestamptz
+  AND rl.reviewed_at <  $4::timestamptz
+`
+
+type CountReviewedTodayParams struct {
+	UserID        pgtype.UUID        `json:"user_id"`
+	DeckID        pgtype.UUID        `json:"deck_id"`
+	StudyDayStart pgtype.Timestamptz `json:"study_day_start"`
+	StudyDayEnd   pgtype.Timestamptz `json:"study_day_end"`
+}
+
+// Review-state (state=2) cards answered inside the current study day, for one deck (#115), the
+// rev.perDay counterpart to CountNewIntroducedToday above. rl.state_before = 2 marks "this card
+// was already in review state when answered" -- the same marker ListDueCardsForStudy's rev_cutoff
+// excludes past the allowance. count(DISTINCT card_id), not count(*), for the same out-of-order
+// replay reason as CountNewIntroducedToday.
+func (q *Queries) CountReviewedToday(ctx context.Context, arg CountReviewedTodayParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countReviewedToday,
+		arg.UserID,
+		arg.DeckID,
+		arg.StudyDayStart,
+		arg.StudyDayEnd,
+	)
+	var reviewed_count int64
+	err := row.Scan(&reviewed_count)
+	return reviewed_count, err
+}
+
 const getDeckForStudy = `-- name: GetDeckForStudy :one
 SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id
 FROM decks d
@@ -248,6 +285,19 @@ JOIN notes n       ON n.id = c.note_id
 JOIN note_types nt ON nt.id = n.note_type_id
 JOIN templates t   ON t.id = c.template_id
 LEFT JOIN user_card_state ucs ON ucs.user_id = $1 AND ucs.card_id = c.id
+LEFT JOIN LATERAL (
+    SELECT u2.due AS cutoff_due, c2.id AS cutoff_id
+    FROM cards c2
+    JOIN user_card_state u2 ON u2.user_id = $1 AND u2.card_id = c2.id
+    WHERE c2.deck_id = $2 AND u2.state = 2
+      AND NOT u2.suspended
+      AND (u2.buried_until IS NULL OR u2.buried_until <= ($3::timestamptz)::date)
+      AND u2.due < $4::timestamptz
+      AND (u2.last_review IS NULL OR u2.last_review < $3::timestamptz)
+    ORDER BY u2.due, c2.id
+    OFFSET GREATEST($5::int - 1, 0)
+    LIMIT 1
+) rev_cutoff ON true
 WHERE c.deck_id = $2
   AND NOT COALESCE(ucs.suspended, false)
   AND (ucs.buried_until IS NULL OR ucs.buried_until <= ($3::timestamptz)::date)
@@ -265,7 +315,7 @@ WHERE c.deck_id = $2
   -- even when the new_remaining > 0 guard is false. Suspended/buried are not re-checked here
   -- because a card with no user_card_state row can be neither.
   AND (ucs.user_id IS NOT NULL
-       OR ($5::int > 0
+       OR ($6::int > 0
            AND c.id <= COALESCE((
                  SELECT c2.id
                  FROM cards c2
@@ -273,13 +323,23 @@ WHERE c.deck_id = $2
                         ON u2.user_id = $1 AND u2.card_id = c2.id
                  WHERE c2.deck_id = $2 AND u2.user_id IS NULL
                  ORDER BY c2.id
-                 OFFSET GREATEST($5::int - 1, 0)
+                 OFFSET GREATEST($6::int - 1, 0)
                  LIMIT 1
                ), 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid)))
+  -- The per-deck daily review cap (#115), independent of the new-card cap above. rev_remaining is
+  -- the deck's configured limit minus what's already been reviewed today; the caller computes it.
+  -- Row comparison against rev_cutoff (the (due,id) at the allowance boundary, computed above)
+  -- keeps a review-state card in only if it ranks at or before that boundary; rev_cutoff_due NULL
+  -- means fewer review-state cards exist than the allowance, so nothing is excluded. Never-seen
+  -- and learning/relearning cards (state 0, 1, 3) are unaffected.
+  AND (ucs.state IS DISTINCT FROM 2
+       OR ($5::int > 0
+           AND (rev_cutoff.cutoff_due IS NULL
+                OR (ucs.due, c.id) <= (rev_cutoff.cutoff_due, rev_cutoff.cutoff_id))))
   AND (COALESCE(ucs.due, 'infinity'::timestamptz), c.id)
-      > ($6::timestamptz, $7::uuid)
+      > ($7::timestamptz, $8::uuid)
 ORDER BY queue_key, c.id
-LIMIT $8
+LIMIT $9
 `
 
 type ListDueCardsForStudyParams struct {
@@ -287,6 +347,7 @@ type ListDueCardsForStudyParams struct {
 	DeckID        pgtype.UUID        `json:"deck_id"`
 	StudyDayStart pgtype.Timestamptz `json:"study_day_start"`
 	StudyDayEnd   pgtype.Timestamptz `json:"study_day_end"`
+	RevRemaining  int32              `json:"rev_remaining"`
 	NewRemaining  int32              `json:"new_remaining"`
 	CursorDue     pgtype.Timestamptz `json:"cursor_due"`
 	CursorCardID  pgtype.UUID        `json:"cursor_card_id"`
@@ -321,12 +382,18 @@ type ListDueCardsForStudyRow struct {
 // never-seen cards by id. 'infinity' (not NULL) keeps the sort key total -- a NULL inside the row
 // comparison below would silently drop every new card from every refill. Never-seen cards have no
 // user_card_state row at all, hence the LEFT JOIN and the COALESCEd columns.
+// The review cutoff for the per-deck daily review cap (#115): the (due, id) of the card ranked
+// last within the deck's remaining review allowance, in the same order this query serves
+// review-state cards in. LATERAL + "ON true" makes it an uncorrelated one-row subquery Postgres
+// evaluates once per fetch, same InitPlan shape as the new-card cutoff below; a LEFT JOIN so a
+// deck with fewer review-state cards than the allowance still returns a row (cutoff_due NULL).
 func (q *Queries) ListDueCardsForStudy(ctx context.Context, arg ListDueCardsForStudyParams) ([]ListDueCardsForStudyRow, error) {
 	rows, err := q.db.Query(ctx, listDueCardsForStudy,
 		arg.UserID,
 		arg.DeckID,
 		arg.StudyDayStart,
 		arg.StudyDayEnd,
+		arg.RevRemaining,
 		arg.NewRemaining,
 		arg.CursorDue,
 		arg.CursorCardID,

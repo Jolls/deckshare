@@ -32,6 +32,12 @@ type Querier interface {
 	// Same queue summary, grouped by deck, for the /decks list (#80). One query for every deck the
 	// user can view rather than one CountQueueForDeck call per row.
 	CountQueueForUser(ctx context.Context, arg CountQueueForUserParams) ([]CountQueueForUserRow, error)
+	// Review-state (state=2) cards answered inside the current study day, for one deck (#115), the
+	// rev.perDay counterpart to CountNewIntroducedToday above. rl.state_before = 2 marks "this card
+	// was already in review state when answered" -- the same marker ListDueCardsForStudy's rev_cutoff
+	// excludes past the allowance. count(DISTINCT card_id), not count(*), for the same out-of-order
+	// replay reason as CountNewIntroducedToday.
+	CountReviewedToday(ctx context.Context, arg CountReviewedTodayParams) (int64, error)
 	// Called once per card in the create set (§0.3's "create" batch is small -- at most one row
 	// per template/cloze ordinal) rather than as a single multi-row statement: sqlc's query
 	// analyzer cannot resolve a two-array unnest(...) without a live database catalog.
@@ -157,6 +163,11 @@ type Querier interface {
 	// never-seen cards by id. 'infinity' (not NULL) keeps the sort key total -- a NULL inside the row
 	// comparison below would silently drop every new card from every refill. Never-seen cards have no
 	// user_card_state row at all, hence the LEFT JOIN and the COALESCEd columns.
+	// The review cutoff for the per-deck daily review cap (#115): the (due, id) of the card ranked
+	// last within the deck's remaining review allowance, in the same order this query serves
+	// review-state cards in. LATERAL + "ON true" makes it an uncorrelated one-row subquery Postgres
+	// evaluates once per fetch, same InitPlan shape as the new-card cutoff below; a LEFT JOIN so a
+	// deck with fewer review-state cards than the allowance still returns a row (cutoff_due NULL).
 	ListDueCardsForStudy(ctx context.Context, arg ListDueCardsForStudyParams) ([]ListDueCardsForStudyRow, error)
 	// The idempotency check (architecture.md §6). Deliberately NOT scoped to user_id: review_log.id is a
 	// global primary key, so an id taken by anyone is taken here -- scoping it would let ON CONFLICT drop

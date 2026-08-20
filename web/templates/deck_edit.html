@@ -11,6 +11,10 @@
     <input type="number" id="new_per_day" name="new_per_day" min="0" max="9999" step="1" value="{{.NewPerDay}}" required>
     <small>0 introduces no new cards from this deck. Due and learning cards are never limited.</small>
 
+    <label for="rev_per_day">Reviews per day</label>
+    <input type="number" id="rev_per_day" name="rev_per_day" min="0" max="9999" step="1" value="{{.RevPerDay}}" required>
+    <small>0 serves no due cards from this deck. Enforced independently of new cards per day.</small>
+
     <button type="submit">Save</button>
 </form>
 
