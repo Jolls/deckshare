@@ -9,6 +9,7 @@ require (
 	github.com/klauspost/compress v1.19.2
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/open-spaced-repetition/go-fsrs/v4 v4.0.0
+	golang.org/x/net v0.51.0
 	golang.org/x/text v0.41.0
 	modernc.org/sqlite v1.56.0
 )
@@ -24,7 +25,6 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	golang.org/x/crypto v0.49.0 // indirect
-	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	modernc.org/libc v1.74.4 // indirect

@@ -470,6 +470,35 @@ func TestImport_MediaWrittenToStoreAndDB(t *testing.T) {
 	}
 }
 
+// http.DetectContentType has no signature for SVG (XML, no fixed magic bytes) and falls back to
+// text/plain, which browsers refuse to render inside <img>. detectMediaMime must prefer the
+// original filename's extension instead.
+func TestImport_MediaMimeFromExtension(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	ownerID := seedUser(t, tx)
+	store := testMediaStore(t)
+	q := db.New(tx)
+
+	spec := defaultSynthSpec(t)
+	pkg := buildSchema11Package(t, spec)
+	col := readBytes(t, pkg)
+	m := syntheticMedia("flag.svg", []byte("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"))
+	col.Media = []IrMedia{m}
+
+	if _, err := Import(ctx, tx, ownerID, col, time.Now(), store); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	blob, err := q.GetMediaBlob(ctx, m.SHA256)
+	if err != nil {
+		t.Fatalf("GetMediaBlob: %v", err)
+	}
+	if blob.Mime != "image/svg+xml" {
+		t.Errorf("Mime = %q, want image/svg+xml", blob.Mime)
+	}
+}
+
 // Re-importing the same package a second time must not duplicate the blob row or error on the
 // already-written file (CLAUDE.md §2.2's re-import idempotency, extended to media).
 func TestImport_MediaReimportIsIdempotent(t *testing.T) {

@@ -1,6 +1,9 @@
 -- name: GetMediaRef :one
 SELECT * FROM media_refs WHERE deck_id = $1 AND filename = $2;
 
+-- name: ListMediaRefsForDeck :many
+SELECT * FROM media_refs WHERE deck_id = $1;
+
 -- First-seen-wins (docs/schema.md, Media): within one import collectMedia already resolves a
 -- same-name collision before this is ever called; ON CONFLICT DO NOTHING extends the same policy
 -- across re-imports -- the first ref a name ever got, on that deck, is the one kept.

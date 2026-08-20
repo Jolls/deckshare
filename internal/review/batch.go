@@ -128,6 +128,19 @@ func BuildBatch(ctx context.Context, store db.DBTX, p fsrs.Params, userID, deckI
 		fieldsByNoteType[f.NoteTypeID] = append(fieldsByNoteType[f.NoteTypeID], f)
 	}
 
+	mediaRefs, err := q.ListMediaRefsForDeck(ctx, deckID)
+	if err != nil {
+		return Batch{}, fmt.Errorf("review: list media refs: %w", err)
+	}
+	mediaByFilename := make(map[string]string, len(mediaRefs))
+	for _, m := range mediaRefs {
+		mediaByFilename[m.Filename] = m.Sha256
+	}
+	resolveMedia := func(filename string) (string, bool) {
+		sha, ok := mediaByFilename[filename]
+		return sha, ok
+	}
+
 	cards := make([]Card, 0, len(rows))
 	for _, r := range rows {
 		var fieldValues []string
@@ -156,6 +169,8 @@ func BuildBatch(ctx context.Context, store db.DBTX, p fsrs.Params, userID, deckI
 		if err != nil {
 			return Batch{}, fmt.Errorf("review: render card %s: %w", r.CardID.String(), err)
 		}
+		rendered.Question.HTML = template.HTML(render.RewriteMediaSrcs(string(rendered.Question.HTML), resolveMedia))
+		rendered.Answer.HTML = template.HTML(render.RewriteMediaSrcs(string(rendered.Answer.HTML), resolveMedia))
 
 		prior := fsrs.CardState{
 			Due:           r.Due.Time,

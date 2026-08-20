@@ -165,6 +165,7 @@ type Querier interface {
 	ListFieldsForNoteType(ctx context.Context, noteTypeID pgtype.UUID) ([]Field, error)
 	ListFieldsForNoteTypes(ctx context.Context, noteTypeIds []pgtype.UUID) ([]ListFieldsForNoteTypesRow, error)
 	ListFieldsForOwner(ctx context.Context, ownerID pgtype.UUID) ([]Field, error)
+	ListMediaRefsForDeck(ctx context.Context, deckID pgtype.UUID) ([]MediaRef, error)
 	ListNoteIDsOfNoteType(ctx context.Context, noteTypeID pgtype.UUID) ([]pgtype.UUID, error)
 	// Note-type CSS for every card in the deck: sanitised once per page, never per card (#55's doc
 	// comment), so a refilled card can never arrive before its styles.
