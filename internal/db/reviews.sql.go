@@ -149,6 +149,43 @@ func (q *Queries) CountQueueForUser(ctx context.Context, arg CountQueueForUserPa
 	return items, nil
 }
 
+const countReviewedToday = `-- name: CountReviewedToday :one
+SELECT count(DISTINCT rl.card_id)::bigint AS reviewed_count
+FROM review_log rl
+JOIN cards c       ON c.id = rl.card_id
+JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $1
+                   AND da.can_view AND da.can_study
+WHERE rl.user_id = $1
+  AND c.deck_id = $2
+  AND rl.state_before = 2
+  AND rl.reviewed_at >= $3::timestamptz
+  AND rl.reviewed_at <  $4::timestamptz
+`
+
+type CountReviewedTodayParams struct {
+	UserID        pgtype.UUID        `json:"user_id"`
+	DeckID        pgtype.UUID        `json:"deck_id"`
+	StudyDayStart pgtype.Timestamptz `json:"study_day_start"`
+	StudyDayEnd   pgtype.Timestamptz `json:"study_day_end"`
+}
+
+// Review-state (state=2) cards answered inside the current study day, for one deck (#115), the
+// rev.perDay counterpart to CountNewIntroducedToday above. rl.state_before = 2 marks "this card
+// was already in review state when answered" -- the same marker ListDueCardsForStudy's rev_cutoff
+// excludes past the allowance. count(DISTINCT card_id), not count(*), for the same out-of-order
+// replay reason as CountNewIntroducedToday.
+func (q *Queries) CountReviewedToday(ctx context.Context, arg CountReviewedTodayParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countReviewedToday,
+		arg.UserID,
+		arg.DeckID,
+		arg.StudyDayStart,
+		arg.StudyDayEnd,
+	)
+	var reviewed_count int64
+	err := row.Scan(&reviewed_count)
+	return reviewed_count, err
+}
+
 const getDeckForStudy = `-- name: GetDeckForStudy :one
 SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id
 FROM decks d
@@ -220,39 +257,87 @@ func (q *Queries) GetStudyDayWindow(ctx context.Context, arg GetStudyDayWindowPa
 }
 
 const listDueCardsForStudy = `-- name: ListDueCardsForStudy :many
-SELECT c.id                                        AS card_id,
-       c.ordinal                                   AS card_ordinal,
-       COALESCE(ucs.due, 'infinity'::timestamptz)  AS queue_key,
-       (ucs.user_id IS NULL)::boolean              AS unseen,
-       COALESCE(ucs.due, now())                    AS due,
-       COALESCE(ucs.stability, 0)::double precision  AS stability,
-       COALESCE(ucs.difficulty, 0)::double precision AS difficulty,
-       COALESCE(ucs.state, 0)::smallint            AS state,
-       COALESCE(ucs.reps, 0)::int                  AS reps,
-       COALESCE(ucs.lapses, 0)::int                AS lapses,
-       COALESCE(ucs.scheduled_days, 0)::int        AS scheduled_days,
-       COALESCE(ucs.learning_steps, 0)::smallint   AS learning_steps,
-       ucs.last_review                             AS last_review,
-       n.fields                                    AS note_fields,
-       n.tags                                      AS note_tags,
-       nt.id                                       AS note_type_id,
-       nt.name                                     AS note_type_name,
-       nt.is_cloze                                 AS is_cloze,
-       t.name                                      AS template_name,
-       t.qfmt                                      AS qfmt,
-       t.afmt                                      AS afmt
-FROM cards c
-JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $1
-                   AND da.can_view AND da.can_study
-JOIN notes n       ON n.id = c.note_id
-JOIN note_types nt ON nt.id = n.note_type_id
-JOIN templates t   ON t.id = c.template_id
-LEFT JOIN user_card_state ucs ON ucs.user_id = $1 AND ucs.card_id = c.id
-WHERE c.deck_id = $2
-  AND NOT COALESCE(ucs.suspended, false)
-  AND (ucs.buried_until IS NULL OR ucs.buried_until <= ($3::timestamptz)::date)
-  AND (ucs.due IS NULL OR ucs.due < $4::timestamptz)
-  AND (ucs.last_review IS NULL OR ucs.last_review < $3::timestamptz)
+WITH scored AS (
+    SELECT c.id                                        AS card_id,
+           c.ordinal                                   AS card_ordinal,
+           (ucs.user_id IS NULL)::boolean               AS unseen,
+           COALESCE(ucs.due, now())                    AS due,
+           COALESCE(ucs.stability, 0)::double precision  AS stability,
+           COALESCE(ucs.difficulty, 0)::double precision AS difficulty,
+           COALESCE(ucs.state, 0)::smallint            AS state,
+           COALESCE(ucs.reps, 0)::int                  AS reps,
+           COALESCE(ucs.lapses, 0)::int                AS lapses,
+           COALESCE(ucs.scheduled_days, 0)::int        AS scheduled_days,
+           COALESCE(ucs.learning_steps, 0)::smallint   AS learning_steps,
+           ucs.last_review                             AS last_review,
+           n.fields                                    AS note_fields,
+           n.tags                                      AS note_tags,
+           nt.id                                       AS note_type_id,
+           nt.name                                     AS note_type_name,
+           nt.is_cloze                                 AS is_cloze,
+           t.name                                      AS template_name,
+           t.qfmt                                      AS qfmt,
+           t.afmt                                      AS afmt,
+           COALESCE(ucs.suspended, false)               AS suspended,
+           ucs.buried_until                            AS buried_until,
+           CASE
+               WHEN ucs.user_id IS NULL THEN 0::double precision
+               WHEN $2::text = 'random' THEN
+                   ('x' || md5(c.id::text || $3::text))
+                   ::bit(52)::bigint::double precision
+               WHEN $2::text = 'intervalAsc' THEN ucs.scheduled_days::double precision
+               WHEN $2::text = 'intervalDesc' THEN (-ucs.scheduled_days)::double precision
+               ELSE extract(epoch from ucs.due)
+           END                                          AS raw_key
+    FROM cards c
+    JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $4
+                       AND da.can_view AND da.can_study
+    JOIN notes n       ON n.id = c.note_id
+    JOIN note_types nt ON nt.id = n.note_type_id
+    JOIN templates t   ON t.id = c.template_id
+    LEFT JOIN user_card_state ucs ON ucs.user_id = $4 AND ucs.card_id = c.id
+    WHERE c.deck_id = $5
+)
+SELECT scored.card_id, scored.card_ordinal, scored.unseen, scored.due, scored.stability,
+       scored.difficulty, scored.state, scored.reps, scored.lapses, scored.scheduled_days,
+       scored.learning_steps, scored.last_review, scored.note_fields, scored.note_tags,
+       scored.note_type_id, scored.note_type_name, scored.is_cloze, scored.template_name,
+       scored.qfmt, scored.afmt,
+       -- group_bit is its own ORDER BY/cursor column, not folded into sort_key by arithmetic --
+       -- float8 has ~15-17 significant decimal digits total, so "add a big constant to select
+       -- the group" (an earlier version of this query) silently loses raw_key's low digits once
+       -- the constant is large enough to dominate, corrupting the ordering within the offset
+       -- group. beforeReviews puts never-seen first (group_bit 0), reviews second (group_bit 1);
+       -- afterReviews (the default) is the reverse.
+       (CASE WHEN $1::text = 'beforeReviews' THEN (NOT scored.unseen)::int ELSE scored.unseen::int END)
+           AS group_bit,
+       scored.raw_key::double precision AS sort_key
+FROM scored
+LEFT JOIN LATERAL (
+    SELECT (CASE
+                WHEN $2::text = 'random' THEN
+                    ('x' || md5(c2.id::text || $3::text))
+                    ::bit(52)::bigint::double precision
+                WHEN $2::text = 'intervalAsc' THEN u2.scheduled_days::double precision
+                WHEN $2::text = 'intervalDesc' THEN (-u2.scheduled_days)::double precision
+                ELSE extract(epoch from u2.due)
+            END) AS cutoff_key,
+           c2.id AS cutoff_id
+    FROM cards c2
+    JOIN user_card_state u2 ON u2.user_id = $4 AND u2.card_id = c2.id
+    WHERE c2.deck_id = $5 AND u2.state = 2
+      AND NOT u2.suspended
+      AND (u2.buried_until IS NULL OR u2.buried_until <= ($6::timestamptz)::date)
+      AND u2.due < $7::timestamptz
+      AND (u2.last_review IS NULL OR u2.last_review < $6::timestamptz)
+    ORDER BY cutoff_key, c2.id
+    OFFSET GREATEST($8::int - 1, 0)
+    LIMIT 1
+) rev_cutoff ON true
+WHERE NOT scored.suspended
+  AND (scored.buried_until IS NULL OR scored.buried_until <= ($6::timestamptz)::date)
+  AND (scored.unseen OR scored.due < $7::timestamptz)
+  AND (scored.last_review IS NULL OR scored.last_review < $6::timestamptz)
   -- The per-deck daily new-card cap (#101). new_remaining is the deck's configured limit minus what
   -- has already been introduced today; the caller computes it. The subselect is uncorrelated, so
   -- Postgres runs it once per fetch as an InitPlan: it is the id of the last never-seen card still
@@ -264,39 +349,54 @@ WHERE c.deck_id = $2
   -- allowance" -- all of them pass. GREATEST keeps OFFSET non-negative: the InitPlan is evaluated
   -- even when the new_remaining > 0 guard is false. Suspended/buried are not re-checked here
   -- because a card with no user_card_state row can be neither.
-  AND (ucs.user_id IS NOT NULL
-       OR ($5::int > 0
-           AND c.id <= COALESCE((
+  AND (NOT scored.unseen
+       OR ($9::int > 0
+           AND scored.card_id <= COALESCE((
                  SELECT c2.id
                  FROM cards c2
                  LEFT JOIN user_card_state u2
-                        ON u2.user_id = $1 AND u2.card_id = c2.id
-                 WHERE c2.deck_id = $2 AND u2.user_id IS NULL
+                        ON u2.user_id = $4 AND u2.card_id = c2.id
+                 WHERE c2.deck_id = $5 AND u2.user_id IS NULL
                  ORDER BY c2.id
-                 OFFSET GREATEST($5::int - 1, 0)
+                 OFFSET GREATEST($9::int - 1, 0)
                  LIMIT 1
                ), 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid)))
-  AND (COALESCE(ucs.due, 'infinity'::timestamptz), c.id)
-      > ($6::timestamptz, $7::uuid)
-ORDER BY queue_key, c.id
-LIMIT $8
+  -- The per-deck daily review cap (#115), independent of the new-card cap above. rev_remaining is
+  -- the deck's configured limit minus what's already been reviewed today; the caller computes it.
+  -- Row comparison against rev_cutoff (the (raw_key,id) at the allowance boundary, computed above)
+  -- keeps a review-state card in only if it ranks at or before that boundary; cutoff_key NULL
+  -- means fewer review-state cards exist than the allowance, so nothing is excluded. Never-seen
+  -- and learning/relearning cards (state 0, 1, 3) are unaffected.
+  AND (scored.state IS DISTINCT FROM 2
+       OR ($8::int > 0
+           AND (rev_cutoff.cutoff_key IS NULL
+                OR (scored.raw_key, scored.card_id) <= (rev_cutoff.cutoff_key, rev_cutoff.cutoff_id))))
+  AND ((CASE WHEN $1::text = 'beforeReviews' THEN (NOT scored.unseen)::int ELSE scored.unseen::int END),
+        scored.raw_key, scored.card_id)
+      > ($10::int, $11::double precision, $12::uuid)
+ORDER BY group_bit, sort_key, scored.card_id
+LIMIT $13
 `
 
 type ListDueCardsForStudyParams struct {
-	UserID        pgtype.UUID        `json:"user_id"`
-	DeckID        pgtype.UUID        `json:"deck_id"`
-	StudyDayStart pgtype.Timestamptz `json:"study_day_start"`
-	StudyDayEnd   pgtype.Timestamptz `json:"study_day_end"`
-	NewRemaining  int32              `json:"new_remaining"`
-	CursorDue     pgtype.Timestamptz `json:"cursor_due"`
-	CursorCardID  pgtype.UUID        `json:"cursor_card_id"`
-	BatchSize     int32              `json:"batch_size"`
+	NewMix         string             `json:"new_mix"`
+	RevOrder       string             `json:"rev_order"`
+	HashSeed       string             `json:"hash_seed"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	DeckID         pgtype.UUID        `json:"deck_id"`
+	StudyDayStart  pgtype.Timestamptz `json:"study_day_start"`
+	StudyDayEnd    pgtype.Timestamptz `json:"study_day_end"`
+	RevRemaining   int32              `json:"rev_remaining"`
+	NewRemaining   int32              `json:"new_remaining"`
+	CursorGroupBit int32              `json:"cursor_group_bit"`
+	CursorKey      float64            `json:"cursor_key"`
+	CursorCardID   pgtype.UUID        `json:"cursor_card_id"`
+	BatchSize      int32              `json:"batch_size"`
 }
 
 type ListDueCardsForStudyRow struct {
 	CardID        pgtype.UUID        `json:"card_id"`
 	CardOrdinal   int32              `json:"card_ordinal"`
-	QueueKey      pgtype.Timestamptz `json:"queue_key"`
 	Unseen        bool               `json:"unseen"`
 	Due           pgtype.Timestamptz `json:"due"`
 	Stability     float64            `json:"stability"`
@@ -315,20 +415,46 @@ type ListDueCardsForStudyRow struct {
 	TemplateName  string             `json:"template_name"`
 	Qfmt          string             `json:"qfmt"`
 	Afmt          string             `json:"afmt"`
+	GroupBit      int32              `json:"group_bit"`
+	SortKey       float64            `json:"sort_key"`
 }
 
-// The queue. Keyset over (COALESCE(due,'infinity'), card_id): due reviews first by due date, then
-// never-seen cards by id. 'infinity' (not NULL) keeps the sort key total -- a NULL inside the row
-// comparison below would silently drop every new card from every refill. Never-seen cards have no
-// user_card_state row at all, hence the LEFT JOIN and the COALESCEd columns.
+// The queue, configurable per deck (#116): decks.preset "rev.order" picks the review-state sort
+// key ('due' -- the original and Anki's classic default -- 'random', 'intervalAsc',
+// 'intervalDesc'), "new.mix" picks whether never-seen cards sort as a group before or after
+// everything else ('afterReviews' -- the original default -- or 'beforeReviews'; 'mixed' bypasses
+// this query entirely, see ListReviewCardsForStudy/ListNewCardsForStudy below).
+//
+// `scored` computes each row's raw_key once: 0 for a never-seen row (never-seen cards are always
+// ordered by id -- new-card gather order is out of scope, #117 -- so their raw_key only has to be
+// a value, not a meaningful one), otherwise the rev_order-selected expression. Recomputing it a
+// second time per row (once for the CASE, once for a plain column reference) would risk the two
+// copies drifting; a CTE lets the outer query reference it as an ordinary column instead.
+//
+// The outer query also computes group_bit -- 0/1 depending on new_mix -- so the two groups
+// (never-seen vs. everything else) always sort as a whole ahead of/behind each other. group_bit
+// is its own ORDER BY/cursor column rather than an offset folded into sort_key by arithmetic: see
+// the doc comment on group_bit's SELECT expression below for why. Keyset cursor and ORDER BY both
+// key on (group_bit, sort_key, card_id).
+// The review cutoff for the per-deck daily review cap (#115): the (raw_key, id) of the card
+// ranked last within the deck's remaining review allowance, in the same rev_order this query
+// serves review-state cards in. LATERAL + "ON true" makes it an uncorrelated one-row subquery
+// Postgres evaluates once per fetch, same InitPlan shape as the new-card cutoff below; a LEFT
+// JOIN so a deck with fewer review-state cards than the allowance still returns a row
+// (cutoff_key NULL).
 func (q *Queries) ListDueCardsForStudy(ctx context.Context, arg ListDueCardsForStudyParams) ([]ListDueCardsForStudyRow, error) {
 	rows, err := q.db.Query(ctx, listDueCardsForStudy,
+		arg.NewMix,
+		arg.RevOrder,
+		arg.HashSeed,
 		arg.UserID,
 		arg.DeckID,
 		arg.StudyDayStart,
 		arg.StudyDayEnd,
+		arg.RevRemaining,
 		arg.NewRemaining,
-		arg.CursorDue,
+		arg.CursorGroupBit,
+		arg.CursorKey,
 		arg.CursorCardID,
 		arg.BatchSize,
 	)
@@ -342,7 +468,6 @@ func (q *Queries) ListDueCardsForStudy(ctx context.Context, arg ListDueCardsForS
 		if err := rows.Scan(
 			&i.CardID,
 			&i.CardOrdinal,
-			&i.QueueKey,
 			&i.Unseen,
 			&i.Due,
 			&i.Stability,
@@ -353,6 +478,129 @@ func (q *Queries) ListDueCardsForStudy(ctx context.Context, arg ListDueCardsForS
 			&i.ScheduledDays,
 			&i.LearningSteps,
 			&i.LastReview,
+			&i.NoteFields,
+			&i.NoteTags,
+			&i.NoteTypeID,
+			&i.NoteTypeName,
+			&i.IsCloze,
+			&i.TemplateName,
+			&i.Qfmt,
+			&i.Afmt,
+			&i.GroupBit,
+			&i.SortKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listNewCardsForStudy = `-- name: ListNewCardsForStudy :many
+SELECT c.id                                        AS card_id,
+       c.ordinal                                   AS card_ordinal,
+       now()::timestamptz                          AS due,
+       0::double precision                          AS stability,
+       0::double precision                          AS difficulty,
+       0::smallint                                  AS state,
+       0::int                                       AS reps,
+       0::int                                       AS lapses,
+       0::int                                       AS scheduled_days,
+       0::smallint                                  AS learning_steps,
+       n.fields                                    AS note_fields,
+       n.tags                                      AS note_tags,
+       nt.id                                       AS note_type_id,
+       nt.name                                     AS note_type_name,
+       nt.is_cloze                                 AS is_cloze,
+       t.name                                      AS template_name,
+       t.qfmt                                      AS qfmt,
+       t.afmt                                      AS afmt
+FROM cards c
+JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $1
+                   AND da.can_view AND da.can_study
+JOIN notes n       ON n.id = c.note_id
+JOIN note_types nt ON nt.id = n.note_type_id
+JOIN templates t   ON t.id = c.template_id
+LEFT JOIN user_card_state ucs ON ucs.user_id = $1 AND ucs.card_id = c.id
+WHERE c.deck_id = $2
+  AND ucs.user_id IS NULL
+  AND $3::int > 0
+  AND c.id <= COALESCE((
+        SELECT c2.id
+        FROM cards c2
+        LEFT JOIN user_card_state u2
+               ON u2.user_id = $1 AND u2.card_id = c2.id
+        WHERE c2.deck_id = $2 AND u2.user_id IS NULL
+        ORDER BY c2.id
+        OFFSET GREATEST($3::int - 1, 0)
+        LIMIT 1
+      ), 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid)
+  AND c.id > $4::uuid
+ORDER BY c.id
+LIMIT $5
+`
+
+type ListNewCardsForStudyParams struct {
+	UserID       pgtype.UUID `json:"user_id"`
+	DeckID       pgtype.UUID `json:"deck_id"`
+	NewRemaining int32       `json:"new_remaining"`
+	CursorCardID pgtype.UUID `json:"cursor_card_id"`
+	BatchSize    int32       `json:"batch_size"`
+}
+
+type ListNewCardsForStudyRow struct {
+	CardID        pgtype.UUID        `json:"card_id"`
+	CardOrdinal   int32              `json:"card_ordinal"`
+	Due           pgtype.Timestamptz `json:"due"`
+	Stability     float64            `json:"stability"`
+	Difficulty    float64            `json:"difficulty"`
+	State         int16              `json:"state"`
+	Reps          int32              `json:"reps"`
+	Lapses        int32              `json:"lapses"`
+	ScheduledDays int32              `json:"scheduled_days"`
+	LearningSteps int16              `json:"learning_steps"`
+	NoteFields    []byte             `json:"note_fields"`
+	NoteTags      []string           `json:"note_tags"`
+	NoteTypeID    pgtype.UUID        `json:"note_type_id"`
+	NoteTypeName  string             `json:"note_type_name"`
+	IsCloze       bool               `json:"is_cloze"`
+	TemplateName  string             `json:"template_name"`
+	Qfmt          string             `json:"qfmt"`
+	Afmt          string             `json:"afmt"`
+}
+
+// The never-seen half of mixed new/review interleaving (#116): identical to ListDueCardsForStudy's
+// never-seen branch, ordered by id (new-card gather order is out of scope, #117), keyset over
+// card_id alone. BuildBatch interleaves the two result sets in Go.
+func (q *Queries) ListNewCardsForStudy(ctx context.Context, arg ListNewCardsForStudyParams) ([]ListNewCardsForStudyRow, error) {
+	rows, err := q.db.Query(ctx, listNewCardsForStudy,
+		arg.UserID,
+		arg.DeckID,
+		arg.NewRemaining,
+		arg.CursorCardID,
+		arg.BatchSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNewCardsForStudyRow
+	for rows.Next() {
+		var i ListNewCardsForStudyRow
+		if err := rows.Scan(
+			&i.CardID,
+			&i.CardOrdinal,
+			&i.Due,
+			&i.Stability,
+			&i.Difficulty,
+			&i.State,
+			&i.Reps,
+			&i.Lapses,
+			&i.ScheduledDays,
+			&i.LearningSteps,
 			&i.NoteFields,
 			&i.NoteTags,
 			&i.NoteTypeID,
@@ -404,6 +652,178 @@ func (q *Queries) ListNoteTypeCSSForDeck(ctx context.Context, arg ListNoteTypeCS
 	for rows.Next() {
 		var i ListNoteTypeCSSForDeckRow
 		if err := rows.Scan(&i.ID, &i.Css); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReviewCardsForStudy = `-- name: ListReviewCardsForStudy :many
+WITH scored AS (
+    SELECT c.id                                        AS card_id,
+           c.ordinal                                   AS card_ordinal,
+           COALESCE(ucs.due, now())                    AS due,
+           ucs.stability::double precision              AS stability,
+           ucs.difficulty::double precision             AS difficulty,
+           ucs.state::smallint                         AS state,
+           ucs.reps::int                                AS reps,
+           ucs.lapses::int                              AS lapses,
+           ucs.scheduled_days::int                      AS scheduled_days,
+           ucs.learning_steps::smallint                AS learning_steps,
+           ucs.last_review                             AS last_review,
+           n.fields                                    AS note_fields,
+           n.tags                                      AS note_tags,
+           nt.id                                       AS note_type_id,
+           nt.name                                     AS note_type_name,
+           nt.is_cloze                                 AS is_cloze,
+           t.name                                      AS template_name,
+           t.qfmt                                      AS qfmt,
+           t.afmt                                      AS afmt,
+           ucs.suspended                                AS suspended,
+           ucs.buried_until                            AS buried_until,
+           (CASE
+               WHEN $1::text = 'random' THEN
+                   ('x' || md5(c.id::text || $2::text))
+                   ::bit(52)::bigint::double precision
+               WHEN $1::text = 'intervalAsc' THEN ucs.scheduled_days::double precision
+               WHEN $1::text = 'intervalDesc' THEN (-ucs.scheduled_days)::double precision
+               ELSE extract(epoch from ucs.due)
+           END)                                         AS raw_key
+    FROM cards c
+    JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $3
+                       AND da.can_view AND da.can_study
+    JOIN notes n       ON n.id = c.note_id
+    JOIN note_types nt ON nt.id = n.note_type_id
+    JOIN templates t   ON t.id = c.template_id
+    JOIN user_card_state ucs ON ucs.user_id = $3 AND ucs.card_id = c.id
+    WHERE c.deck_id = $4
+)
+SELECT scored.card_id, scored.card_ordinal, scored.due, scored.stability, scored.difficulty,
+       scored.state, scored.reps, scored.lapses, scored.scheduled_days, scored.learning_steps,
+       scored.last_review, scored.note_fields, scored.note_tags, scored.note_type_id,
+       scored.note_type_name, scored.is_cloze, scored.template_name, scored.qfmt, scored.afmt,
+       scored.raw_key::double precision AS sort_key
+FROM scored
+LEFT JOIN LATERAL (
+    SELECT (CASE
+                WHEN $1::text = 'random' THEN
+                    ('x' || md5(c2.id::text || $2::text))
+                    ::bit(52)::bigint::double precision
+                WHEN $1::text = 'intervalAsc' THEN u2.scheduled_days::double precision
+                WHEN $1::text = 'intervalDesc' THEN (-u2.scheduled_days)::double precision
+                ELSE extract(epoch from u2.due)
+            END) AS cutoff_key,
+           c2.id AS cutoff_id
+    FROM cards c2
+    JOIN user_card_state u2 ON u2.user_id = $3 AND u2.card_id = c2.id
+    WHERE c2.deck_id = $4 AND u2.state = 2
+      AND NOT u2.suspended
+      AND (u2.buried_until IS NULL OR u2.buried_until <= ($5::timestamptz)::date)
+      AND u2.due < $6::timestamptz
+      AND (u2.last_review IS NULL OR u2.last_review < $5::timestamptz)
+    ORDER BY cutoff_key, c2.id
+    OFFSET GREATEST($7::int - 1, 0)
+    LIMIT 1
+) rev_cutoff ON true
+WHERE NOT scored.suspended
+  AND (scored.buried_until IS NULL OR scored.buried_until <= ($5::timestamptz)::date)
+  AND scored.due < $6::timestamptz
+  AND (scored.last_review IS NULL OR scored.last_review < $5::timestamptz)
+  AND (scored.state IS DISTINCT FROM 2
+       OR ($7::int > 0
+           AND (rev_cutoff.cutoff_key IS NULL
+                OR (scored.raw_key, scored.card_id) <= (rev_cutoff.cutoff_key, rev_cutoff.cutoff_id))))
+  AND (scored.raw_key, scored.card_id) > ($8::double precision, $9::uuid)
+ORDER BY sort_key, scored.card_id
+LIMIT $10
+`
+
+type ListReviewCardsForStudyParams struct {
+	RevOrder      string             `json:"rev_order"`
+	HashSeed      string             `json:"hash_seed"`
+	UserID        pgtype.UUID        `json:"user_id"`
+	DeckID        pgtype.UUID        `json:"deck_id"`
+	StudyDayStart pgtype.Timestamptz `json:"study_day_start"`
+	StudyDayEnd   pgtype.Timestamptz `json:"study_day_end"`
+	RevRemaining  int32              `json:"rev_remaining"`
+	CursorKey     float64            `json:"cursor_key"`
+	CursorCardID  pgtype.UUID        `json:"cursor_card_id"`
+	BatchSize     int32              `json:"batch_size"`
+}
+
+type ListReviewCardsForStudyRow struct {
+	CardID        pgtype.UUID        `json:"card_id"`
+	CardOrdinal   int32              `json:"card_ordinal"`
+	Due           pgtype.Timestamptz `json:"due"`
+	Stability     float64            `json:"stability"`
+	Difficulty    float64            `json:"difficulty"`
+	State         int16              `json:"state"`
+	Reps          int32              `json:"reps"`
+	Lapses        int32              `json:"lapses"`
+	ScheduledDays int32              `json:"scheduled_days"`
+	LearningSteps int16              `json:"learning_steps"`
+	LastReview    pgtype.Timestamptz `json:"last_review"`
+	NoteFields    []byte             `json:"note_fields"`
+	NoteTags      []string           `json:"note_tags"`
+	NoteTypeID    pgtype.UUID        `json:"note_type_id"`
+	NoteTypeName  string             `json:"note_type_name"`
+	IsCloze       bool               `json:"is_cloze"`
+	TemplateName  string             `json:"template_name"`
+	Qfmt          string             `json:"qfmt"`
+	Afmt          string             `json:"afmt"`
+	SortKey       float64            `json:"sort_key"`
+}
+
+// The review-state half of mixed new/review interleaving (#116, decks.preset "new.mix" =
+// "mixed"): the same review-side filters and rev_order as ListDueCardsForStudy above, minus
+// never-seen cards entirely (those come from ListNewCardsForStudy) and minus the group-prefix
+// bit (there is only one group here). BuildBatch interleaves the two result sets in Go.
+func (q *Queries) ListReviewCardsForStudy(ctx context.Context, arg ListReviewCardsForStudyParams) ([]ListReviewCardsForStudyRow, error) {
+	rows, err := q.db.Query(ctx, listReviewCardsForStudy,
+		arg.RevOrder,
+		arg.HashSeed,
+		arg.UserID,
+		arg.DeckID,
+		arg.StudyDayStart,
+		arg.StudyDayEnd,
+		arg.RevRemaining,
+		arg.CursorKey,
+		arg.CursorCardID,
+		arg.BatchSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListReviewCardsForStudyRow
+	for rows.Next() {
+		var i ListReviewCardsForStudyRow
+		if err := rows.Scan(
+			&i.CardID,
+			&i.CardOrdinal,
+			&i.Due,
+			&i.Stability,
+			&i.Difficulty,
+			&i.State,
+			&i.Reps,
+			&i.Lapses,
+			&i.ScheduledDays,
+			&i.LearningSteps,
+			&i.LastReview,
+			&i.NoteFields,
+			&i.NoteTags,
+			&i.NoteTypeID,
+			&i.NoteTypeName,
+			&i.IsCloze,
+			&i.TemplateName,
+			&i.Qfmt,
+			&i.Afmt,
+			&i.SortKey,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -48,3 +48,51 @@ func TestNewRemaining(t *testing.T) {
 		})
 	}
 }
+
+func TestRevPerDay(t *testing.T) {
+	cases := []struct {
+		name   string
+		preset []byte
+		want   int32
+	}{
+		{"nil", nil, DefaultRevPerDay},
+		{"empty object", []byte(`{}`), DefaultRevPerDay},
+		{"rev present, perDay absent", []byte(`{"rev":{}}`), DefaultRevPerDay},
+		{"zero", []byte(`{"rev":{"perDay":0}}`), 0},
+		{"five", []byte(`{"rev":{"perDay":5}}`), 5},
+		{"negative", []byte(`{"rev":{"perDay":-1}}`), DefaultRevPerDay},
+		{"over max", []byte(`{"rev":{"perDay":10000}}`), DefaultRevPerDay},
+		{"wrong type", []byte(`{"rev":{"perDay":"20"}}`), DefaultRevPerDay},
+		{"not json", []byte(`not json`), DefaultRevPerDay},
+		{"new key present, rev absent", []byte(`{"new":{"perDay":5}}`), DefaultRevPerDay},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := RevPerDay(c.preset); got != c.want {
+				t.Errorf("RevPerDay(%s) = %d, want %d", c.preset, got, c.want)
+			}
+		})
+	}
+}
+
+func TestRevRemaining(t *testing.T) {
+	cases := []struct {
+		name          string
+		perDay        int32
+		reviewedToday int64
+		want          int32
+	}{
+		{"none reviewed", 200, 0, 200},
+		{"partial", 200, 150, 50},
+		{"exactly at limit", 200, 200, 0},
+		{"over limit", 200, 250, 0},
+		{"zero perDay", 0, 0, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := RevRemaining(c.perDay, c.reviewedToday); got != c.want {
+				t.Errorf("RevRemaining(%d, %d) = %d, want %d", c.perDay, c.reviewedToday, got, c.want)
+			}
+		})
+	}
+}

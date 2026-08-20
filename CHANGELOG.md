@@ -3,6 +3,17 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.29] - 2026-08-19
+
+### Added
+- Per-deck daily review-card limit (`rev.perDay`, default 200), enforced independently of the
+  existing `new.perDay` cap, editable from `/decks/{id}/edit`
+  ([#115](https://github.com/Jolls/enshu/issues/115)).
+- Configurable per-deck review order (`rev.order`: due date, random, ascending/descending
+  intervals) and new/review interleaving (`new.mix`: reviews first, new cards first, or mixed),
+  editable from `/decks/{id}/edit`
+  ([#116](https://github.com/Jolls/enshu/issues/116)).
+
 ## [0.1.28] - 2026-08-19
 
 ### Fixed

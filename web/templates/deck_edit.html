@@ -11,6 +11,25 @@
     <input type="number" id="new_per_day" name="new_per_day" min="0" max="9999" step="1" value="{{.NewPerDay}}" required>
     <small>0 introduces no new cards from this deck. Due and learning cards are never limited.</small>
 
+    <label for="rev_per_day">Reviews per day</label>
+    <input type="number" id="rev_per_day" name="rev_per_day" min="0" max="9999" step="1" value="{{.RevPerDay}}" required>
+    <small>0 serves no due cards from this deck. Enforced independently of new cards per day.</small>
+
+    <label for="rev_order">Review order</label>
+    <select id="rev_order" name="rev_order" required>
+        <option value="due" {{if eq (print .RevOrder) "due"}}selected{{end}}>Due date</option>
+        <option value="random" {{if eq (print .RevOrder) "random"}}selected{{end}}>Random</option>
+        <option value="intervalAsc" {{if eq (print .RevOrder) "intervalAsc"}}selected{{end}}>Ascending intervals</option>
+        <option value="intervalDesc" {{if eq (print .RevOrder) "intervalDesc"}}selected{{end}}>Descending intervals</option>
+    </select>
+
+    <label for="new_mix">New/review order</label>
+    <select id="new_mix" name="new_mix" required>
+        <option value="afterReviews" {{if eq (print .NewMix) "afterReviews"}}selected{{end}}>Reviews first</option>
+        <option value="beforeReviews" {{if eq (print .NewMix) "beforeReviews"}}selected{{end}}>New cards first</option>
+        <option value="mixed" {{if eq (print .NewMix) "mixed"}}selected{{end}}>Mixed</option>
+    </select>
+
     <button type="submit">Save</button>
 </form>
 

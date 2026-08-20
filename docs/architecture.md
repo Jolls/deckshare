@@ -145,6 +145,13 @@ already uses for `can_edit_settings`.
 Anki's own shape), editable from `/decks/{id}/edit`; `/decks` and `/decks/{id}` keep showing the
 raw uncapped unseen-card count until [#106](https://github.com/Jolls/enshu/issues/106).
 
+**Per-deck daily review-card limit has landed** ([#115](https://github.com/Jolls/enshu/issues/115)
+item 1): the same position-based-cutoff shape as the new-card cap above, independently enforced —
+`ListDueCardsForStudy` caps review-state (state=2) cards at `preset` `rev.perDay` (default 200,
+Anki's own default), editable alongside `new.perDay` from `/decks/{id}/edit`. The issue's second
+item — an optional combined new+due total cap with a priority split — depends on
+[#116](https://github.com/Jolls/enshu/issues/116)'s two-query new/review merge and has not landed.
+
 ---
 
 ## 3. Stack
@@ -346,10 +353,26 @@ user has never seen. Triggering on queue length would skip the refill and then s
 next grade. Only cards never graded this session count toward the threshold.
 
 **Refills must not re-send what the client already holds.** Page on a stable keyset over the
-queue ordering `(due, card_id)`, and exclude cards the user has already reviewed since the
-study day began — those come back from the client's local queue if they are still due, never
-from a refill. The client also dedupes by `cardId` on receipt, which is cheap and covers the
-case where a graded card's new `due` lands it back inside the window.
+queue ordering, and exclude cards the user has already reviewed since the study day began —
+those come back from the client's local queue if they are still due, never from a refill. The
+client also dedupes by `cardId` on receipt, which is cheap and covers the case where a graded
+card's new `due` lands it back inside the window.
+
+**Queue ordering is per-deck configurable** (#116, mirroring Anki's own review-order and
+new-review-order dconf options — not a divergence, see §20). `decks.preset` carries `rev.order`
+(`due` — the original default, ascending — `random`, `intervalAsc`, `intervalDesc`) and
+`new.mix` (`afterReviews` — the original default, reviews before never-seen — `beforeReviews`,
+or `mixed`). For every `new.mix` value except `mixed`, one query serves both groups: each row
+gets a `raw_key` (the `rev.order`-selected expression; a constant for never-seen rows, since
+new-card gather order stays out of scope, #117) and a `group_bit` (0/1, which group sorts
+first), and the keyset orders and pages on `(group_bit, raw_key, card_id)` — three separate
+columns, not one combined float, because folding `group_bit` into `raw_key` by arithmetic
+(`group_bit * large_constant + raw_key`) silently loses `raw_key`'s precision once the constant
+dominates `float8`'s ~15–17 significant digits. `mixed` instead runs two independent keyset
+queries (review-state cards ordered by `rev.order`, never-seen cards ordered by id) and
+interleaves the two result sets in Go proportional to how many each fetch actually returned —
+not a running total carried across the study day, so introducing or grading cards between
+fetches can't desync it. The combined cursor is just the pair of independent sub-cursors.
 
 **Media is deliberately not part of this yet.** Card content prefetches cheaply; media does
 not, and prefetching 20 cards' images is a different problem from prefetching 20 cards' HTML.

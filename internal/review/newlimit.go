@@ -2,18 +2,40 @@ package review
 
 import "encoding/json"
 
-// The per-deck daily new-card limit (#101), stored under decks.preset as Anki's own dconf shape:
-// {"new":{"perDay":20}}. Parsed here rather than in SQL so a malformed preset degrades to the
-// default instead of failing every study fetch (Postgres has no safe cast).
+// The per-deck daily new-card limit (#101) and review-card limit (#115), stored under
+// decks.preset as Anki's own dconf shape: {"new":{"perDay":20},"rev":{"perDay":200}}. Parsed here
+// rather than in SQL so a malformed preset degrades to the default instead of failing every study
+// fetch (Postgres has no safe cast).
 const (
 	DefaultNewPerDay int32 = 20   // Anki's classic default
 	MaxNewPerDay     int32 = 9999 // Anki's own upper bound
+
+	DefaultRevPerDay int32 = 200  // Anki's classic default
+	MaxRevPerDay     int32 = 9999 // Anki's own upper bound
 )
 
+// deckPreset is the whole of decks.preset (#101, #115, #116): per-deck daily caps plus, since
+// #116, review order and new/review interleaving. One struct so every reader (NewPerDay,
+// RevPerDay, ParseRevOrder, ParseNewMix) shares one JSON-unmarshal/degrade-on-error path.
 type deckPreset struct {
 	New *struct {
-		PerDay *int32 `json:"perDay"`
+		PerDay *int32  `json:"perDay"`
+		Mix    *string `json:"mix"`
 	} `json:"new"`
+	Rev *struct {
+		PerDay *int32  `json:"perDay"`
+		Order  *string `json:"order"`
+	} `json:"rev"`
+}
+
+// parseDeckPreset unmarshals preset, ok=false on malformed JSON (all fields degrade to their
+// defaults in that case, same as a nil/empty preset).
+func parseDeckPreset(preset []byte) (deckPreset, bool) {
+	var p deckPreset
+	if err := json.Unmarshal(preset, &p); err != nil {
+		return deckPreset{}, false
+	}
+	return p, true
 }
 
 // NewPerDay reads decks.preset. Absent, malformed, or out of range -> DefaultNewPerDay; a value
@@ -30,9 +52,33 @@ func NewPerDay(preset []byte) int32 {
 	return v
 }
 
-// NewRemaining is the deck's allowance left in the current study day, never negative.
+// NewRemaining is the deck's new-card allowance left in the current study day, never negative.
 func NewRemaining(perDay int32, introducedToday int64) int32 {
 	remaining := perDay - int32(introducedToday)
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
+}
+
+// RevPerDay reads decks.preset. Absent, malformed, or out of range -> DefaultRevPerDay; a value
+// inside 0..MaxRevPerDay is returned as written, 0 included (no review-state cards from this
+// deck). Enforced completely independently of NewPerDay (#115), same as Anki's own model.
+func RevPerDay(preset []byte) int32 {
+	var p deckPreset
+	if err := json.Unmarshal(preset, &p); err != nil || p.Rev == nil || p.Rev.PerDay == nil {
+		return DefaultRevPerDay
+	}
+	v := *p.Rev.PerDay
+	if v < 0 || v > MaxRevPerDay {
+		return DefaultRevPerDay
+	}
+	return v
+}
+
+// RevRemaining is the deck's review-card allowance left in the current study day, never negative.
+func RevRemaining(perDay int32, reviewedToday int64) int32 {
+	remaining := perDay - int32(reviewedToday)
 	if remaining < 0 {
 		return 0
 	}

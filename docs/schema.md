@@ -103,10 +103,15 @@ deck_access deck_id, user_id, created_at,
             -- six independent per-(user, deck) permissions, not a role enum -- see below
 ```
 
-`decks.preset` holds Anki's `dconf` shape, one key so far: `{"new": {"perDay": 20}}` — the
-per-deck daily new-card limit (#101). Absent, malformed, or out of Anki's own 0..9999 range reads
-as 20; parsing happens in Go (`internal/review.NewPerDay`), never in SQL, so a malformed value
-degrades to the default instead of failing a study fetch. Enforced by `ListDueCardsForStudy`;
+`decks.preset` holds Anki's `dconf` shape:
+`{"new": {"perDay": 20, "mix": "afterReviews"}, "rev": {"perDay": 200, "order": "due"}}` — the
+per-deck daily new-card limit (#101), daily review-card limit (#115), review order, and
+new/review interleaving (#116). Each field is independently optional; absent, malformed, or
+out-of-range reads as its default (`new.perDay`/`rev.perDay`: Anki's own 0..9999 range, default
+20/200; `rev.order`: `due`; `new.mix`: `afterReviews`). Parsing happens in Go
+(`internal/review.NewPerDay`/`RevPerDay`/`ParseRevOrder`/`ParseNewMix`), never in SQL, so a
+malformed value degrades to the default instead of failing a study fetch. Enforced by
+`ListDueCardsForStudy`/`ListReviewCardsForStudy`/`ListNewCardsForStudy`;
 `CountQueueForDeck`/`CountQueueForUser` still report the deck's raw unseen-card count, uncapped
 ([#106](https://github.com/Jolls/enshu/issues/106)).
 
