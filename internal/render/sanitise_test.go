@@ -10,10 +10,14 @@ import (
 // this test, not pass review unnoticed.
 func TestSanitiseCardHTML_ForbiddenElements(t *testing.T) {
 	forbidden := []string{
-		"svg", "math", "style", "script", "template", "textarea", "title", "xmp", "noscript",
+		"math", "style", "script", "template", "textarea", "title", "xmp", "noscript",
 		"noembed", "iframe", "object", "embed", "plaintext", "form", "input", "button", "select",
 		"option", "label", "fieldset", "base", "link", "meta", "frame", "frameset", "applet",
 		"marquee", "audio", "video", "source", "track",
+		// svg itself is now allowlisted (svgShapeElements) -- these are the SVG-specific
+		// exclusions from that subset (TestSanitiseCardHTML_SVGShapes covers svg/math foreign
+		// content and the paint/geometry attribute grammar).
+		"foreignobject", "animate", "animatemotion", "animatetransform", "set", "use", "image",
 	}
 	for _, el := range forbidden {
 		t.Run(el, func(t *testing.T) {
@@ -35,7 +39,7 @@ func TestSanitiseCardHTML_XSSFixtures(t *testing.T) {
 		mustNotHave []string
 	}{
 		{"script tag", `<script>alert(1)</script><p>ok</p>`, []string{"<script", "alert(1)"}},
-		{"svg foreign content", `<svg><script>alert(1)</script></svg><p>ok</p>`, []string{"<svg", "alert(1)"}},
+		{"script inside allowed svg", `<svg><script>alert(1)</script></svg><p>ok</p>`, []string{"<script", "alert(1)"}},
 		{"math foreign content", `<math><mtext><script>alert(1)</script></mtext></math><p>ok</p>`, []string{"<math", "alert(1)"}},
 		{"style element", `<style>body{}</style><p>ok</p>`, []string{"<style"}},
 		{"noscript+title mutation", `<noscript><title><style></noscript><img src=x onerror=alert(1)>`, []string{"onerror", "alert(1)"}},
@@ -81,6 +85,55 @@ func TestSanitiseCardHTML_KeepsSafeConstructs(t *testing.T) {
 			out := sanitiseCardHTML(tt.in)
 			if !strings.Contains(out, tt.want) {
 				t.Errorf("output = %q, want to contain %q", out, tt.want)
+			}
+		})
+	}
+}
+
+// TestSanitiseCardHTML_SVGShapes covers svgShapeElements: the real-world placeholder icon from
+// the "[BetterVectorMaps] US States" note type survives intact, and every excluded SVG construct
+// (foreignObject, SMIL animation, use/image references, event handlers, id, url()-bearing paint)
+// is neutralised rather than merely relocated.
+func TestSanitiseCardHTML_SVGShapes(t *testing.T) {
+	t.Run("realistic placeholder icon survives", func(t *testing.T) {
+		in := `<svg class="placeholder" xmlns="http://www.w3.org/2000/svg" width="500" height="308" viewBox="0 0 500 308"><path d="m154 2s-151 44-152 152c-1 108 152 152 152 152h193s151-44 151-152c1-107-151-152-151-152z" fill="none" stroke="currentColor"/></svg>`
+		out := sanitiseCardHTML(in)
+		// bluemonday's tokenizer lowercases attribute names on output (it has no SVG-namespace
+		// awareness), so "viewBox" comes out "viewbox" here. That is not a bug: a browser
+		// re-parsing this HTML applies the HTML5 "adjust SVG attributes" table while inside <svg>
+		// content and restores the correct camelCase DOM attribute name regardless of the source
+		// casing -- viewBox is on that fixed table. xmlns is dropped entirely and needn't survive
+		// either; the HTML parser assigns the SVG namespace to <svg> by tag alone.
+		for _, want := range []string{"<svg", `viewbox="0 0 500 308"`, `width="500"`, "<path", `d="m154 2s`, `fill="none"`, `stroke="currentColor"`} {
+			if !strings.Contains(out, want) {
+				t.Errorf("output = %q, want substring %q", out, want)
+			}
+		}
+	})
+
+	tests := []struct {
+		name        string
+		in          string
+		mustNotHave []string
+	}{
+		{"foreignObject embeds HTML", `<svg><foreignObject><div onclick="alert(1)">x</div></foreignObject></svg>`, []string{"foreignobject", "onclick", "alert(1)"}},
+		{"animate rewrites href to javascript", `<svg><path d="M0 0"><animate attributeName="href" values="javascript:alert(1)" /></path></svg>`, []string{"<animate", "javascript:alert(1)"}},
+		{"set rewrites attribute", `<svg><path d="M0 0"><set attributeName="fill" to="red" /></path></svg>`, []string{"<set"}},
+		{"use references external doc", `<svg><use href="https://evil.example/x.svg#y" /></svg>`, []string{"<use", "evil.example"}},
+		{"image loads remote resource", `<svg><image href="https://evil.example/track.png" /></svg>`, []string{"<image", "evil.example"}},
+		{"onload on svg root", `<svg onload="alert(1)"><path d="M0 0"/></svg>`, []string{"onload", "alert(1)"}},
+		{"id on svg content", `<svg><path id="answer" d="M0 0"/></svg>`, []string{`id="answer"`}},
+		{"fill url javascript scheme", `<svg><path d="M0 0" fill="url(javascript:alert(1))"/></svg>`, []string{"javascript:", "url("}},
+		{"fill arbitrary function call", `<svg><path d="M0 0" fill="expression(alert(1))"/></svg>`, []string{"expression"}},
+		{"unbalanced tags across svg content", `<svg><path d="M0 0` + `"><script>` + `</svg>alert(1)</script>`, []string{"<script", "alert(1)"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := sanitiseCardHTML(tt.in)
+			for _, bad := range tt.mustNotHave {
+				if strings.Contains(strings.ToLower(out), strings.ToLower(bad)) {
+					t.Errorf("output = %q still contains %q", out, bad)
+				}
 			}
 		})
 	}

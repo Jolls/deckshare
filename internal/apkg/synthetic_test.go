@@ -691,9 +691,9 @@ func buildQuotedModelIDPackage(t *testing.T) []byte {
 	return zipMembers(t, map[string][]byte{"collection.anki21": collBytes})
 }
 
-// buildOversizePackage returns a package whose "media" INDEX member (the only media-related
-// member ever zstd-sniffed -- individual media files are stored uncompressed and never
-// zstd-sniffed, per media.go) is a zstd frame. declaredOnly writes a frame whose declared
+// buildOversizePackage returns a package whose "media" INDEX member (distinct from the numbered
+// media file members, which are also zstd-sniffed but tolerate a non-zstd payload -- media.go)
+// is a zstd frame. declaredOnly writes a frame whose declared
 // Frame_Content_Size exceeds any reasonable limit while the actual payload is tiny, exercising
 // the before-decompression gate specifically; !declaredOnly writes a frame whose declared size
 // is accurate.

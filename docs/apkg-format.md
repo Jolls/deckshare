@@ -80,12 +80,17 @@ media index. That is deliberate: deriving the container shape from the bytes can
 about a version number's meaning, and the schema-18 export above confirms `meta`'s version
 field isn't a reliable discriminant either.
 
-✅ **Only the collection and the `media` index are zstd-compressed; the media files themselves
-are stored as-is.** Confirmed on the schema-18 export: `collection.anki21b` and `media` both
-start with the zstd magic, every numbered media member does not. The reader sniffs those two
-members and no others. Sniffing every member would be actively harmful: media bytes are
-arbitrary, so a legitimate image or audio file whose first four bytes happen to be the zstd
-magic would be mangled or rejected.
+⚠️ **Individual media members can be zstd-compressed too, not just the collection and the `media`
+index.** An earlier version of this doc claimed the schema-18 export's numbered media members
+were never zstd-magic-prefixed; that was wrong — re-checking that same fixture (and a real
+`.colpkg` full-collection export) shows every media member zstd-compressed. The reader sniffs
+each media member the same way it sniffs the collection and the index, but treats a media
+member's sniff differently: media bytes are arbitrary, so a legitimate image or audio file whose
+first four bytes happen to collide with the zstd magic must not be mangled or rejected. The
+reader therefore only swaps in the decompressed bytes when the frame actually decodes
+successfully, and keeps the raw bytes on any decompress error — unlike the collection and index
+members, where a decompress failure aborts the read outright, because those two are always
+zstd in the modern container and a failure there means the input is malformed.
 
 **Packages are untrusted input** (shared decks are other users' bytes, architecture.md §8), so the
 reader enforces ceilings on member count, per-member decompressed size and total decompressed

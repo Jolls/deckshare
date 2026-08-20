@@ -87,6 +87,20 @@ func TestRenderCard_SectionWhitespaceAndHTMLOnlyIsEmpty(t *testing.T) {
 	}
 }
 
+func TestRenderCard_SectionImageOnlyFieldIsTruthy(t *testing.T) {
+	// A field that is only an <img> tag strips to no text at all, but Anki still counts it as
+	// present -- otherwise a real template like {{#Map}}...{{/Map}} gating a card's whole
+	// question on an image field (Ultimate Geography, BetterVectorMaps) would render blank.
+	tmpl := Template{Qfmt: "{{#Front}}yes{{/Front}}", Afmt: "{{Back}}"}
+	c, err := RenderCard(tmpl, note(Field{"Front", `<img src="map.png">`}, Field{"Back", ""}), 0, false)
+	if err != nil {
+		t.Fatalf("RenderCard: %v", err)
+	}
+	if string(c.Question.HTML) != "yes" {
+		t.Errorf("question = %q, want yes (image-only field is non-empty)", c.Question.HTML)
+	}
+}
+
 func TestRenderCard_SectionNested(t *testing.T) {
 	tmpl := Template{Qfmt: "{{#A}}{{#B}}both{{/B}}{{/A}}", Afmt: "x"}
 	c, err := RenderCard(tmpl, note(Field{"A", "1"}, Field{"B", "1"}), 0, false)
@@ -229,6 +243,16 @@ func TestRenderCard_FilterHintEmptyField(t *testing.T) {
 	}
 	if string(c.Question.HTML) != "" {
 		t.Errorf("question = %q, want empty", c.Question.HTML)
+	}
+}
+
+func TestRenderCard_FilterHintImageOnlyField(t *testing.T) {
+	c, err := RenderCard(Template{Qfmt: "{{hint:Front}}", Afmt: "x"}, note(Field{"Front", `<img src="x.jpg">`}), 0, false)
+	if err != nil {
+		t.Fatalf("RenderCard: %v", err)
+	}
+	if !strings.Contains(string(c.Question.HTML), "<summary>Front</summary>") {
+		t.Errorf("question = %q, want a hint disclosure (image-only field is non-empty)", c.Question.HTML)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -93,6 +94,28 @@ func collectMedia(z *zip.Reader, idx map[string]string, limits ArchiveLimits, bu
 		data, err := memberBytes(f, limits, budget)
 		if err != nil {
 			return nil, nil, err
+		}
+		// Newer Anki exports (meta version 3) zstd-compress individual media members too, not
+		// just the collection and the media index (docs/apkg-format.md's now-corrected media
+		// section). Media bytes are otherwise arbitrary, so a false-positive magic-number match
+		// on a legitimate file must not corrupt it: only swap in the decompressed bytes if the
+		// frame actually decodes, and keep the raw bytes on any other decompress error -- that
+		// is ErrBadZstdFrame territory, where the magic-number match was likely coincidental.
+		// ErrMemberTooLarge is different: reaching it means decompressZstd got far enough to
+		// trust this genuinely is zstd (a parsed declared size, or real decoded output, past the
+		// size ceiling), so falling back to the raw bytes would silently store the still-
+		// compressed frame as the media blob -- the exact bug this fix exists to close, just
+		// gated on size instead of on the reader missing the case entirely. Drop it instead, with
+		// a warning, the same way a member missing from the archive is handled above.
+		if sniffZstd(data) {
+			decompressed, derr := decompressZstd(data, limits, budget)
+			switch {
+			case derr == nil:
+				data = decompressed
+			case errors.Is(derr, ErrMemberTooLarge):
+				warnings = append(warnings, fmt.Sprintf("media: member %q (%s) exceeds the decompressed-size limit; dropped", idxKey, filename))
+				continue
+			}
 		}
 		normalised := norm.NFC.String(filename)
 		sum := sha256.Sum256(data)

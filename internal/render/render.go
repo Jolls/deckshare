@@ -239,5 +239,5 @@ func truthy(name string, ctx *context) bool {
 	if !ok {
 		return false
 	}
-	return strings.TrimSpace(stripHTMLTags(v)) != ""
+	return fieldHasContent(v)
 }
