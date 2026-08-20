@@ -32,6 +32,10 @@ func TestSanitiseCSS(t *testing.T) {
 		{"at-rule font-face dropped", `@font-face { font-family: x; } .card { color: red; }`, "color: red", "@font-face"},
 		{"at-rule media dropped", `@media screen { .card { color: red; } } .card { color: blue; }`, "color: blue", "@media"},
 		{"unparseable returns empty", `.card { color: `, "", "color"},
+		{"svg element selector allowed", `path { fill: red; }`, ".enshu-card path {", ""},
+		{"svg fill none allowed", `.placeholder path { fill: none; stroke: currentColor; stroke-width: 1; }`, "fill: none", ""},
+		{"svg fill url dropped", `path { fill: url(evil.com); color: red; }`, "color: red", "fill"},
+		{"svg fill-rule enum enforced", `path { fill-rule: spiral; }`, "", "fill-rule"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

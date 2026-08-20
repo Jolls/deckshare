@@ -37,6 +37,11 @@ var allowedCSSProperties = []string{
 	"border-color", "border-style", "border-width", "border-radius", "border-collapse", "border-spacing",
 	"width", "height", "min-width", "min-height", "max-width", "max-height",
 	"display", "overflow", "text-shadow", "box-shadow", "ruby-align", "ruby-position",
+	// SVG presentation properties -- meaningful only on svgShapeElements (sanitise.go), inert
+	// elsewhere. Same value grammar as everything above: no bare '(' but the four colour
+	// functions, so fill/stroke can never carry a url() reference to an external or internal id.
+	"fill", "stroke", "stroke-width", "fill-opacity", "stroke-opacity",
+	"stroke-linecap", "stroke-linejoin", "stroke-dasharray", "fill-rule",
 }
 
 var allowedCSSPropertySet = func() map[string]bool {
@@ -83,6 +88,11 @@ var (
 		"border-collapse":     {"collapse": true, "separate": true},
 		"list-style-position": {"inside": true, "outside": true},
 		"overflow-wrap":       {"normal": true, "break-word": true, "anywhere": true},
+		"fill":                {"none": true},
+		"stroke":              {"none": true},
+		"stroke-linecap":      {"butt": true, "round": true, "square": true},
+		"stroke-linejoin":     {"miter": true, "round": true, "bevel": true},
+		"fill-rule":           {"nonzero": true, "evenodd": true},
 	}
 )
 
@@ -361,6 +371,11 @@ func pseudoClassOK(p string) bool {
 
 func elementAllowed(name string) bool {
 	for _, e := range sanitisableElements {
+		if e == name {
+			return true
+		}
+	}
+	for _, e := range svgShapeElements {
 		if e == name {
 			return true
 		}
