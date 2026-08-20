@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"errors"
 	"testing"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 func TestRead_PrefersNewestCollectionMember(t *testing.T) {
@@ -204,7 +206,11 @@ func TestRead_MediaFilenameNFCAndCollision(t *testing.T) {
 	}
 }
 
-func TestRead_MediaBytesNeverZstdSniffed(t *testing.T) {
+// TestRead_MediaBytesFallBackOnInvalidZstdFrame confirms a media member that merely starts with
+// the zstd magic number, but isn't a valid frame, is left untouched rather than rejected or
+// corrupted -- media bytes are arbitrary, so a legitimate file's magic-number collision must be
+// harmless (docs/apkg-format.md).
+func TestRead_MediaBytesFallBackOnInvalidZstdFrame(t *testing.T) {
 	zstdMagic := []byte{0x28, 0xB5, 0x2F, 0xFD, 'x', 'y', 'z'}
 	idx := map[string]string{"0": "weird.bin"}
 	z := zipMembers(t, map[string][]byte{"0": zstdMagic})
@@ -219,6 +225,36 @@ func TestRead_MediaBytesNeverZstdSniffed(t *testing.T) {
 	}
 	if len(media) != 1 || !bytes.Equal(media[0].Data, zstdMagic) {
 		t.Fatalf("media bytes were mangled: %+v", media)
+	}
+}
+
+// TestRead_MediaBytesDecompressedWhenZstd confirms a media member that IS a valid zstd frame
+// (the newer-Anki-export case that broke image rendering) is decompressed before it reaches the
+// caller, so its SHA256/bytes match the real file content, not the compressed frame.
+func TestRead_MediaBytesDecompressedWhenZstd(t *testing.T) {
+	plain := []byte("not actually a png but stands in for one")
+	enc, err := zstd.NewWriter(nil, zstd.WithSingleSegment(true))
+	if err != nil {
+		t.Fatalf("creating zstd encoder: %v", err)
+	}
+	compressed := enc.EncodeAll(plain, nil)
+	if err := enc.Close(); err != nil {
+		t.Fatalf("closing zstd encoder: %v", err)
+	}
+
+	idx := map[string]string{"0": "photo.png"}
+	z := zipMembers(t, map[string][]byte{"0": compressed})
+	zr, err := zip.NewReader(bytes.NewReader(z), int64(len(z)))
+	if err != nil {
+		t.Fatalf("opening zip: %v", err)
+	}
+	budget := int64(1 << 20)
+	media, _, err := collectMedia(zr, idx, DefaultArchiveLimits(), &budget)
+	if err != nil {
+		t.Fatalf("collectMedia: %v", err)
+	}
+	if len(media) != 1 || !bytes.Equal(media[0].Data, plain) {
+		t.Fatalf("media bytes were not decompressed: %+v", media)
 	}
 }
 

@@ -3,13 +3,24 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.30] - 2026-08-20
+
+### Fixed
+- `.apkg`/`.colpkg` import now decompresses individual media members that are themselves
+  zstd-compressed (Anki's newer "meta" version 3 exports), rather than only the collection and
+  media-index members. Previously the raw zstd frame was hashed and stored as the media blob,
+  so images 404'd or failed to decode in the browser despite the 0.1.28 media-rendering fix.
+  Decompression is only applied when a media member's bytes actually decode as a valid zstd
+  frame, so a legitimate file whose leading bytes coincidentally match the zstd magic number is
+  left untouched.
+
 ## [0.1.29] - 2026-08-19
 
 ### Added
 - Per-deck daily review-card limit (`rev.perDay`, default 200), enforced independently of the
   existing `new.perDay` cap, editable from `/decks/{id}/edit`
   ([#115](https://github.com/Jolls/enshu/issues/115)).
-- Configurable per-deck review order (`rev.order`: due date, random, ascending/descending
+c- Configurable per-deck review order (`rev.order`: due date, random, ascending/descending
   intervals) and new/review interleaving (`new.mix`: reviews first, new cards first, or mixed),
   editable from `/decks/{id}/edit`
   ([#116](https://github.com/Jolls/enshu/issues/116)).

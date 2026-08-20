@@ -107,6 +107,14 @@ func TestRead_RealSchema18Fixture(t *testing.T) {
 	if len(col.Media) == 0 {
 		t.Fatal("no media decoded (mediaEntryField/mediaEntryNameField wrong)")
 	}
+	// This fixture's numbered media members are themselves zstd-compressed -- assert the decoded
+	// bytes are the real file content, not the still-compressed frame.
+	zstdMagic := []byte{0x28, 0xB5, 0x2F, 0xFD}
+	for _, m := range col.Media {
+		if bytes.HasPrefix(m.Data, zstdMagic) {
+			t.Errorf("media %q: Data still zstd-compressed, not decoded", m.Filename)
+		}
+	}
 }
 
 // TestRead_QuotedModelID reproduces a real import failure: a 2020-vintage AnkiWeb shared deck

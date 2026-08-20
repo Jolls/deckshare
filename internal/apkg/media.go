@@ -94,6 +94,16 @@ func collectMedia(z *zip.Reader, idx map[string]string, limits ArchiveLimits, bu
 		if err != nil {
 			return nil, nil, err
 		}
+		// Newer Anki exports (meta version 3) zstd-compress individual media members too, not
+		// just the collection and the media index (docs/apkg-format.md's now-corrected media
+		// section). Media bytes are otherwise arbitrary, so a false-positive magic-number match
+		// on a legitimate file must not corrupt it: only swap in the decompressed bytes if the
+		// frame actually decodes, and keep the raw bytes on any decompress error.
+		if sniffZstd(data) {
+			if decompressed, derr := decompressZstd(data, limits, budget); derr == nil {
+				data = decompressed
+			}
+		}
 		normalised := norm.NFC.String(filename)
 		sum := sha256.Sum256(data)
 		hexSum := hex.EncodeToString(sum[:])
