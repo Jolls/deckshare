@@ -328,8 +328,13 @@ that always breaks.
 `truthy(name)`:
 - `^c(\d+)$` → that number equals `ordinal+1`.
 - special names (`Tags`, `Type`, `Deck`, `Subdeck`, `Card`) → their value is non-empty.
-- otherwise → the field exists **and** `strings.TrimSpace(stripHTML(value)) != ""`. Stripping first
-  is what stops a `<br>`-only field from counting as present.
+- otherwise → the field exists **and** `fieldHasContent(value)` (filters.go): strip HTML and trim,
+  same as originally planned to stop a `<br>`-only field from counting as present — ⚠️ but first
+  substitute any `<img src="...">` with its `src`, matching Anki's own rule that a field
+  consisting of only a media reference is not empty. Missed in the original design here (an
+  image-only field silently stripped to nothing, so a question side gated entirely on one — a
+  real, common template pattern — rendered blank); fixed once found via manual testing, not a
+  deliberate divergence.
 - unknown name → false. (§0.6's `[unknown field]` text applies to substitution tokens, not sections:
   a section on a mistyped field just never fires, as in Anki.)
 
@@ -440,7 +445,13 @@ p.AllowNoAttrs().OnElements(/* every element above that carries no allowed attri
 **Never added — each name is a checklist item, not an oversight**, and a table test asserts every one
 of them is stripped:
 
-- Foreign content: `svg`, `math`.
+- Foreign content: `math`. ⚠️ `svg` **used to be here too, and no longer is** — a later change
+  (internal/render/sanitise.go's `svgShapeElements`) allowlists a static-shape SVG subset (`svg`,
+  `g`, `path`, `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`; geometry and
+  fill/stroke/opacity attributes only, no `<use>`/`<image>`/gradients/references of any kind).
+  `TestSanitiseCardHTML_ForbiddenElements` no longer includes `svg` in its forbidden set for this
+  reason; `TestSanitiseCardHTML_SVGShapes` covers the new subset's own attack surface instead.
+  Broader SVG support is tracked separately (issue #121).
 - Raw-text / escapable-raw-text: `style`, `script`, `template`, `textarea`, `title`, `xmp`,
   `noscript`, `noembed`, `iframe`, `object`, `embed`, `plaintext`.
 - Interactive/form: `form`, `input`, `button`, `select`, `option`, `label`, `fieldset` — the
@@ -448,11 +459,17 @@ of them is stripped:
   (§6).
 - `base`, `link`, `meta`, `frame`, `frameset`, `applet`, `marquee`, `audio`, `video`, `source`,
   `track`.
+- SVG-specific, excluded from the static-shape subset above for the same "scripts or references
+  something" reason as the rest of this list: `foreignObject`, `animate`/`animateMotion`/
+  `animateTransform`/`set` (SMIL's own `javascript:`-href vector), `use`, `image`.
 
-Plus `p.SkipElementsContent("script","style","template","textarea","title","svg","math","iframe",
-"object","embed","noscript","xmp","noembed")` — for these the *text inside* is dropped too, not
-lifted into the output where a second parse could re-read it as markup. And `AllowComments` and
-`AllowDocType` left off (asserted, since conditional comments are an mXSS vector).
+Plus `p.SkipElementsContent("script","style","template","textarea","title","math","foreignobject",
+"iframe","object","embed","noscript","xmp","noembed")` — for these the *text inside* is dropped
+too, not lifted into the output where a second parse could re-read it as markup. (`svg` is no
+longer in this list — see above; `foreignobject` was added to it even though it was never on the
+allowlist, as a zero-cost defensive measure against SVG's canonical embed-arbitrary-HTML vector.)
+And `AllowComments` and `AllowDocType` left off (asserted, since conditional comments are an mXSS
+vector).
 
 ### 4.2 Attributes and the URL scheme allowlist
 

@@ -5,6 +5,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.1.30] - 2026-08-20
 
+### Added
+- Card rendering now supports a safe, static-shape SVG subset (`<svg>`, `<g>`, `<path>`, `<rect>`,
+  `<circle>`, `<ellipse>`, `<line>`, `<polyline>`, `<polygon>`, geometry plus fill/stroke/opacity
+  attributes only), so decorative SVG baked directly into a note-type template — like the
+  outline-map hint in the "[BetterVectorMaps] US States" shared deck — renders instead of
+  disappearing. Excludes everything that scripts or references another resource (`<script>`,
+  `<foreignObject>`, SMIL animation, `<use>`/`<image>`, gradients/patterns/masks); broader SVG
+  support is tracked separately.
+
 ### Fixed
 - `.apkg`/`.colpkg` import now decompresses individual media members that are themselves
   zstd-compressed (Anki's newer "meta" version 3 exports), rather than only the collection and
@@ -12,7 +21,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   so images 404'd or failed to decode in the browser despite the 0.1.28 media-rendering fix.
   Decompression is only applied when a media member's bytes actually decode as a valid zstd
   frame, so a legitimate file whose leading bytes coincidentally match the zstd magic number is
-  left untouched.
+  left untouched. A media member that genuinely is zstd but exceeds the archive's decompressed-
+  size limit is now dropped with a warning instead of silently stored still-compressed.
+- `{{#Field}}`/`{{^Field}}` sections and `{{hint:Field}}` no longer treat an image-only field as
+  empty. Stripping HTML for the emptiness check turned `<img src="...">` into nothing, so a
+  question side gated entirely on an image field (e.g. Ultimate Geography's `{{#Map}}...{{/Map}}`
+  "Map - Country" template) rendered blank until "show answer" — the answer side isn't gated the
+  same way, so it displayed fine, masking the question-side bug. A field's image `src` now counts
+  as content for this check, matching Anki's own "media-only fields aren't empty" rule.
 
 ## [0.1.29] - 2026-08-19
 
@@ -20,7 +36,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Per-deck daily review-card limit (`rev.perDay`, default 200), enforced independently of the
   existing `new.perDay` cap, editable from `/decks/{id}/edit`
   ([#115](https://github.com/Jolls/enshu/issues/115)).
-c- Configurable per-deck review order (`rev.order`: due date, random, ascending/descending
+- Configurable per-deck review order (`rev.order`: due date, random, ascending/descending
   intervals) and new/review interleaving (`new.mix`: reviews first, new cards first, or mixed),
   editable from `/decks/{id}/edit`
   ([#116](https://github.com/Jolls/enshu/issues/116)).

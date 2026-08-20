@@ -15,6 +15,22 @@ func stripHTMLTags(s string) string {
 	return htmlTagRe.ReplaceAllString(s, "")
 }
 
+// imgSrcRe extracts an <img>'s src so fieldHasContent can see it as text. [sound:file.mp3]
+// already survives stripHTMLTags untouched (it's bracket syntax, not a tag), but an <img> tag
+// strips to nothing, and a field that is only an image is extremely common in real templates
+// ({{#Flag}}/{{#Map}} gating a card's whole question side on an image field, e.g. the Ultimate
+// Geography and BetterVectorMaps shared decks).
+var imgSrcRe = regexp.MustCompile(`(?i)<img\b[^>]*\bsrc\s*=\s*["']([^"']*)["'][^>]*>`)
+
+// fieldHasContent reports whether value counts as non-empty for {{#Field}}/{{^Field}} sections
+// and {{hint:Field}} -- both documented as "emitted iff the field is non-empty" (§3.1). Anki
+// treats a field consisting of only a media reference as non-empty even though it strips to no
+// text; a <br>-only or whitespace-only field must still count as empty, so images get their src
+// substituted in as a stand-in for "there is content here" before the usual strip-and-trim check.
+func fieldHasContent(value string) bool {
+	return strings.TrimSpace(stripHTMLTags(imgSrcRe.ReplaceAllString(value, "$1"))) != ""
+}
+
 // applyFilters resolves name to a value and applies filters right-to-left over it (§3.3):
 // filters[len-1] (nearest the field name) applies first, filters[0] (outermost) applies last.
 // type: is only legal as the outermost filter (index 0); anywhere else, or combined with
@@ -106,7 +122,7 @@ func furiganaFilter(value string, mode furiganaMode) string {
 
 // hintFilter: <details><summary>Field</summary>value</details>; empty field -> nothing.
 func hintFilter(fieldName, value string) string {
-	if strings.TrimSpace(stripHTMLTags(value)) == "" {
+	if !fieldHasContent(value) {
 		return ""
 	}
 	return "<details><summary>" + html.EscapeString(fieldName) + "</summary>" + value + "</details>"
