@@ -258,6 +258,46 @@ func TestRead_MediaBytesDecompressedWhenZstd(t *testing.T) {
 	}
 }
 
+// TestRead_MediaMemberDroppedWhenZstdExceedsBudget confirms a media member that IS validly
+// zstd-compressed, but whose decompressed size exceeds the remaining budget, is dropped with a
+// warning rather than silently stored as its still-compressed frame. decompressZstd only returns
+// ErrMemberTooLarge once it already trusts the frame is real zstd (a parsed declared size, or
+// real decoded output, past the ceiling) -- collectMedia must not fold that into the same
+// fallback path as ErrBadZstdFrame's "probably just a coincidental magic-number match", or it
+// reproduces the exact bug TestRead_MediaBytesDecompressedWhenZstd guards against, just gated on
+// size instead of on the reader missing the case entirely.
+func TestRead_MediaMemberDroppedWhenZstdExceedsBudget(t *testing.T) {
+	plain := bytes.Repeat([]byte("x"), 1000)
+	enc, err := zstd.NewWriter(nil, zstd.WithSingleSegment(true))
+	if err != nil {
+		t.Fatalf("creating zstd encoder: %v", err)
+	}
+	compressed := enc.EncodeAll(plain, nil)
+	if err := enc.Close(); err != nil {
+		t.Fatalf("closing zstd encoder: %v", err)
+	}
+
+	idx := map[string]string{"0": "big.png"}
+	z := zipMembers(t, map[string][]byte{"0": compressed})
+	zr, err := zip.NewReader(bytes.NewReader(z), int64(len(z)))
+	if err != nil {
+		t.Fatalf("opening zip: %v", err)
+	}
+	// Enough budget for memberBytes to read the compressed member itself, nowhere near enough
+	// for the 1000-byte frame it declares once decompressed.
+	budget := int64(len(compressed)) + 5
+	media, warnings, err := collectMedia(zr, idx, DefaultArchiveLimits(), &budget)
+	if err != nil {
+		t.Fatalf("collectMedia: %v", err)
+	}
+	if len(media) != 0 {
+		t.Fatalf("media = %+v, want the oversized member dropped, not stored still-compressed", media)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want exactly one", warnings)
+	}
+}
+
 func itoaTest(n int) string {
 	if n == 0 {
 		return "0"
