@@ -345,6 +345,96 @@ func TestDeckEditRoute_RevPerDay(t *testing.T) {
 	})
 }
 
+func TestDeckEditRoute_RevOrder(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	w := doRequest(handler, "POST", "/decks", "name=My Deck", cookie, "http://example.com")
+	deckPath := w.Header().Get("Location")
+
+	w = doRequest(handler, "GET", deckPath+"/edit", "", cookie, "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `<option value="due" selected>`) {
+		t.Fatalf("new deck should default to rev_order=due, got status %d:\n%s", w.Code, w.Body.String())
+	}
+
+	w = doRequest(handler, "POST", deckPath+"/edit", "name=My Deck&description=&rev_order=random", cookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("POST edit status = %d, want 303: %s", w.Code, w.Body.String())
+	}
+	w = doRequest(handler, "GET", deckPath+"/edit", "", cookie, "")
+	if !strings.Contains(w.Body.String(), `<option value="random" selected>`) {
+		t.Errorf("edit page should reflect rev_order=random:\n%s", w.Body.String())
+	}
+
+	t.Run("absent field leaves value untouched", func(t *testing.T) {
+		w := doRequest(handler, "POST", deckPath+"/edit", "name=My Deck&description=", cookie, "http://example.com")
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("status = %d, want 303: %s", w.Code, w.Body.String())
+		}
+		w = doRequest(handler, "GET", deckPath+"/edit", "", cookie, "")
+		if !strings.Contains(w.Body.String(), `<option value="random" selected>`) {
+			t.Errorf("rev_order should remain random when the field is absent:\n%s", w.Body.String())
+		}
+	})
+
+	t.Run("rejects unrecognised rev_order", func(t *testing.T) {
+		w := doRequest(handler, "POST", deckPath+"/edit", "name=My Deck&description=&rev_order=bogus", cookie, "http://example.com")
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", w.Code)
+		}
+		w = doRequest(handler, "GET", deckPath+"/edit", "", cookie, "")
+		if !strings.Contains(w.Body.String(), `<option value="random" selected>`) {
+			t.Errorf("deck should be unchanged after a rejected rev_order:\n%s", w.Body.String())
+		}
+	})
+}
+
+func TestDeckEditRoute_NewMix(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	w := doRequest(handler, "POST", "/decks", "name=My Deck", cookie, "http://example.com")
+	deckPath := w.Header().Get("Location")
+
+	w = doRequest(handler, "GET", deckPath+"/edit", "", cookie, "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `<option value="afterReviews" selected>`) {
+		t.Fatalf("new deck should default to new_mix=afterReviews, got status %d:\n%s", w.Code, w.Body.String())
+	}
+
+	w = doRequest(handler, "POST", deckPath+"/edit", "name=My Deck&description=&new_mix=mixed", cookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("POST edit status = %d, want 303: %s", w.Code, w.Body.String())
+	}
+	w = doRequest(handler, "GET", deckPath+"/edit", "", cookie, "")
+	if !strings.Contains(w.Body.String(), `<option value="mixed" selected>`) {
+		t.Errorf("edit page should reflect new_mix=mixed:\n%s", w.Body.String())
+	}
+
+	t.Run("absent field leaves value untouched", func(t *testing.T) {
+		w := doRequest(handler, "POST", deckPath+"/edit", "name=My Deck&description=", cookie, "http://example.com")
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("status = %d, want 303: %s", w.Code, w.Body.String())
+		}
+		w = doRequest(handler, "GET", deckPath+"/edit", "", cookie, "")
+		if !strings.Contains(w.Body.String(), `<option value="mixed" selected>`) {
+			t.Errorf("new_mix should remain mixed when the field is absent:\n%s", w.Body.String())
+		}
+	})
+
+	t.Run("rejects unrecognised new_mix", func(t *testing.T) {
+		w := doRequest(handler, "POST", deckPath+"/edit", "name=My Deck&description=&new_mix=bogus", cookie, "http://example.com")
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", w.Code)
+		}
+		w = doRequest(handler, "GET", deckPath+"/edit", "", cookie, "")
+		if !strings.Contains(w.Body.String(), `<option value="mixed" selected>`) {
+			t.Errorf("deck should be unchanged after a rejected new_mix:\n%s", w.Body.String())
+		}
+	})
+}
+
 func TestDeckRoutes_DuplicateName_409(t *testing.T) {
 	tx := beginTx(t)
 	handler, a := newTestHandler(t, tx, auth.Config{})

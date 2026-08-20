@@ -175,6 +175,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		render(w, pages["deck_edit"], http.StatusOK, map[string]any{
 			"User": user, "Deck": deck,
 			"NewPerDay": review.NewPerDay(deck.Preset), "RevPerDay": review.RevPerDay(deck.Preset),
+			"RevOrder": review.ParseRevOrder(deck.Preset), "NewMix": review.ParseNewMix(deck.Preset),
 		})
 	})))
 
@@ -213,9 +214,26 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			}
 			revPerDay = pgtype.Int4{Int32: int32(v), Valid: true}
 		}
+		newMix := pgtype.Text{} // absent or empty -> leave preset untouched
+		if raw := strings.TrimSpace(r.PostForm.Get("new_mix")); raw != "" {
+			if !review.NewMix(raw).Valid() {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			newMix = pgtype.Text{String: raw, Valid: true}
+		}
+		revOrder := pgtype.Text{} // absent or empty -> leave preset untouched
+		if raw := strings.TrimSpace(r.PostForm.Get("rev_order")); raw != "" {
+			if !review.RevOrder(raw).Valid() {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			revOrder = pgtype.Text{String: raw, Valid: true}
+		}
 
 		n, err := db.New(store).UpdateDeck(r.Context(), db.UpdateDeckParams{
-			Name: name, Description: description, NewPerDay: newPerDay, RevPerDay: revPerDay, DeckID: deckID, UserID: user.ID,
+			Name: name, Description: description, NewPerDay: newPerDay, RevPerDay: revPerDay,
+			NewMix: newMix, RevOrder: revOrder, DeckID: deckID, UserID: user.ID,
 		})
 		if err != nil {
 			if db.IsUniqueViolation(err, "decks_owner_id_name_key") {

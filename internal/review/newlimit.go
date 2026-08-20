@@ -14,13 +14,28 @@ const (
 	MaxRevPerDay     int32 = 9999 // Anki's own upper bound
 )
 
+// deckPreset is the whole of decks.preset (#101, #115, #116): per-deck daily caps plus, since
+// #116, review order and new/review interleaving. One struct so every reader (NewPerDay,
+// RevPerDay, ParseRevOrder, ParseNewMix) shares one JSON-unmarshal/degrade-on-error path.
 type deckPreset struct {
 	New *struct {
-		PerDay *int32 `json:"perDay"`
+		PerDay *int32  `json:"perDay"`
+		Mix    *string `json:"mix"`
 	} `json:"new"`
 	Rev *struct {
-		PerDay *int32 `json:"perDay"`
+		PerDay *int32  `json:"perDay"`
+		Order  *string `json:"order"`
 	} `json:"rev"`
+}
+
+// parseDeckPreset unmarshals preset, ok=false on malformed JSON (all fields degrade to their
+// defaults in that case, same as a nil/empty preset).
+func parseDeckPreset(preset []byte) (deckPreset, bool) {
+	var p deckPreset
+	if err := json.Unmarshal(preset, &p); err != nil {
+		return deckPreset{}, false
+	}
+	return p, true
 }
 
 // NewPerDay reads decks.preset. Absent, malformed, or out of range -> DefaultNewPerDay; a value

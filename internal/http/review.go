@@ -59,7 +59,9 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 			return
 		}
 		batch, err := review.BuildBatch(r.Context(), store, params, user.ID, deckID, deck.Name,
-			window, review.NewPerDay(deck.Preset), review.RevPerDay(deck.Preset), review.Cursor{AtStart: true}, initialBatchSize, clock)
+			window, review.NewPerDay(deck.Preset), review.RevPerDay(deck.Preset),
+			review.ParseRevOrder(deck.Preset), review.ParseNewMix(deck.Preset),
+			review.Cursor{AtStart: true}, initialBatchSize, clock)
 		if err != nil {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
@@ -118,7 +120,9 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 			return
 		}
 		batch, err := review.BuildBatch(r.Context(), store, params, user.ID, deckID, deck.Name,
-			window, review.NewPerDay(deck.Preset), review.RevPerDay(deck.Preset), cur, refillBatchSize, clock)
+			window, review.NewPerDay(deck.Preset), review.RevPerDay(deck.Preset),
+			review.ParseRevOrder(deck.Preset), review.ParseNewMix(deck.Preset),
+			cur, refillBatchSize, clock)
 		if err != nil {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return

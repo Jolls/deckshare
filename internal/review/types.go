@@ -62,14 +62,29 @@ type CardStateDTO struct {
 var ErrMalformedCursor = errors.New("review: malformed cursor")
 
 // Cursor is the opaque keyset position over the reviewer's queue (architecture.md §6, plan §0.10).
-// The zero Cursor (AtStart true) is the start of the queue. Infinite stands for the queue_key a
-// never-seen card carries ('infinity'::timestamptz, since it has no user_card_state row); Due is
-// only meaningful when neither AtStart nor Infinite.
+// The zero Cursor (AtStart true) is the start of the queue.
+//
+// Single-query mode (rev.order due/random/interval, new.mix afterReviews/beforeReviews): GroupBit,
+// Key, and CardID are the (group_bit, sort_key, card_id) position ListDueCardsForStudy's keyset
+// compares against -- see #116 doc comment on that query for why group_bit is a separate column
+// rather than folded into Key.
+//
+// Mixed mode (new.mix = "mixed"): Mixed is true and the position is the pair of independent
+// sub-cursors over ListReviewCardsForStudy (RevAtStart/RevKey/RevCardID -- no group bit, this
+// query only ever serves one group) and ListNewCardsForStudy (NewAtStart/NewCardID, ordered by
+// id alone).
 type Cursor struct {
 	AtStart  bool
-	Infinite bool
-	Due      time.Time
+	GroupBit int32
+	Key      float64
 	CardID   pgtype.UUID
+
+	Mixed      bool
+	RevAtStart bool
+	RevKey     float64
+	RevCardID  pgtype.UUID
+	NewAtStart bool
+	NewCardID  pgtype.UUID
 }
 
 // EncodeCursor renders c as an opaque string safe to round-trip through a URL query parameter.
@@ -78,12 +93,31 @@ func EncodeCursor(c Cursor) string {
 	if c.AtStart {
 		return ""
 	}
-	micros := int64(math.MaxInt64)
-	if !c.Infinite {
-		micros = c.Due.UTC().UnixMicro()
+	var raw string
+	if c.Mixed {
+		raw = "m:" + encodeSubCursor(c.RevAtStart, c.RevKey, c.RevCardID) + "|" + encodeIDCursor(c.NewAtStart, c.NewCardID)
+	} else {
+		raw = strconv.Itoa(int(c.GroupBit)) + ":" + strconv.FormatUint(math.Float64bits(c.Key), 10) + ":" + c.CardID.String()
 	}
-	raw := strconv.FormatInt(micros, 10) + ":" + c.CardID.String()
 	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// encodeSubCursor renders a (key, card_id) position; atStart encodes as "-" (used only by the
+// mixed-mode sub-cursors -- the top-level Cursor.AtStart short-circuits before this is called).
+// The key is carried as math.Float64bits' decimal digits, not a formatted float, so it round-trips
+// bit-exact regardless of rev.order mode.
+func encodeSubCursor(atStart bool, key float64, cardID pgtype.UUID) string {
+	if atStart {
+		return "-"
+	}
+	return strconv.FormatUint(math.Float64bits(key), 10) + ":" + cardID.String()
+}
+
+func encodeIDCursor(atStart bool, cardID pgtype.UUID) string {
+	if atStart {
+		return "-"
+	}
+	return cardID.String()
 }
 
 // DecodeCursor parses a string produced by EncodeCursor. "" decodes to the start-of-queue Cursor.
@@ -91,40 +125,96 @@ func DecodeCursor(s string) (Cursor, error) {
 	if s == "" {
 		return Cursor{AtStart: true}, nil
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(s)
+	rawBytes, err := base64.RawURLEncoding.DecodeString(s)
 	if err != nil {
 		return Cursor{}, fmt.Errorf("%w: %v", ErrMalformedCursor, err)
 	}
-	due, id, ok := strings.Cut(string(raw), ":")
+	raw := string(rawBytes)
+
+	if rest, ok := strings.CutPrefix(raw, "m:"); ok {
+		revPart, newPart, ok := strings.Cut(rest, "|")
+		if !ok {
+			return Cursor{}, fmt.Errorf("%w: missing mixed-cursor separator", ErrMalformedCursor)
+		}
+		revAtStart, revKey, revID, err := decodeSubCursor(revPart)
+		if err != nil {
+			return Cursor{}, err
+		}
+		newAtStart, newID, err := decodeIDCursor(newPart)
+		if err != nil {
+			return Cursor{}, err
+		}
+		return Cursor{
+			Mixed:      true,
+			RevAtStart: revAtStart, RevKey: revKey, RevCardID: revID,
+			NewAtStart: newAtStart, NewCardID: newID,
+		}, nil
+	}
+
+	groupBitPart, rest, ok := strings.Cut(raw, ":")
 	if !ok {
-		return Cursor{}, fmt.Errorf("%w: missing separator", ErrMalformedCursor)
+		return Cursor{}, fmt.Errorf("%w: missing group-bit separator", ErrMalformedCursor)
 	}
-	micros, err := strconv.ParseInt(due, 10, 64)
+	groupBit, err := strconv.Atoi(groupBitPart)
 	if err != nil {
 		return Cursor{}, fmt.Errorf("%w: %v", ErrMalformedCursor, err)
 	}
-	var cardID pgtype.UUID
-	if err := cardID.Scan(id); err != nil {
-		return Cursor{}, fmt.Errorf("%w: %v", ErrMalformedCursor, err)
+	_, key, id, err := decodeSubCursor(rest)
+	if err != nil {
+		return Cursor{}, err
 	}
-	if micros == math.MaxInt64 {
-		return Cursor{Infinite: true, CardID: cardID}, nil
-	}
-	return Cursor{Due: time.UnixMicro(micros).UTC(), CardID: cardID}, nil
+	return Cursor{GroupBit: int32(groupBit), Key: key, CardID: id}, nil
 }
 
-// dueArg and cardIDArg convert c into the two query parameters ListDueCardsForStudy compares the
-// keyset against: pgtype.Timestamptz's native infinity modifiers express -infinity (start of
-// queue) and +infinity (resume after a never-seen card) without a magic sentinel time.Time.
-func (c Cursor) dueArg() pgtype.Timestamptz {
-	switch {
-	case c.AtStart:
-		return pgtype.Timestamptz{InfinityModifier: pgtype.NegativeInfinity, Valid: true}
-	case c.Infinite:
-		return pgtype.Timestamptz{InfinityModifier: pgtype.Infinity, Valid: true}
-	default:
-		return pgtype.Timestamptz{Time: c.Due, Valid: true}
+// decodeSubCursor parses a (key, card_id) sub-cursor payload ("-" for a fresh one), shared by the
+// single-query top-level cursor and the mixed-mode review sub-cursor.
+func decodeSubCursor(s string) (atStart bool, key float64, cardID pgtype.UUID, err error) {
+	if s == "-" {
+		return true, 0, pgtype.UUID{}, nil
 	}
+	keyPart, idPart, ok := strings.Cut(s, ":")
+	if !ok {
+		return false, 0, pgtype.UUID{}, fmt.Errorf("%w: missing separator", ErrMalformedCursor)
+	}
+	bits, err := strconv.ParseUint(keyPart, 10, 64)
+	if err != nil {
+		return false, 0, pgtype.UUID{}, fmt.Errorf("%w: %v", ErrMalformedCursor, err)
+	}
+	var id pgtype.UUID
+	if err := id.Scan(idPart); err != nil {
+		return false, 0, pgtype.UUID{}, fmt.Errorf("%w: %v", ErrMalformedCursor, err)
+	}
+	return false, math.Float64frombits(bits), id, nil
+}
+
+func decodeIDCursor(s string) (atStart bool, cardID pgtype.UUID, err error) {
+	if s == "-" {
+		return true, pgtype.UUID{}, nil
+	}
+	var id pgtype.UUID
+	if err := id.Scan(s); err != nil {
+		return false, pgtype.UUID{}, fmt.Errorf("%w: %v", ErrMalformedCursor, err)
+	}
+	return false, id, nil
+}
+
+// groupBitArg, keyArg, and cardIDArg convert c into the query parameters the single-query path
+// (ListDueCardsForStudy) compares the keyset against. AtStart uses group_bit -1 (below both real
+// values 0/1) so the group_bit comparison alone puts it before every real row; Key still uses
+// -Inf for good measure (sort_key can be negative -- intervalDesc's raw_key is -scheduled_days --
+// so only -Inf is guaranteed to sort before every real sort_key within a group).
+func (c Cursor) groupBitArg() int32 {
+	if c.AtStart {
+		return -1
+	}
+	return c.GroupBit
+}
+
+func (c Cursor) keyArg() float64 {
+	if c.AtStart {
+		return math.Inf(-1)
+	}
+	return c.Key
 }
 
 func (c Cursor) cardIDArg() pgtype.UUID {
@@ -132,4 +222,29 @@ func (c Cursor) cardIDArg() pgtype.UUID {
 		return pgtype.UUID{Valid: true} // all-zero bytes: less than every real (UUIDv7) card id
 	}
 	return c.CardID
+}
+
+// revKeyArg, revCardIDArg, and newCardIDArg are keyArg/cardIDArg's mixed-mode counterparts, for
+// the two independent ListReviewCardsForStudy/ListNewCardsForStudy sub-cursors. c.AtStart (the
+// zero Cursor, produced by Cursor{AtStart: true} without setting Mixed/RevAtStart/NewAtStart)
+// means "fresh" for both sub-cursors too, not just RevAtStart/NewAtStart individually.
+func (c Cursor) revKeyArg() float64 {
+	if c.AtStart || c.RevAtStart {
+		return math.Inf(-1)
+	}
+	return c.RevKey
+}
+
+func (c Cursor) revCardIDArg() pgtype.UUID {
+	if c.AtStart || c.RevAtStart {
+		return pgtype.UUID{Valid: true}
+	}
+	return c.RevCardID
+}
+
+func (c Cursor) newCardIDArg() pgtype.UUID {
+	if c.AtStart || c.NewAtStart {
+		return pgtype.UUID{Valid: true}
+	}
+	return c.NewCardID
 }

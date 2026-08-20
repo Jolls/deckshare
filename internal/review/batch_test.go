@@ -80,6 +80,20 @@ func insertDueCards(t *testing.T, tx pgx.Tx, userID pgtype.UUID, cardIDs []pgtyp
 	}
 }
 
+// insertDueCardWithSchedule is insertDueCard with an explicit scheduled_days, for rev.order
+// intervalAsc/intervalDesc tests (#116) where the ordering has to be driven by something other
+// than due date.
+func insertDueCardWithSchedule(t *testing.T, tx pgx.Tx, userID, cardID pgtype.UUID, window StudyDay, scheduledDays int32) {
+	t.Helper()
+	if _, err := tx.Exec(context.Background(),
+		`INSERT INTO user_card_state (user_id, card_id, due, state, reps, stability, difficulty, last_review, scheduled_days)
+		 VALUES ($1, $2, $3, 2, 1, 2.5, 5.0, $4, $5)`,
+		userID, cardID, window.Start.Add(2*time.Hour), window.Start.Add(-24*time.Hour), scheduledDays,
+	); err != nil {
+		t.Fatalf("insert due card with schedule: %v", err)
+	}
+}
+
 // insertReviewLogRow writes one review_log row directly with an explicit state_before, bypassing
 // GradeBatch -- used to test CountNewIntroducedToday's marker logic in isolation (#101 plan §0.2,
 // §0.3). Mirrors insertReviewLogFixtureRow (replay_test.go) but state_before is a parameter.
@@ -126,7 +140,7 @@ func TestBuildBatch_DefaultCap(t *testing.T) {
 	cur := Cursor{AtStart: true}
 	exhausted := false
 	for i := 0; i < 10 && !exhausted; i++ {
-		batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, cur, 7, now)
+		batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, NewMixAfterReviews, cur, 7, now)
 		if err != nil {
 			t.Fatalf("BuildBatch: %v", err)
 		}
@@ -166,7 +180,7 @@ func TestBuildBatch_AtLimitDueCardsStillFlow(t *testing.T) {
 	gradeCards(t, tx, f.UserID, now, toIntroduce)
 	insertDueCard(t, tx, f.UserID, dueCard, window)
 
-	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, Cursor{AtStart: true}, 30, now)
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, NewMixAfterReviews, Cursor{AtStart: true}, 30, now)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -190,7 +204,7 @@ func TestBuildBatch_FreshStudyDayResets(t *testing.T) {
 	day1 := testStudyDay(0)
 	now1 := day1.Start.Add(time.Hour)
 
-	batch1, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", day1, DefaultNewPerDay, DefaultRevPerDay, Cursor{AtStart: true}, 30, now1)
+	batch1, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", day1, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, NewMixAfterReviews, Cursor{AtStart: true}, 30, now1)
 	if err != nil {
 		t.Fatalf("BuildBatch day1: %v", err)
 	}
@@ -205,7 +219,7 @@ func TestBuildBatch_FreshStudyDayResets(t *testing.T) {
 	}
 	gradeCards(t, tx, f.UserID, now1, introducedDay1)
 
-	batch1b, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", day1, DefaultNewPerDay, DefaultRevPerDay, Cursor{AtStart: true}, 30, now1)
+	batch1b, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", day1, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, NewMixAfterReviews, Cursor{AtStart: true}, 30, now1)
 	if err != nil {
 		t.Fatalf("BuildBatch day1 refetch: %v", err)
 	}
@@ -219,7 +233,7 @@ func TestBuildBatch_FreshStudyDayResets(t *testing.T) {
 	// 5 never-introduced cards are servable again as unseen.
 	day2 := testStudyDay(1)
 	now2 := day2.Start.Add(time.Hour)
-	batch2, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", day2, DefaultNewPerDay, DefaultRevPerDay, Cursor{AtStart: true}, 30, now2)
+	batch2, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", day2, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, NewMixAfterReviews, Cursor{AtStart: true}, 30, now2)
 	if err != nil {
 		t.Fatalf("BuildBatch day2: %v", err)
 	}
@@ -251,7 +265,7 @@ func TestBuildBatch_ZeroPerDay(t *testing.T) {
 	now := window.Start.Add(time.Hour)
 	insertDueCard(t, tx, f.UserID, dueCard, window)
 
-	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, 0, DefaultRevPerDay, Cursor{AtStart: true}, 30, now)
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, 0, DefaultRevPerDay, RevOrderDue, NewMixAfterReviews, Cursor{AtStart: true}, 30, now)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -271,7 +285,7 @@ func TestBuildBatch_RefillDoesNotOvershoot(t *testing.T) {
 	window := testStudyDay(0)
 	now := window.Start.Add(time.Hour)
 
-	batch1, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, Cursor{AtStart: true}, 20, now)
+	batch1, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, NewMixAfterReviews, Cursor{AtStart: true}, 20, now)
 	if err != nil {
 		t.Fatalf("BuildBatch initial: %v", err)
 	}
@@ -288,7 +302,7 @@ func TestBuildBatch_RefillDoesNotOvershoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeCursor: %v", err)
 	}
-	batch2, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, cur, 20, now)
+	batch2, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, NewMixAfterReviews, cur, 20, now)
 	if err != nil {
 		t.Fatalf("BuildBatch refill: %v", err)
 	}
@@ -313,7 +327,7 @@ func TestBuildBatch_RevZeroPerDay(t *testing.T) {
 	now := window.Start.Add(time.Hour)
 	insertDueCards(t, tx, f.UserID, dueCards, window)
 
-	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 0, Cursor{AtStart: true}, 30, now)
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 0, RevOrderDue, NewMixAfterReviews, Cursor{AtStart: true}, 30, now)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -345,7 +359,7 @@ func TestBuildBatch_RevAtLimitNewCardsStillFlow(t *testing.T) {
 	toReview, blocked := allDue[0:3], allDue[3:5]
 	gradeCards(t, tx, f.UserID, now, toReview)
 
-	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 3, Cursor{AtStart: true}, 30, now)
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 3, RevOrderDue, NewMixAfterReviews, Cursor{AtStart: true}, 30, now)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -381,7 +395,7 @@ func TestBuildBatch_RevCapHoldsAcrossRefills(t *testing.T) {
 	cur := Cursor{AtStart: true}
 	exhausted := false
 	for i := 0; i < 10 && !exhausted; i++ {
-		batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 3, cur, 2, now)
+		batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 3, RevOrderDue, NewMixAfterReviews, cur, 2, now)
 		if err != nil {
 			t.Fatalf("BuildBatch: %v", err)
 		}
@@ -429,5 +443,317 @@ func TestCountNewIntroducedToday_DuplicateRowsCountOnce(t *testing.T) {
 
 	if got := countNewIntroducedToday(t, tx, f.UserID, f.DeckID, window); got != 1 {
 		t.Errorf("CountNewIntroducedToday = %d, want 1", got)
+	}
+}
+
+// TestBuildBatch_RevOrderIntervalAsc: three due cards with distinct scheduled_days, seeded out of
+// id order -- rev.order=intervalAsc serves them shortest interval first regardless of id or due
+// date (#116).
+func TestBuildBatch_RevOrderIntervalAsc(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	p := mustDefaultParams(t)
+	f := seedFixture(t, tx)
+	extra := seedCards(t, tx, f, 2)
+	window := testStudyDay(0)
+	now := window.Start.Add(time.Hour)
+
+	// f.CardID=30d, extra[0]=10d, extra[1]=20d -- ascending order is extra[0], extra[1], f.CardID.
+	insertDueCardWithSchedule(t, tx, f.UserID, f.CardID, window, 30)
+	insertDueCardWithSchedule(t, tx, f.UserID, extra[0], window, 10)
+	insertDueCardWithSchedule(t, tx, f.UserID, extra[1], window, 20)
+
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay,
+		RevOrderIntervalAsc, NewMixAfterReviews, Cursor{AtStart: true}, 30, now)
+	if err != nil {
+		t.Fatalf("BuildBatch: %v", err)
+	}
+	want := []pgtype.UUID{extra[0], extra[1], f.CardID}
+	if len(batch.Cards) != len(want) {
+		t.Fatalf("got %d cards, want %d", len(batch.Cards), len(want))
+	}
+	for i, c := range batch.Cards {
+		if c.CardID != want[i] {
+			t.Errorf("position %d: got card %s, want %s", i, c.CardID.String(), want[i].String())
+		}
+	}
+}
+
+// TestBuildBatch_RevOrderIntervalDesc: the same three cards, longest interval first.
+func TestBuildBatch_RevOrderIntervalDesc(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	p := mustDefaultParams(t)
+	f := seedFixture(t, tx)
+	extra := seedCards(t, tx, f, 2)
+	window := testStudyDay(0)
+	now := window.Start.Add(time.Hour)
+
+	insertDueCardWithSchedule(t, tx, f.UserID, f.CardID, window, 30)
+	insertDueCardWithSchedule(t, tx, f.UserID, extra[0], window, 10)
+	insertDueCardWithSchedule(t, tx, f.UserID, extra[1], window, 20)
+
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay,
+		RevOrderIntervalDesc, NewMixAfterReviews, Cursor{AtStart: true}, 30, now)
+	if err != nil {
+		t.Fatalf("BuildBatch: %v", err)
+	}
+	want := []pgtype.UUID{f.CardID, extra[1], extra[0]}
+	if len(batch.Cards) != len(want) {
+		t.Fatalf("got %d cards, want %d", len(batch.Cards), len(want))
+	}
+	for i, c := range batch.Cards {
+		if c.CardID != want[i] {
+			t.Errorf("position %d: got card %s, want %s", i, c.CardID.String(), want[i].String())
+		}
+	}
+}
+
+// TestBuildBatch_RevOrderRandom_StableWithinDay: rev.order=random reshuffles per study day but
+// two fetches within the same study day (the same hash_seed, #116) return the identical order --
+// the property pagination across refills depends on.
+func TestBuildBatch_RevOrderRandom_StableWithinDay(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	p := mustDefaultParams(t)
+	f := seedFixture(t, tx)
+	extra := seedCards(t, tx, f, 7)
+	allDue := append([]pgtype.UUID{f.CardID}, extra...)
+	window := testStudyDay(0)
+	now := window.Start.Add(time.Hour)
+	insertDueCards(t, tx, f.UserID, allDue, window)
+
+	fetch := func() []pgtype.UUID {
+		batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay,
+			RevOrderRandom, NewMixAfterReviews, Cursor{AtStart: true}, 30, now)
+		if err != nil {
+			t.Fatalf("BuildBatch: %v", err)
+		}
+		ids := make([]pgtype.UUID, len(batch.Cards))
+		for i, c := range batch.Cards {
+			ids[i] = c.CardID
+		}
+		return ids
+	}
+
+	order1 := fetch()
+	order2 := fetch()
+	if len(order1) != len(allDue) {
+		t.Fatalf("got %d cards, want %d", len(order1), len(allDue))
+	}
+	for i := range order1 {
+		if order1[i] != order2[i] {
+			t.Errorf("position %d: order1=%s order2=%s, want the same order within one study day", i, order1[i].String(), order2[i].String())
+		}
+	}
+}
+
+// TestBuildBatch_RevOrderRandom_ReshufflesNextDay: the same deck, fetched on two different study
+// days, gets two different orderings (overwhelmingly likely with 8 cards and an md5-derived key --
+// a false failure here would need every one of 8 cards to land in the same relative position by
+// chance across an independent hash_seed).
+func TestBuildBatch_RevOrderRandom_ReshufflesNextDay(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	p := mustDefaultParams(t)
+	f := seedFixture(t, tx)
+	extra := seedCards(t, tx, f, 7)
+	allDue := append([]pgtype.UUID{f.CardID}, extra...)
+	day1 := testStudyDay(0)
+	insertDueCards(t, tx, f.UserID, allDue, day1)
+
+	fetch := func(window StudyDay) []pgtype.UUID {
+		batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay,
+			RevOrderRandom, NewMixAfterReviews, Cursor{AtStart: true}, 30, window.Start.Add(time.Hour))
+		if err != nil {
+			t.Fatalf("BuildBatch: %v", err)
+		}
+		ids := make([]pgtype.UUID, len(batch.Cards))
+		for i, c := range batch.Cards {
+			ids[i] = c.CardID
+		}
+		return ids
+	}
+
+	order1 := fetch(day1)
+	order2 := fetch(testStudyDay(1))
+	if len(order1) != len(order2) {
+		t.Fatalf("got %d and %d cards, want equal counts", len(order1), len(order2))
+	}
+	same := true
+	for i := range order1 {
+		if order1[i] != order2[i] {
+			same = false
+			break
+		}
+	}
+	if same {
+		t.Errorf("day1 and day2 orders are identical, want a reshuffle across study days: %v", order1)
+	}
+}
+
+// TestBuildBatch_NewMixBeforeReviews: new.mix=beforeReviews serves the unseen card ahead of the
+// due card, the reverse of the afterReviews default (#116).
+func TestBuildBatch_NewMixBeforeReviews(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	p := mustDefaultParams(t)
+	f := seedFixture(t, tx)
+	extra := seedCards(t, tx, f, 1)
+	unseenCard := extra[0]
+	window := testStudyDay(0)
+	now := window.Start.Add(time.Hour)
+	insertDueCard(t, tx, f.UserID, f.CardID, window)
+
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay,
+		RevOrderDue, NewMixBeforeReviews, Cursor{AtStart: true}, 30, now)
+	if err != nil {
+		t.Fatalf("BuildBatch: %v", err)
+	}
+	if len(batch.Cards) != 2 {
+		t.Fatalf("got %d cards, want 2", len(batch.Cards))
+	}
+	if batch.Cards[0].CardID != unseenCard || !batch.Cards[0].Unseen {
+		t.Errorf("position 0: got card %s unseen=%v, want the unseen card first", batch.Cards[0].CardID.String(), batch.Cards[0].Unseen)
+	}
+	if batch.Cards[1].CardID != f.CardID || batch.Cards[1].Unseen {
+		t.Errorf("position 1: got card %s unseen=%v, want the due card second", batch.Cards[1].CardID.String(), batch.Cards[1].Unseen)
+	}
+}
+
+// TestBuildBatch_NewMixMixed_ServesBoth: new.mix=mixed serves both due and unseen cards in one
+// batch (the two-query interleave path, #116) without losing or duplicating either.
+func TestBuildBatch_NewMixMixed_ServesBoth(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	p := mustDefaultParams(t)
+	f := seedFixture(t, tx)
+	extra := seedCards(t, tx, f, 5) // + f.CardID = 6 total
+	dueCards := append([]pgtype.UUID{f.CardID}, extra[:2]...)
+	unseenCards := extra[2:]
+	window := testStudyDay(0)
+	now := window.Start.Add(time.Hour)
+	insertDueCards(t, tx, f.UserID, dueCards, window)
+
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay,
+		RevOrderDue, NewMixMixed, Cursor{AtStart: true}, 30, now)
+	if err != nil {
+		t.Fatalf("BuildBatch: %v", err)
+	}
+	if !batch.Exhausted {
+		t.Errorf("Exhausted = false, want true (both sub-fetches undersized)")
+	}
+	seenDue, seenUnseen := map[pgtype.UUID]bool{}, map[pgtype.UUID]bool{}
+	for _, c := range batch.Cards {
+		if c.Unseen {
+			seenUnseen[c.CardID] = true
+		} else {
+			seenDue[c.CardID] = true
+		}
+	}
+	if len(seenDue) != len(dueCards) {
+		t.Errorf("got %d distinct due cards, want %d", len(seenDue), len(dueCards))
+	}
+	if len(seenUnseen) != len(unseenCards) {
+		t.Errorf("got %d distinct unseen cards, want %d", len(seenUnseen), len(unseenCards))
+	}
+	if len(batch.Cards) != len(dueCards)+len(unseenCards) {
+		t.Errorf("got %d total cards, want %d (no loss or duplication)", len(batch.Cards), len(dueCards)+len(unseenCards))
+	}
+}
+
+// TestBuildBatch_NewMixMixed_RevCapBlocksReviewSide: rev.perDay=0 under mixed mode blocks the
+// review sub-query entirely while the new sub-query keeps flowing -- the mixed-mode counterpart
+// of TestBuildBatch_RevZeroPerDay, exercising ListReviewCardsForStudy's own rev_remaining check
+// rather than ListDueCardsForStudy's.
+func TestBuildBatch_NewMixMixed_RevCapBlocksReviewSide(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	p := mustDefaultParams(t)
+	f := seedFixture(t, tx)
+	extra := seedCards(t, tx, f, 2) // + f.CardID = 3 total
+	unseenCards := extra
+	window := testStudyDay(0)
+	now := window.Start.Add(time.Hour)
+	insertDueCard(t, tx, f.UserID, f.CardID, window)
+
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 0,
+		RevOrderDue, NewMixMixed, Cursor{AtStart: true}, 30, now)
+	if err != nil {
+		t.Fatalf("BuildBatch: %v", err)
+	}
+	if len(batch.Cards) != len(unseenCards) {
+		t.Fatalf("got %d cards, want %d (the unseen cards only)", len(batch.Cards), len(unseenCards))
+	}
+	for _, c := range batch.Cards {
+		if !c.Unseen {
+			t.Errorf("card %s: unseen=false, want true (due cards must be fully blocked)", c.CardID.String())
+		}
+	}
+}
+
+// TestBuildBatch_NewMixMixed_NewCapBlocksNewSide: new.perDay=0 under mixed mode blocks the new
+// sub-query entirely while the review sub-query keeps flowing -- the mixed-mode counterpart of
+// TestBuildBatch_ZeroPerDay, exercising ListNewCardsForStudy's own new_remaining check.
+func TestBuildBatch_NewMixMixed_NewCapBlocksNewSide(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	p := mustDefaultParams(t)
+	f := seedFixture(t, tx)
+	extra := seedCards(t, tx, f, 2) // + f.CardID = 3 total
+	dueCards := append([]pgtype.UUID{f.CardID}, extra[0])
+	window := testStudyDay(0)
+	now := window.Start.Add(time.Hour)
+	insertDueCards(t, tx, f.UserID, dueCards, window)
+
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, 0, DefaultRevPerDay,
+		RevOrderDue, NewMixMixed, Cursor{AtStart: true}, 30, now)
+	if err != nil {
+		t.Fatalf("BuildBatch: %v", err)
+	}
+	if len(batch.Cards) != len(dueCards) {
+		t.Fatalf("got %d cards, want %d (the due cards only)", len(batch.Cards), len(dueCards))
+	}
+	for _, c := range batch.Cards {
+		if c.Unseen {
+			t.Errorf("card %s: unseen=true, want false (new cards must be fully blocked)", c.CardID.String())
+		}
+	}
+}
+
+// TestBuildBatch_NewMixMixed_ExhaustedRequiresNoTruncation: 15 due cards + 15 unseen cards against
+// a limit of 20 -- each sub-fetch individually comes back undersized (15 < 20), but their combined
+// count (30) exceeds limit, so interleave truncates the display to 20 and 10 fetched-but-unpicked
+// rows remain for the next refill. Exhausted must be false (a bug caught in review: marking it
+// true here silently drops those 10 cards for the rest of the session, since the client never
+// refills once Exhausted is true).
+func TestBuildBatch_NewMixMixed_ExhaustedRequiresNoTruncation(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	p := mustDefaultParams(t)
+	f := seedFixture(t, tx)
+	extra := seedCards(t, tx, f, 29) // + f.CardID = 30 total unseen
+	dueCards := append([]pgtype.UUID{f.CardID}, extra[:14]...)
+	unseenCards := extra[14:]
+	if len(dueCards) != 15 || len(unseenCards) != 15 {
+		t.Fatalf("test setup: got %d due, %d unseen, want 15 and 15", len(dueCards), len(unseenCards))
+	}
+	window := testStudyDay(0)
+	now := window.Start.Add(time.Hour)
+	insertDueCards(t, tx, f.UserID, dueCards, window)
+
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay,
+		RevOrderDue, NewMixMixed, Cursor{AtStart: true}, 20, now)
+	if err != nil {
+		t.Fatalf("BuildBatch: %v", err)
+	}
+	if batch.Exhausted {
+		t.Error("Exhausted = true, want false (combined 30 rows truncated to the 20-card limit, 10 remain unserved)")
+	}
+	if len(batch.Cards) != 20 {
+		t.Fatalf("got %d cards, want 20 (the limit)", len(batch.Cards))
+	}
+	if batch.Cursor == "" {
+		t.Error("Cursor is empty, want a non-empty cursor so the remaining 10 cards can be fetched on refill")
 	}
 }

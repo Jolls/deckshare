@@ -159,15 +159,29 @@ type Querier interface {
 	// deck (architecture.md §7's Export section).
 	ListDecksByOwner(ctx context.Context, ownerID pgtype.UUID) ([]Deck, error)
 	ListDecksForUser(ctx context.Context, userID pgtype.UUID) ([]ListDecksForUserRow, error)
-	// The queue. Keyset over (COALESCE(due,'infinity'), card_id): due reviews first by due date, then
-	// never-seen cards by id. 'infinity' (not NULL) keeps the sort key total -- a NULL inside the row
-	// comparison below would silently drop every new card from every refill. Never-seen cards have no
-	// user_card_state row at all, hence the LEFT JOIN and the COALESCEd columns.
-	// The review cutoff for the per-deck daily review cap (#115): the (due, id) of the card ranked
-	// last within the deck's remaining review allowance, in the same order this query serves
-	// review-state cards in. LATERAL + "ON true" makes it an uncorrelated one-row subquery Postgres
-	// evaluates once per fetch, same InitPlan shape as the new-card cutoff below; a LEFT JOIN so a
-	// deck with fewer review-state cards than the allowance still returns a row (cutoff_due NULL).
+	// The queue, configurable per deck (#116): decks.preset "rev.order" picks the review-state sort
+	// key ('due' -- the original and Anki's classic default -- 'random', 'intervalAsc',
+	// 'intervalDesc'), "new.mix" picks whether never-seen cards sort as a group before or after
+	// everything else ('afterReviews' -- the original default -- or 'beforeReviews'; 'mixed' bypasses
+	// this query entirely, see ListReviewCardsForStudy/ListNewCardsForStudy below).
+	//
+	// `scored` computes each row's raw_key once: 0 for a never-seen row (never-seen cards are always
+	// ordered by id -- new-card gather order is out of scope, #117 -- so their raw_key only has to be
+	// a value, not a meaningful one), otherwise the rev_order-selected expression. Recomputing it a
+	// second time per row (once for the CASE, once for a plain column reference) would risk the two
+	// copies drifting; a CTE lets the outer query reference it as an ordinary column instead.
+	//
+	// The outer query also computes group_bit -- 0/1 depending on new_mix -- so the two groups
+	// (never-seen vs. everything else) always sort as a whole ahead of/behind each other. group_bit
+	// is its own ORDER BY/cursor column rather than an offset folded into sort_key by arithmetic: see
+	// the doc comment on group_bit's SELECT expression below for why. Keyset cursor and ORDER BY both
+	// key on (group_bit, sort_key, card_id).
+	// The review cutoff for the per-deck daily review cap (#115): the (raw_key, id) of the card
+	// ranked last within the deck's remaining review allowance, in the same rev_order this query
+	// serves review-state cards in. LATERAL + "ON true" makes it an uncorrelated one-row subquery
+	// Postgres evaluates once per fetch, same InitPlan shape as the new-card cutoff below; a LEFT
+	// JOIN so a deck with fewer review-state cards than the allowance still returns a row
+	// (cutoff_key NULL).
 	ListDueCardsForStudy(ctx context.Context, arg ListDueCardsForStudyParams) ([]ListDueCardsForStudyRow, error)
 	// The idempotency check (architecture.md §6). Deliberately NOT scoped to user_id: review_log.id is a
 	// global primary key, so an id taken by anyone is taken here -- scoping it would let ON CONFLICT drop
@@ -177,6 +191,10 @@ type Querier interface {
 	ListFieldsForNoteTypes(ctx context.Context, noteTypeIds []pgtype.UUID) ([]ListFieldsForNoteTypesRow, error)
 	ListFieldsForOwner(ctx context.Context, ownerID pgtype.UUID) ([]Field, error)
 	ListMediaRefsForDeck(ctx context.Context, deckID pgtype.UUID) ([]MediaRef, error)
+	// The never-seen half of mixed new/review interleaving (#116): identical to ListDueCardsForStudy's
+	// never-seen branch, ordered by id (new-card gather order is out of scope, #117), keyset over
+	// card_id alone. BuildBatch interleaves the two result sets in Go.
+	ListNewCardsForStudy(ctx context.Context, arg ListNewCardsForStudyParams) ([]ListNewCardsForStudyRow, error)
 	ListNoteIDsOfNoteType(ctx context.Context, noteTypeID pgtype.UUID) ([]pgtype.UUID, error)
 	// Note-type CSS for every card in the deck: sanitised once per page, never per card (#55's doc
 	// comment), so a refilled card can never arrive before its styles.
@@ -185,6 +203,11 @@ type Querier interface {
 	ListNoteTypesForOwner(ctx context.Context, ownerID pgtype.UUID) ([]ListNoteTypesForOwnerRow, error)
 	ListNotesByOwner(ctx context.Context, ownerID pgtype.UUID) ([]Note, error)
 	ListNotesInDeck(ctx context.Context, arg ListNotesInDeckParams) ([]ListNotesInDeckRow, error)
+	// The review-state half of mixed new/review interleaving (#116, decks.preset "new.mix" =
+	// "mixed"): the same review-side filters and rev_order as ListDueCardsForStudy above, minus
+	// never-seen cards entirely (those come from ListNewCardsForStudy) and minus the group-prefix
+	// bit (there is only one group here). BuildBatch interleaves the two result sets in Go.
+	ListReviewCardsForStudy(ctx context.Context, arg ListReviewCardsForStudyParams) ([]ListReviewCardsForStudyRow, error)
 	// The replay path (architecture.md §6); backed by review_log_card_id_user_id_reviewed_at_idx. Only
 	// rating and reviewed_at are read: a replay re-derives every *_before itself.
 	ListReviewLogForCard(ctx context.Context, arg ListReviewLogForCardParams) ([]ListReviewLogForCardRow, error)
