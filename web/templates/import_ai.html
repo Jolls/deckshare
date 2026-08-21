@@ -13,7 +13,7 @@
 {{else if not .Decks}}
 <p>You don't have any decks yet. <a href="/decks/new">Create one</a> first.</p>
 {{else}}
-<p>You don't have any note types yet. <a href="/note-types/new">Create one</a> first.</p>
+{{template "noNoteTypesMsg"}}
 {{end}}
 
 {{else if not .NoteType}}
@@ -25,7 +25,7 @@
     <button type="submit">Continue</button>
 </form>
 {{else}}
-<p>You don't have any note types yet. <a href="/note-types/new">Create one</a> first.</p>
+{{template "noNoteTypesMsg"}}
 {{end}}
 
 {{else}}
@@ -49,7 +49,7 @@ Paste its reply back in underneath.</p>
     <button type="submit">Import</button>
 </form>
 {{end}}
-<p><a href="/decks">Back to decks</a></p>
+{{template "backToDecks"}}
 {{end}}
 
 {{define "noteTypeAndDepthFields"}}

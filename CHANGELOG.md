@@ -3,6 +3,16 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.31] - 2026-08-20
+
+### Changed
+- Deduplicated repeated markup across templates into shared partials (`errorMsg`/`successMsg`,
+  "no note types yet", "back to deck", "back to decks") and merged `cmd/seed`'s near-identical
+  `seedBasicNotes`/`seedClozeNotes` into one `seedSampleNotes` — no behavior change
+  ([#129](https://github.com/Jolls/enshu/issues/129)).
+- Removed the standalone `go vet ./...` step from CI; golangci-lint's `standard` preset already
+  runs `govet` ([#129](https://github.com/Jolls/enshu/issues/129)).
+
 ## [0.1.30] - 2026-08-20
 
 ### Added

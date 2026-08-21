@@ -3,8 +3,8 @@
 
 <section>
     <h2>Profile</h2>
-    {{if .ProfileError}}<p style="color: red;">{{.ProfileError}}</p>{{end}}
-    {{if .ProfileSuccess}}<p style="color: green;">{{.ProfileSuccess}}</p>{{end}}
+    {{template "errorMsg" .ProfileError}}
+    {{template "successMsg" .ProfileSuccess}}
     <form method="post" action="/settings">
         <label for="display_name">Name</label>
         <input type="text" id="display_name" name="display_name" value="{{.User.DisplayName}}" required>
@@ -21,8 +21,8 @@
 
 <section>
     <h2>Change password</h2>
-    {{if .PasswordError}}<p style="color: red;">{{.PasswordError}}</p>{{end}}
-    {{if .PasswordSuccess}}<p style="color: green;">{{.PasswordSuccess}}</p>{{end}}
+    {{template "errorMsg" .PasswordError}}
+    {{template "successMsg" .PasswordSuccess}}
     <form method="post" action="/settings/password">
         <label for="current_password">Current password</label>
         <input type="password" id="current_password" name="current_password" required>
@@ -39,8 +39,8 @@
 
 <section>
     <h2>Spaced repetition</h2>
-    {{if .FsrsError}}<p style="color: red;">{{.FsrsError}}</p>{{end}}
-    {{if .FsrsSuccess}}<p style="color: green;">{{.FsrsSuccess}}</p>{{end}}
+    {{template "errorMsg" .FsrsError}}
+    {{template "successMsg" .FsrsSuccess}}
     <form method="post" action="/settings/fsrs">
         <label for="desired_retention">Desired retention</label>
         <input type="number" id="desired_retention" name="desired_retention" min="0" max="1" step="0.01" value="{{.DesiredRetention}}" required>

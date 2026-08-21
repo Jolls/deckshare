@@ -37,5 +37,5 @@
     <button type="submit">Delete deck</button>
 </form>
 
-<p><a href="/decks/{{.Deck.ID}}">Back to deck</a></p>
+{{template "backToDeck" .Deck}}
 {{end}}

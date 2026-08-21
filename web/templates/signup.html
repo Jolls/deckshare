@@ -1,6 +1,6 @@
 {{define "content"}}
 <h1>Sign up</h1>
-{{if .Error}}<p style="color: red;">{{.Error}}</p>{{end}}
+{{template "errorMsg" .Error}}
 <form method="post" action="/signup">
     <label for="email">Email</label>
     <input type="email" id="email" name="email" value="{{.Email}}" required>
