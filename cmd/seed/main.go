@@ -110,7 +110,7 @@ func run() error {
 	}
 
 	if basicDeck.CardCount == 0 {
-		if err := seedBasicNotes(ctx, pool, user.ID, basicDeck.ID, basicType.ID); err != nil {
+		if err := seedSampleNotes(ctx, pool, user.ID, basicDeck.ID, basicType.ID, "Basic", basicSamples); err != nil {
 			return fmt.Errorf("seed basic notes: %w", err)
 		}
 		log.Printf("seeded sample notes in %s", basicDeckName)
@@ -119,7 +119,7 @@ func run() error {
 	}
 
 	if clozeDeck.CardCount == 0 {
-		if err := seedClozeNotes(ctx, pool, user.ID, clozeDeck.ID, clozeType.ID); err != nil {
+		if err := seedSampleNotes(ctx, pool, user.ID, clozeDeck.ID, clozeType.ID, "Cloze", clozeSamples); err != nil {
 			return fmt.Errorf("seed cloze notes: %w", err)
 		}
 		log.Printf("seeded sample notes in %s", clozeDeckName)
@@ -175,57 +175,23 @@ var basicSamples = [][2]string{
 	{"Author of Hamlet", "William Shakespeare"},
 }
 
-func seedBasicNotes(ctx context.Context, pool *pgxpool.Pool, userID, deckID, noteTypeID pgtype.UUID) error {
+var clozeSamples = [][2]string{
+	{"The mitochondria is the {{c1::powerhouse}} of the cell", ""},
+	{"Water freezes at {{c1::0}} degrees Celsius", ""},
+}
+
+func seedSampleNotes(ctx context.Context, pool *pgxpool.Pool, userID, deckID, noteTypeID pgtype.UUID, typeName string, samples [][2]string) error {
 	q := db.New(pool)
 	templates, err := q.ListTemplatesForNoteType(ctx, noteTypeID)
 	if err != nil {
 		return err
 	}
 	if len(templates) == 0 {
-		return errors.New(`note type "Basic" has no templates`)
+		return fmt.Errorf("note type %q has no templates", typeName)
 	}
 
-	for _, pair := range basicSamples {
+	for _, pair := range samples {
 		fieldsJSON, checksum, err := fieldsAndChecksum(pair[0], pair[1])
-		if err != nil {
-			return err
-		}
-		guid, err := randomGuid()
-		if err != nil {
-			return err
-		}
-		if err := createNote(ctx, pool, db.CreateNoteParams{
-			Guid:       guid,
-			Fields:     fieldsJSON,
-			Tags:       []string{},
-			Checksum:   checksum,
-			UserID:     userID,
-			NoteTypeID: noteTypeID,
-			DeckID:     deckID,
-		}, []db.DesiredCard{{Ordinal: 0, TemplateID: templates[0].ID}}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-var clozeSamples = []string{
-	"The mitochondria is the {{c1::powerhouse}} of the cell",
-	"Water freezes at {{c1::0}} degrees Celsius",
-}
-
-func seedClozeNotes(ctx context.Context, pool *pgxpool.Pool, userID, deckID, noteTypeID pgtype.UUID) error {
-	q := db.New(pool)
-	templates, err := q.ListTemplatesForNoteType(ctx, noteTypeID)
-	if err != nil {
-		return err
-	}
-	if len(templates) == 0 {
-		return errors.New(`note type "Cloze" has no templates`)
-	}
-
-	for _, text := range clozeSamples {
-		fieldsJSON, checksum, err := fieldsAndChecksum(text, "")
 		if err != nil {
 			return err
 		}

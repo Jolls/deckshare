@@ -10,7 +10,7 @@
     <button type="submit">Continue</button>
 </form>
 {{else}}
-<p>You don't have any note types yet. <a href="/note-types/new">Create one</a> first.</p>
+{{template "noNoteTypesMsg"}}
 {{end}}
 {{else if .IsNew}}
 <h1>Add note to {{.Deck.Name}}</h1>

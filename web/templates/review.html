@@ -2,7 +2,7 @@
 {{range .CSS}}<style>{{.}}</style>{{end}}
 
 <h1>{{.Deck.Name}}</h1>
-<p><a href="/decks/{{.Deck.ID}}">Back to deck</a></p>
+{{template "backToDeck" .Deck}}
 
 <p id="review-error" hidden></p>
 
@@ -31,7 +31,7 @@
 
 <section id="review-done" hidden>
   <p>No more cards due. Nice work.</p>
-  <p><a href="/decks/{{.Deck.ID}}">Back to deck</a></p>
+  {{template "backToDeck" .Deck}}
 </section>
 
 <script src="/static/review.js" defer data-deck-id="{{.Deck.ID}}" data-study-day-end="{{.StudyDayEnd}}"></script>

@@ -15,7 +15,15 @@ import (
 // docs/plans/56-reviewer-batch-grading.md), so the two can never draw different markup for the
 // same card shape.
 var pagePartials = map[string][]string{
-	"review": {"templates/review_cards.html"},
+	"review":    {"templates/review_cards.html", "templates/back_to_deck.html"},
+	"deck_edit": {"templates/back_to_deck.html"},
+	"login":     {"templates/messages.html"},
+	"signup":    {"templates/messages.html"},
+	"settings":  {"templates/messages.html"},
+	"deck_new":  {"templates/messages.html", "templates/back_to_decks.html"},
+	"import":    {"templates/messages.html", "templates/back_to_decks.html"},
+	"import_ai": {"templates/back_to_decks.html", "templates/no_note_types.html"},
+	"note_form": {"templates/no_note_types.html"},
 }
 
 func parseTemplates() (map[string]*template.Template, error) {
