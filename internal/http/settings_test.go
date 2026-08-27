@@ -104,6 +104,27 @@ func TestSettingsPasswordGoldenPath(t *testing.T) {
 	if _, _, err := a.Login(context.Background(), "1.2.3.4", email, "correct-horse-battery"); err == nil {
 		t.Error("login with old password should fail")
 	}
+
+	// The password change purges every session and reissues one, so the response must carry a
+	// replacement cookie and the pre-change cookie must no longer authenticate (#123).
+	// Last-wins, as a browser would apply them: on a session old enough to trip RenewThreshold
+	// the middleware also emits a Set-Cookie for the OLD token before the handler emits the new
+	// one, so "exactly one session cookie" is not an invariant worth asserting here.
+	var reissued *http.Cookie
+	for _, c := range w.Result().Cookies() {
+		if c.Name == auth.CookieName {
+			reissued = c
+		}
+	}
+	if reissued == nil {
+		t.Fatal("response should reissue the session cookie")
+	}
+	if reissued.Value == cookie.Value {
+		t.Error("reissued session cookie should differ from the pre-change one")
+	}
+	if old := doRequest(handler, "GET", "/settings", "", cookie, ""); old.Code != 303 {
+		t.Errorf("pre-change cookie status = %d, want 303 to /login", old.Code)
+	}
 }
 
 func TestSettingsFsrsGoldenPath(t *testing.T) {

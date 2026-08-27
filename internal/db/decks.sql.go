@@ -19,13 +19,13 @@ WHERE da.deck_id = $1 AND da.user_id = $2 AND da.can_view
 `
 
 type CountDeckContentsParams struct {
-	DeckID pgtype.UUID `json:"deck_id"`
-	UserID pgtype.UUID `json:"user_id"`
+	DeckID pgtype.UUID
+	UserID pgtype.UUID
 }
 
 type CountDeckContentsRow struct {
-	NoteCount int64 `json:"note_count"`
-	CardCount int64 `json:"card_count"`
+	NoteCount int64
+	CardCount int64
 }
 
 func (q *Queries) CountDeckContents(ctx context.Context, arg CountDeckContentsParams) (CountDeckContentsRow, error) {
@@ -40,33 +40,13 @@ INSERT INTO decks (owner_id, name, description) VALUES ($1, $2, $3) RETURNING id
 `
 
 type CreateDeckParams struct {
-	OwnerID     pgtype.UUID `json:"owner_id"`
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
+	OwnerID     pgtype.UUID
+	Name        string
+	Description string
 }
 
 func (q *Queries) CreateDeck(ctx context.Context, arg CreateDeckParams) (Deck, error) {
 	row := q.db.QueryRow(ctx, createDeck, arg.OwnerID, arg.Name, arg.Description)
-	var i Deck
-	err := row.Scan(
-		&i.ID,
-		&i.OwnerID,
-		&i.Name,
-		&i.Description,
-		&i.Preset,
-		&i.CreatedAt,
-		&i.ModifiedAt,
-		&i.AnkiID,
-	)
-	return i, err
-}
-
-const getDeck = `-- name: GetDeck :one
-SELECT id, owner_id, name, description, preset, created_at, modified_at, anki_id FROM decks WHERE id = $1
-`
-
-func (q *Queries) GetDeck(ctx context.Context, id pgtype.UUID) (Deck, error) {
-	row := q.db.QueryRow(ctx, getDeck, id)
 	var i Deck
 	err := row.Scan(
 		&i.ID,
@@ -90,8 +70,8 @@ WHERE d.id = $2
 `
 
 type GetDeckForContentEditParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	DeckID pgtype.UUID `json:"deck_id"`
+	UserID pgtype.UUID
+	DeckID pgtype.UUID
 }
 
 func (q *Queries) GetDeckForContentEdit(ctx context.Context, arg GetDeckForContentEditParams) (Deck, error) {
@@ -119,8 +99,8 @@ WHERE d.id = $2
 `
 
 type GetDeckForSettingsEditParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	DeckID pgtype.UUID `json:"deck_id"`
+	UserID pgtype.UUID
+	DeckID pgtype.UUID
 }
 
 func (q *Queries) GetDeckForSettingsEdit(ctx context.Context, arg GetDeckForSettingsEditParams) (Deck, error) {
@@ -147,8 +127,8 @@ WHERE d.id = $2
 `
 
 type GetDeckForUserParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	DeckID pgtype.UUID `json:"deck_id"`
+	UserID pgtype.UUID
+	DeckID pgtype.UUID
 }
 
 func (q *Queries) GetDeckForUser(ctx context.Context, arg GetDeckForUserParams) (Deck, error) {
@@ -175,15 +155,15 @@ ORDER BY d.name
 `
 
 type ListDecksForUserRow struct {
-	ID          pgtype.UUID        `json:"id"`
-	OwnerID     pgtype.UUID        `json:"owner_id"`
-	Name        string             `json:"name"`
-	Description string             `json:"description"`
-	Preset      []byte             `json:"preset"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	ModifiedAt  pgtype.Timestamptz `json:"modified_at"`
-	AnkiID      pgtype.Int8        `json:"anki_id"`
-	CardCount   int64              `json:"card_count"`
+	ID          pgtype.UUID
+	OwnerID     pgtype.UUID
+	Name        string
+	Description string
+	Preset      []byte
+	CreatedAt   pgtype.Timestamptz
+	ModifiedAt  pgtype.Timestamptz
+	AnkiID      pgtype.Int8
+	CardCount   int64
 }
 
 func (q *Queries) ListDecksForUser(ctx context.Context, userID pgtype.UUID) ([]ListDecksForUserRow, error) {
@@ -250,14 +230,14 @@ WHERE d.id = $7 AND da.deck_id = d.id AND da.user_id = $8
 `
 
 type UpdateDeckParams struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	NewPerDay   pgtype.Int4 `json:"new_per_day"`
-	NewMix      pgtype.Text `json:"new_mix"`
-	RevPerDay   pgtype.Int4 `json:"rev_per_day"`
-	RevOrder    pgtype.Text `json:"rev_order"`
-	DeckID      pgtype.UUID `json:"deck_id"`
-	UserID      pgtype.UUID `json:"user_id"`
+	Name        string
+	Description string
+	NewPerDay   pgtype.Int4
+	NewMix      pgtype.Text
+	RevPerDay   pgtype.Int4
+	RevOrder    pgtype.Text
+	DeckID      pgtype.UUID
+	UserID      pgtype.UUID
 }
 
 func (q *Queries) UpdateDeck(ctx context.Context, arg UpdateDeckParams) (int64, error) {

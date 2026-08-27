@@ -16,8 +16,8 @@ SELECT user_id, card_id, due, stability, difficulty, state, reps, lapses, elapse
 `
 
 type GetUserCardStateParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	CardID pgtype.UUID `json:"card_id"`
+	UserID pgtype.UUID
+	CardID pgtype.UUID
 }
 
 func (q *Queries) GetUserCardState(ctx context.Context, arg GetUserCardStateParams) (UserCardState, error) {
@@ -58,18 +58,18 @@ ON CONFLICT (user_id, card_id) DO UPDATE SET
 `
 
 type UpsertUserCardStateFromReplayParams struct {
-	UserID        pgtype.UUID        `json:"user_id"`
-	CardID        pgtype.UUID        `json:"card_id"`
-	Due           pgtype.Timestamptz `json:"due"`
-	Stability     float64            `json:"stability"`
-	Difficulty    float64            `json:"difficulty"`
-	State         int16              `json:"state"`
-	Reps          int32              `json:"reps"`
-	Lapses        int32              `json:"lapses"`
-	ElapsedDays   int32              `json:"elapsed_days"`
-	ScheduledDays int32              `json:"scheduled_days"`
-	LearningSteps int16              `json:"learning_steps"`
-	LastReview    pgtype.Timestamptz `json:"last_review"`
+	UserID        pgtype.UUID
+	CardID        pgtype.UUID
+	Due           pgtype.Timestamptz
+	Stability     float64
+	Difficulty    float64
+	State         int16
+	Reps          int32
+	Lapses        int32
+	ElapsedDays   int32
+	ScheduledDays int32
+	LearningSteps int16
+	LastReview    pgtype.Timestamptz
 }
 
 // The replay writer: unguarded, because a rebuild from review_log IS the newest truth for this card by
@@ -108,18 +108,18 @@ WHERE user_card_state.last_review IS NULL OR user_card_state.last_review < EXCLU
 `
 
 type UpsertUserCardStateOnReviewParams struct {
-	UserID        pgtype.UUID        `json:"user_id"`
-	CardID        pgtype.UUID        `json:"card_id"`
-	Due           pgtype.Timestamptz `json:"due"`
-	Stability     float64            `json:"stability"`
-	Difficulty    float64            `json:"difficulty"`
-	State         int16              `json:"state"`
-	Reps          int32              `json:"reps"`
-	Lapses        int32              `json:"lapses"`
-	ElapsedDays   int32              `json:"elapsed_days"`
-	ScheduledDays int32              `json:"scheduled_days"`
-	LearningSteps int16              `json:"learning_steps"`
-	LastReview    pgtype.Timestamptz `json:"last_review"`
+	UserID        pgtype.UUID
+	CardID        pgtype.UUID
+	Due           pgtype.Timestamptz
+	Stability     float64
+	Difficulty    float64
+	State         int16
+	Reps          int32
+	Lapses        int32
+	ElapsedDays   int32
+	ScheduledDays int32
+	LearningSteps int16
+	LastReview    pgtype.Timestamptz
 }
 
 // Last-write-wins by REVIEW time, not arrival time -- the property that makes a retrying sender safe

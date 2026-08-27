@@ -16,11 +16,11 @@ INSERT INTO templates (note_type_id, ordinal, name, qfmt, afmt) VALUES ($1,$2,$3
 `
 
 type CreateTemplateParams struct {
-	NoteTypeID pgtype.UUID `json:"note_type_id"`
-	Ordinal    int32       `json:"ordinal"`
-	Name       string      `json:"name"`
-	Qfmt       string      `json:"qfmt"`
-	Afmt       string      `json:"afmt"`
+	NoteTypeID pgtype.UUID
+	Ordinal    int32
+	Name       string
+	Qfmt       string
+	Afmt       string
 }
 
 func (q *Queries) CreateTemplate(ctx context.Context, arg CreateTemplateParams) (Template, error) {
@@ -55,26 +55,6 @@ func (q *Queries) DeleteTemplatesForNoteType(ctx context.Context, noteTypeID pgt
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const getTemplate = `-- name: GetTemplate :one
-SELECT id, note_type_id, ordinal, name, qfmt, afmt, browser_qfmt, browser_afmt FROM templates WHERE id = $1
-`
-
-func (q *Queries) GetTemplate(ctx context.Context, id pgtype.UUID) (Template, error) {
-	row := q.db.QueryRow(ctx, getTemplate, id)
-	var i Template
-	err := row.Scan(
-		&i.ID,
-		&i.NoteTypeID,
-		&i.Ordinal,
-		&i.Name,
-		&i.Qfmt,
-		&i.Afmt,
-		&i.BrowserQfmt,
-		&i.BrowserAfmt,
-	)
-	return i, err
 }
 
 const listTemplatesForNoteType = `-- name: ListTemplatesForNoteType :many
@@ -116,11 +96,11 @@ WHERE id = $4 AND note_type_id = $5
 `
 
 type UpdateTemplateParams struct {
-	Name       string      `json:"name"`
-	Qfmt       string      `json:"qfmt"`
-	Afmt       string      `json:"afmt"`
-	ID         pgtype.UUID `json:"id"`
-	NoteTypeID pgtype.UUID `json:"note_type_id"`
+	Name       string
+	Qfmt       string
+	Afmt       string
+	ID         pgtype.UUID
+	NoteTypeID pgtype.UUID
 }
 
 func (q *Queries) UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) (int64, error) {

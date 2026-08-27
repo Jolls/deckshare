@@ -18,3 +18,6 @@ DELETE FROM sessions WHERE id = $1;
 
 -- name: DeleteExpiredSessions :execrows
 DELETE FROM sessions WHERE expires_at < now();
+
+-- name: DeleteSessionsForUser :execrows
+DELETE FROM sessions WHERE user_id = $1;

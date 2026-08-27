@@ -3,6 +3,38 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.32] - 2026-08-26
+
+### Security
+- Changing a password now invalidates every session for that account and reissues the acting
+  browser's session cookie, so a stolen session no longer survives the one remedy a user has
+  ([#123](https://github.com/Jolls/enshu/issues/123)).
+- Added `X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin` alongside the
+  existing CSP ([#123](https://github.com/Jolls/enshu/issues/123)).
+
+### Fixed
+- The reviewer now holds and retries a grade batch rejected with 401 instead of dropping it
+  permanently, so an expired or invalidated session no longer silently discards buffered grades
+  ([#123](https://github.com/Jolls/enshu/issues/123)).
+
+### Removed
+- Deleted five never-called, unscoped `SELECT * WHERE id = $1` getters (`GetDeck`,
+  `GetDeckAccess`, `GetField`, `GetNote`, `GetTemplate`) — the only queries in the data layer that
+  read deck-owned content without a `deck_access` join
+  ([#122](https://github.com/Jolls/enshu/issues/122)).
+- Turned off sqlc's `emit_interface` and `emit_json_tags`: the generated `Querier` interface had
+  no consumer, and no `db.*` struct is ever marshalled
+  ([#122](https://github.com/Jolls/enshu/issues/122)).
+
+### Changed
+- Deduplicated `IsUniqueViolation`/`IsForeignKeyViolation` onto one SQLSTATE helper, made
+  `SyncNoteCards`'s card-deletion list deterministic, and documented the two `deck_access`-join
+  exceptions that lacked a stated reason — no behavior change
+  ([#122](https://github.com/Jolls/enshu/issues/122)).
+- Gave the session cookie one constructor so the set and clear paths cannot drift apart on a
+  security flag, and moved `formatRetryAfter` next to its only caller
+  ([#123](https://github.com/Jolls/enshu/issues/123)).
+
 ## [0.1.31] - 2026-08-20
 
 ### Changed

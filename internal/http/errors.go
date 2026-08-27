@@ -3,6 +3,8 @@ package http
 import (
 	"errors"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/Jolls/enshu/internal/auth"
 )
@@ -28,4 +30,12 @@ func classifyFormError(err error, domain func(error) (status int, msg string, ma
 	default:
 		return 0, "", "", false
 	}
+}
+
+func formatRetryAfter(d time.Duration) string {
+	secs := int(d.Seconds())
+	if secs < 1 {
+		secs = 1
+	}
+	return strconv.Itoa(secs)
 }

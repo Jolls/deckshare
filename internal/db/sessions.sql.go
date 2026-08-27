@@ -16,9 +16,9 @@ INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)
 `
 
 type CreateSessionParams struct {
-	ID        string             `json:"id"`
-	UserID    pgtype.UUID        `json:"user_id"`
-	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	ID        string
+	UserID    pgtype.UUID
+	ExpiresAt pgtype.Timestamptz
 }
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) error {
@@ -47,6 +47,18 @@ func (q *Queries) DeleteSession(ctx context.Context, id string) error {
 	return err
 }
 
+const deleteSessionsForUser = `-- name: DeleteSessionsForUser :execrows
+DELETE FROM sessions WHERE user_id = $1
+`
+
+func (q *Queries) DeleteSessionsForUser(ctx context.Context, userID pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSessionsForUser, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getSession = `-- name: GetSession :one
 SELECT id, user_id, expires_at, created_at FROM sessions WHERE id = $1
 `
@@ -71,8 +83,8 @@ WHERE s.id = $1 AND s.expires_at > now()
 `
 
 type GetSessionUserRow struct {
-	User      User               `json:"user"`
-	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	User      User
+	ExpiresAt pgtype.Timestamptz
 }
 
 func (q *Queries) GetSessionUser(ctx context.Context, id string) (GetSessionUserRow, error) {
@@ -96,8 +108,8 @@ UPDATE sessions SET expires_at = $2 WHERE id = $1
 `
 
 type RenewSessionParams struct {
-	ID        string             `json:"id"`
-	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	ID        string
+	ExpiresAt pgtype.Timestamptz
 }
 
 func (q *Queries) RenewSession(ctx context.Context, arg RenewSessionParams) error {

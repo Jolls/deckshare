@@ -28,11 +28,11 @@ VALUES ($1, $2, $3, $4, $5) RETURNING id, owner_id, name, css, is_cloze, sort_fi
 `
 
 type CreateNoteTypeParams struct {
-	OwnerID      pgtype.UUID `json:"owner_id"`
-	Name         string      `json:"name"`
-	Css          string      `json:"css"`
-	IsCloze      bool        `json:"is_cloze"`
-	SortFieldIdx int32       `json:"sort_field_idx"`
+	OwnerID      pgtype.UUID
+	Name         string
+	Css          string
+	IsCloze      bool
+	SortFieldIdx int32
 }
 
 func (q *Queries) CreateNoteType(ctx context.Context, arg CreateNoteTypeParams) (NoteType, error) {
@@ -61,8 +61,8 @@ DELETE FROM note_types WHERE id = $1 AND owner_id = $2
 `
 
 type DeleteNoteTypeParams struct {
-	ID      pgtype.UUID `json:"id"`
-	OwnerID pgtype.UUID `json:"owner_id"`
+	ID      pgtype.UUID
+	OwnerID pgtype.UUID
 }
 
 // notes.note_type_id ON DELETE RESTRICT blocks this while any note exists (routes.md);
@@ -99,8 +99,8 @@ SELECT id, owner_id, name, css, is_cloze, sort_field_idx, anki_id FROM note_type
 `
 
 type GetNoteTypeForOwnerParams struct {
-	ID      pgtype.UUID `json:"id"`
-	OwnerID pgtype.UUID `json:"owner_id"`
+	ID      pgtype.UUID
+	OwnerID pgtype.UUID
 }
 
 func (q *Queries) GetNoteTypeForOwner(ctx context.Context, arg GetNoteTypeForOwnerParams) (NoteType, error) {
@@ -124,14 +124,14 @@ FROM note_types nt WHERE nt.owner_id = $1 ORDER BY nt.name
 `
 
 type ListNoteTypesForOwnerRow struct {
-	ID           pgtype.UUID `json:"id"`
-	OwnerID      pgtype.UUID `json:"owner_id"`
-	Name         string      `json:"name"`
-	Css          string      `json:"css"`
-	IsCloze      bool        `json:"is_cloze"`
-	SortFieldIdx int32       `json:"sort_field_idx"`
-	AnkiID       pgtype.Int8 `json:"anki_id"`
-	NoteCount    int64       `json:"note_count"`
+	ID           pgtype.UUID
+	OwnerID      pgtype.UUID
+	Name         string
+	Css          string
+	IsCloze      bool
+	SortFieldIdx int32
+	AnkiID       pgtype.Int8
+	NoteCount    int64
 }
 
 func (q *Queries) ListNoteTypesForOwner(ctx context.Context, ownerID pgtype.UUID) ([]ListNoteTypesForOwnerRow, error) {
@@ -168,8 +168,8 @@ SELECT id, owner_id, name, css, is_cloze, sort_field_idx, anki_id FROM note_type
 `
 
 type LockNoteTypeForOwnerParams struct {
-	ID      pgtype.UUID `json:"id"`
-	OwnerID pgtype.UUID `json:"owner_id"`
+	ID      pgtype.UUID
+	OwnerID pgtype.UUID
 }
 
 // Locks the note type row for the duration of an edit transaction, serialising it against a
@@ -197,11 +197,11 @@ WHERE id = $4 AND owner_id = $5
 `
 
 type UpdateNoteTypeRowParams struct {
-	Name         string      `json:"name"`
-	Css          string      `json:"css"`
-	SortFieldIdx int32       `json:"sort_field_idx"`
-	ID           pgtype.UUID `json:"id"`
-	OwnerID      pgtype.UUID `json:"owner_id"`
+	Name         string
+	Css          string
+	SortFieldIdx int32
+	ID           pgtype.UUID
+	OwnerID      pgtype.UUID
 }
 
 // is_cloze is immutable after creation: flipping it changes what every existing note's cards

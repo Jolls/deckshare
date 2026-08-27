@@ -1,6 +1,3 @@
--- name: GetField :one
-SELECT * FROM fields WHERE id = $1;
-
 -- name: ListFieldsForNoteType :many
 SELECT * FROM fields WHERE note_type_id = $1 ORDER BY ordinal;
 

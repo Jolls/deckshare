@@ -1,6 +1,8 @@
 -- name: GetMediaRef :one
 SELECT * FROM media_refs WHERE deck_id = $1 AND filename = $2;
 
+-- No deck_access join (CLAUDE.md §9): the only caller is internal/review's renderQueueRows, for
+-- a deck the review handler has already authorised with GetDeckForStudy (can_view AND can_study).
 -- name: ListMediaRefsForDeck :many
 SELECT * FROM media_refs WHERE deck_id = $1;
 

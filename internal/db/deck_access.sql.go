@@ -11,32 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const getDeckAccess = `-- name: GetDeckAccess :one
-SELECT deck_id, user_id, can_view, can_study, can_edit_content, can_edit_settings, can_manage_access, can_delete, created_at FROM deck_access WHERE deck_id = $1 AND user_id = $2
-`
-
-type GetDeckAccessParams struct {
-	DeckID pgtype.UUID `json:"deck_id"`
-	UserID pgtype.UUID `json:"user_id"`
-}
-
-func (q *Queries) GetDeckAccess(ctx context.Context, arg GetDeckAccessParams) (DeckAccess, error) {
-	row := q.db.QueryRow(ctx, getDeckAccess, arg.DeckID, arg.UserID)
-	var i DeckAccess
-	err := row.Scan(
-		&i.DeckID,
-		&i.UserID,
-		&i.CanView,
-		&i.CanStudy,
-		&i.CanEditContent,
-		&i.CanEditSettings,
-		&i.CanManageAccess,
-		&i.CanDelete,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const grantFullDeckAccess = `-- name: GrantFullDeckAccess :exec
 INSERT INTO deck_access (deck_id, user_id, can_view, can_study, can_edit_content,
                          can_edit_settings, can_manage_access, can_delete)
@@ -44,8 +18,8 @@ VALUES ($1, $2, true, true, true, true, true, true)
 `
 
 type GrantFullDeckAccessParams struct {
-	DeckID pgtype.UUID `json:"deck_id"`
-	UserID pgtype.UUID `json:"user_id"`
+	DeckID pgtype.UUID
+	UserID pgtype.UUID
 }
 
 // A deck's creator gets all six flags (docs/schema.md). A personal deck is the trivial case of

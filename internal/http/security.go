@@ -76,6 +76,11 @@ const contentSecurityPolicy = "default-src 'none'; " +
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
+		// Stop a browser from second-guessing our Content-Type. Load-bearing for /media/{sha256},
+		// which serves imported .apkg blobs with a MIME derived from the filename extension.
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		// Don't leak deck or note ids in the Referer on outbound navigation.
+		w.Header().Set("Referrer-Policy", "same-origin")
 		next.ServeHTTP(w, r)
 	})
 }

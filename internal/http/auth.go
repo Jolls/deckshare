@@ -5,8 +5,6 @@ import (
 	"html/template"
 	"net"
 	"net/http"
-	"strconv"
-	"time"
 
 	"github.com/Jolls/enshu/internal/auth"
 )
@@ -119,12 +117,4 @@ func clientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
-}
-
-func formatRetryAfter(d time.Duration) string {
-	secs := int(d.Seconds())
-	if secs < 1 {
-		secs = 1
-	}
-	return strconv.Itoa(secs)
 }

@@ -64,9 +64,9 @@ func SyncNoteCards(ctx context.Context, tx pgx.Tx, noteID, homeDeckID pgtype.UUI
 	}
 
 	var destroy []int32
-	for ord := range existingByOrdinal {
-		if _, ok := desiredByOrdinal[ord]; !ok {
-			destroy = append(destroy, ord)
+	for _, c := range existing {
+		if _, ok := desiredByOrdinal[c.Ordinal]; !ok {
+			destroy = append(destroy, c.Ordinal)
 		}
 	}
 	if len(destroy) > 0 {

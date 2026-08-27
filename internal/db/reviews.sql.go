@@ -25,10 +25,10 @@ WHERE rl.user_id = $1
 `
 
 type CountNewIntroducedTodayParams struct {
-	UserID        pgtype.UUID        `json:"user_id"`
-	DeckID        pgtype.UUID        `json:"deck_id"`
-	StudyDayStart pgtype.Timestamptz `json:"study_day_start"`
-	StudyDayEnd   pgtype.Timestamptz `json:"study_day_end"`
+	UserID        pgtype.UUID
+	DeckID        pgtype.UUID
+	StudyDayStart pgtype.Timestamptz
+	StudyDayEnd   pgtype.Timestamptz
 }
 
 // New-card introductions inside the current study day, for one deck (#101). A card is introduced
@@ -65,16 +65,16 @@ WHERE c.deck_id = $2
 `
 
 type CountQueueForDeckParams struct {
-	UserID        pgtype.UUID        `json:"user_id"`
-	DeckID        pgtype.UUID        `json:"deck_id"`
-	StudyDayStart pgtype.Timestamptz `json:"study_day_start"`
-	StudyDayEnd   pgtype.Timestamptz `json:"study_day_end"`
+	UserID        pgtype.UUID
+	DeckID        pgtype.UUID
+	StudyDayStart pgtype.Timestamptz
+	StudyDayEnd   pgtype.Timestamptz
 }
 
 type CountQueueForDeckRow struct {
-	NewCount      int64 `json:"new_count"`
-	LearningCount int64 `json:"learning_count"`
-	DueCount      int64 `json:"due_count"`
+	NewCount      int64
+	LearningCount int64
+	DueCount      int64
 }
 
 // Queue summary (New/Learning/Due) for one deck's study page (#80). Same eligibility filters as
@@ -110,16 +110,16 @@ GROUP BY c.deck_id
 `
 
 type CountQueueForUserParams struct {
-	UserID        pgtype.UUID        `json:"user_id"`
-	StudyDayStart pgtype.Timestamptz `json:"study_day_start"`
-	StudyDayEnd   pgtype.Timestamptz `json:"study_day_end"`
+	UserID        pgtype.UUID
+	StudyDayStart pgtype.Timestamptz
+	StudyDayEnd   pgtype.Timestamptz
 }
 
 type CountQueueForUserRow struct {
-	DeckID        pgtype.UUID `json:"deck_id"`
-	NewCount      int64       `json:"new_count"`
-	LearningCount int64       `json:"learning_count"`
-	DueCount      int64       `json:"due_count"`
+	DeckID        pgtype.UUID
+	NewCount      int64
+	LearningCount int64
+	DueCount      int64
 }
 
 // Same queue summary, grouped by deck, for the /decks list (#80). One query for every deck the
@@ -163,10 +163,10 @@ WHERE rl.user_id = $1
 `
 
 type CountReviewedTodayParams struct {
-	UserID        pgtype.UUID        `json:"user_id"`
-	DeckID        pgtype.UUID        `json:"deck_id"`
-	StudyDayStart pgtype.Timestamptz `json:"study_day_start"`
-	StudyDayEnd   pgtype.Timestamptz `json:"study_day_end"`
+	UserID        pgtype.UUID
+	DeckID        pgtype.UUID
+	StudyDayStart pgtype.Timestamptz
+	StudyDayEnd   pgtype.Timestamptz
 }
 
 // Review-state (state=2) cards answered inside the current study day, for one deck (#115), the
@@ -195,8 +195,8 @@ WHERE d.id = $2
 `
 
 type GetDeckForStudyParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	DeckID pgtype.UUID `json:"deck_id"`
+	UserID pgtype.UUID
+	DeckID pgtype.UUID
 }
 
 func (q *Queries) GetDeckForStudy(ctx context.Context, arg GetDeckForStudyParams) (Deck, error) {
@@ -234,13 +234,13 @@ FROM s
 `
 
 type GetStudyDayWindowParams struct {
-	Now    pgtype.Timestamptz `json:"now"`
-	UserID pgtype.UUID        `json:"user_id"`
+	Now    pgtype.Timestamptz
+	UserID pgtype.UUID
 }
 
 type GetStudyDayWindowRow struct {
-	StudyDayStart pgtype.Timestamptz `json:"study_day_start"`
-	StudyDayEnd   pgtype.Timestamptz `json:"study_day_end"`
+	StudyDayStart pgtype.Timestamptz
+	StudyDayEnd   pgtype.Timestamptz
 }
 
 // The reviewer's queue (architecture.md §6). Every query here takes user_id and joins deck_access
@@ -379,44 +379,44 @@ LIMIT $13
 `
 
 type ListDueCardsForStudyParams struct {
-	NewMix         string             `json:"new_mix"`
-	RevOrder       string             `json:"rev_order"`
-	HashSeed       string             `json:"hash_seed"`
-	UserID         pgtype.UUID        `json:"user_id"`
-	DeckID         pgtype.UUID        `json:"deck_id"`
-	StudyDayStart  pgtype.Timestamptz `json:"study_day_start"`
-	StudyDayEnd    pgtype.Timestamptz `json:"study_day_end"`
-	RevRemaining   int32              `json:"rev_remaining"`
-	NewRemaining   int32              `json:"new_remaining"`
-	CursorGroupBit int32              `json:"cursor_group_bit"`
-	CursorKey      float64            `json:"cursor_key"`
-	CursorCardID   pgtype.UUID        `json:"cursor_card_id"`
-	BatchSize      int32              `json:"batch_size"`
+	NewMix         string
+	RevOrder       string
+	HashSeed       string
+	UserID         pgtype.UUID
+	DeckID         pgtype.UUID
+	StudyDayStart  pgtype.Timestamptz
+	StudyDayEnd    pgtype.Timestamptz
+	RevRemaining   int32
+	NewRemaining   int32
+	CursorGroupBit int32
+	CursorKey      float64
+	CursorCardID   pgtype.UUID
+	BatchSize      int32
 }
 
 type ListDueCardsForStudyRow struct {
-	CardID        pgtype.UUID        `json:"card_id"`
-	CardOrdinal   int32              `json:"card_ordinal"`
-	Unseen        bool               `json:"unseen"`
-	Due           pgtype.Timestamptz `json:"due"`
-	Stability     float64            `json:"stability"`
-	Difficulty    float64            `json:"difficulty"`
-	State         int16              `json:"state"`
-	Reps          int32              `json:"reps"`
-	Lapses        int32              `json:"lapses"`
-	ScheduledDays int32              `json:"scheduled_days"`
-	LearningSteps int16              `json:"learning_steps"`
-	LastReview    pgtype.Timestamptz `json:"last_review"`
-	NoteFields    []byte             `json:"note_fields"`
-	NoteTags      []string           `json:"note_tags"`
-	NoteTypeID    pgtype.UUID        `json:"note_type_id"`
-	NoteTypeName  string             `json:"note_type_name"`
-	IsCloze       bool               `json:"is_cloze"`
-	TemplateName  string             `json:"template_name"`
-	Qfmt          string             `json:"qfmt"`
-	Afmt          string             `json:"afmt"`
-	GroupBit      int32              `json:"group_bit"`
-	SortKey       float64            `json:"sort_key"`
+	CardID        pgtype.UUID
+	CardOrdinal   int32
+	Unseen        bool
+	Due           pgtype.Timestamptz
+	Stability     float64
+	Difficulty    float64
+	State         int16
+	Reps          int32
+	Lapses        int32
+	ScheduledDays int32
+	LearningSteps int16
+	LastReview    pgtype.Timestamptz
+	NoteFields    []byte
+	NoteTags      []string
+	NoteTypeID    pgtype.UUID
+	NoteTypeName  string
+	IsCloze       bool
+	TemplateName  string
+	Qfmt          string
+	Afmt          string
+	GroupBit      int32
+	SortKey       float64
 }
 
 // The queue, configurable per deck (#116): decks.preset "rev.order" picks the review-state sort
@@ -544,32 +544,32 @@ LIMIT $5
 `
 
 type ListNewCardsForStudyParams struct {
-	UserID       pgtype.UUID `json:"user_id"`
-	DeckID       pgtype.UUID `json:"deck_id"`
-	NewRemaining int32       `json:"new_remaining"`
-	CursorCardID pgtype.UUID `json:"cursor_card_id"`
-	BatchSize    int32       `json:"batch_size"`
+	UserID       pgtype.UUID
+	DeckID       pgtype.UUID
+	NewRemaining int32
+	CursorCardID pgtype.UUID
+	BatchSize    int32
 }
 
 type ListNewCardsForStudyRow struct {
-	CardID        pgtype.UUID        `json:"card_id"`
-	CardOrdinal   int32              `json:"card_ordinal"`
-	Due           pgtype.Timestamptz `json:"due"`
-	Stability     float64            `json:"stability"`
-	Difficulty    float64            `json:"difficulty"`
-	State         int16              `json:"state"`
-	Reps          int32              `json:"reps"`
-	Lapses        int32              `json:"lapses"`
-	ScheduledDays int32              `json:"scheduled_days"`
-	LearningSteps int16              `json:"learning_steps"`
-	NoteFields    []byte             `json:"note_fields"`
-	NoteTags      []string           `json:"note_tags"`
-	NoteTypeID    pgtype.UUID        `json:"note_type_id"`
-	NoteTypeName  string             `json:"note_type_name"`
-	IsCloze       bool               `json:"is_cloze"`
-	TemplateName  string             `json:"template_name"`
-	Qfmt          string             `json:"qfmt"`
-	Afmt          string             `json:"afmt"`
+	CardID        pgtype.UUID
+	CardOrdinal   int32
+	Due           pgtype.Timestamptz
+	Stability     float64
+	Difficulty    float64
+	State         int16
+	Reps          int32
+	Lapses        int32
+	ScheduledDays int32
+	LearningSteps int16
+	NoteFields    []byte
+	NoteTags      []string
+	NoteTypeID    pgtype.UUID
+	NoteTypeName  string
+	IsCloze       bool
+	TemplateName  string
+	Qfmt          string
+	Afmt          string
 }
 
 // The never-seen half of mixed new/review interleaving (#116): identical to ListDueCardsForStudy's
@@ -631,13 +631,13 @@ WHERE c.deck_id = $2
 `
 
 type ListNoteTypeCSSForDeckParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	DeckID pgtype.UUID `json:"deck_id"`
+	UserID pgtype.UUID
+	DeckID pgtype.UUID
 }
 
 type ListNoteTypeCSSForDeckRow struct {
-	ID  pgtype.UUID `json:"id"`
-	Css string      `json:"css"`
+	ID  pgtype.UUID
+	Css string
 }
 
 // Note-type CSS for every card in the deck: sanitised once per page, never per card (#55's doc
@@ -743,39 +743,39 @@ LIMIT $10
 `
 
 type ListReviewCardsForStudyParams struct {
-	RevOrder      string             `json:"rev_order"`
-	HashSeed      string             `json:"hash_seed"`
-	UserID        pgtype.UUID        `json:"user_id"`
-	DeckID        pgtype.UUID        `json:"deck_id"`
-	StudyDayStart pgtype.Timestamptz `json:"study_day_start"`
-	StudyDayEnd   pgtype.Timestamptz `json:"study_day_end"`
-	RevRemaining  int32              `json:"rev_remaining"`
-	CursorKey     float64            `json:"cursor_key"`
-	CursorCardID  pgtype.UUID        `json:"cursor_card_id"`
-	BatchSize     int32              `json:"batch_size"`
+	RevOrder      string
+	HashSeed      string
+	UserID        pgtype.UUID
+	DeckID        pgtype.UUID
+	StudyDayStart pgtype.Timestamptz
+	StudyDayEnd   pgtype.Timestamptz
+	RevRemaining  int32
+	CursorKey     float64
+	CursorCardID  pgtype.UUID
+	BatchSize     int32
 }
 
 type ListReviewCardsForStudyRow struct {
-	CardID        pgtype.UUID        `json:"card_id"`
-	CardOrdinal   int32              `json:"card_ordinal"`
-	Due           pgtype.Timestamptz `json:"due"`
-	Stability     float64            `json:"stability"`
-	Difficulty    float64            `json:"difficulty"`
-	State         int16              `json:"state"`
-	Reps          int32              `json:"reps"`
-	Lapses        int32              `json:"lapses"`
-	ScheduledDays int32              `json:"scheduled_days"`
-	LearningSteps int16              `json:"learning_steps"`
-	LastReview    pgtype.Timestamptz `json:"last_review"`
-	NoteFields    []byte             `json:"note_fields"`
-	NoteTags      []string           `json:"note_tags"`
-	NoteTypeID    pgtype.UUID        `json:"note_type_id"`
-	NoteTypeName  string             `json:"note_type_name"`
-	IsCloze       bool               `json:"is_cloze"`
-	TemplateName  string             `json:"template_name"`
-	Qfmt          string             `json:"qfmt"`
-	Afmt          string             `json:"afmt"`
-	SortKey       float64            `json:"sort_key"`
+	CardID        pgtype.UUID
+	CardOrdinal   int32
+	Due           pgtype.Timestamptz
+	Stability     float64
+	Difficulty    float64
+	State         int16
+	Reps          int32
+	Lapses        int32
+	ScheduledDays int32
+	LearningSteps int16
+	LastReview    pgtype.Timestamptz
+	NoteFields    []byte
+	NoteTags      []string
+	NoteTypeID    pgtype.UUID
+	NoteTypeName  string
+	IsCloze       bool
+	TemplateName  string
+	Qfmt          string
+	Afmt          string
+	SortKey       float64
 }
 
 // The review-state half of mixed new/review interleaving (#116, decks.preset "new.mix" =
@@ -843,13 +843,13 @@ WHERE c.id = ANY($2::uuid[])
 `
 
 type ListStudyableCardsParams struct {
-	UserID  pgtype.UUID   `json:"user_id"`
-	CardIds []pgtype.UUID `json:"card_ids"`
+	UserID  pgtype.UUID
+	CardIds []pgtype.UUID
 }
 
 type ListStudyableCardsRow struct {
-	CardID pgtype.UUID `json:"card_id"`
-	DeckID pgtype.UUID `json:"deck_id"`
+	CardID pgtype.UUID
+	DeckID pgtype.UUID
 }
 
 // Per-card authorisation for a grade batch, which may span decks. A card missing from the result is
