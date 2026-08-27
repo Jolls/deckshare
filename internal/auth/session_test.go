@@ -347,7 +347,7 @@ func TestChangePassword_Success(t *testing.T) {
 		t.Fatalf("Signup: %v", err)
 	}
 
-	if err := s.ChangePassword(ctx, user.ID, user.PasswordHash, "correct-horse-battery", "new-correct-horse-battery"); err != nil {
+	if _, err := s.ChangePassword(ctx, user.ID, user.PasswordHash, "correct-horse-battery", "new-correct-horse-battery"); err != nil {
 		t.Fatalf("ChangePassword: %v", err)
 	}
 
@@ -381,7 +381,7 @@ func TestChangePassword_WrongCurrentPassword(t *testing.T) {
 		t.Fatalf("Signup: %v", err)
 	}
 
-	err = s.ChangePassword(ctx, user.ID, user.PasswordHash, "wrong-current-password", "new-correct-horse-battery")
+	_, err = s.ChangePassword(ctx, user.ID, user.PasswordHash, "wrong-current-password", "new-correct-horse-battery")
 	if !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("ChangePassword error = %v, want ErrInvalidCredentials", err)
 	}
@@ -405,7 +405,7 @@ func TestChangePassword_WeakNewPassword(t *testing.T) {
 		t.Fatalf("Signup: %v", err)
 	}
 
-	err = s.ChangePassword(ctx, user.ID, user.PasswordHash, "correct-horse-battery", "short")
+	_, err = s.ChangePassword(ctx, user.ID, user.PasswordHash, "correct-horse-battery", "short")
 	var ve *ValidationError
 	if !errors.As(err, &ve) {
 		t.Fatalf("ChangePassword error = %v, want *ValidationError", err)
@@ -432,10 +432,52 @@ func TestChangePassword_RateLimited(t *testing.T) {
 
 	var last error
 	for i := 0; i < 6; i++ {
-		last = s.ChangePassword(ctx, user.ID, user.PasswordHash, "wrong-current-password", "new-correct-horse-battery")
+		_, last = s.ChangePassword(ctx, user.ID, user.PasswordHash, "wrong-current-password", "new-correct-horse-battery")
 	}
 	var rle *RateLimitError
 	if !errors.As(last, &rle) {
 		t.Fatalf("6th ChangePassword error = %v, want *RateLimitError", last)
+	}
+}
+
+// The regression for the defect #123 found: a stolen session cookie used to survive a password
+// change, which made the one remedy a user has do nothing. Asserts the purge (both prior sessions
+// dead) and the reissue (the returned token works), i.e. the acting browser stays signed in.
+func TestChangePassword_InvalidatesOtherSessions(t *testing.T) {
+	tx := beginTx(t)
+	s := newTestService(t, tx)
+	ctx := context.Background()
+
+	email := testEmail()
+	user, tokenA, err := s.Signup(ctx, "1.2.3.4", email, "correct-horse-battery", "Ada")
+	if err != nil {
+		t.Fatalf("Signup: %v", err)
+	}
+	_, tokenB, err := s.Login(ctx, "5.6.7.8", email, "correct-horse-battery")
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+
+	newToken, err := s.ChangePassword(ctx, user.ID, user.PasswordHash, "correct-horse-battery", "new-correct-horse-battery")
+	if err != nil {
+		t.Fatalf("ChangePassword: %v", err)
+	}
+
+	var count int
+	if err := tx.QueryRow(ctx, "SELECT count(*) FROM sessions WHERE user_id = $1", user.ID).Scan(&count); err != nil {
+		t.Fatalf("count sessions: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("sessions for user = %d, want 1 (the replacement)", count)
+	}
+
+	q := db.New(tx)
+	if _, err := q.GetSessionUser(ctx, hashToken(newToken)); err != nil {
+		t.Errorf("replacement session should resolve, got %v", err)
+	}
+	for name, tok := range map[string]string{"signup session": tokenA, "login session": tokenB} {
+		if _, err := q.GetSessionUser(ctx, hashToken(tok)); !errors.Is(err, pgx.ErrNoRows) {
+			t.Errorf("%s should be purged, GetSessionUser err = %v, want pgx.ErrNoRows", name, err)
+		}
 	}
 }

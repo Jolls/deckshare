@@ -362,14 +362,24 @@
       return;
     }
 
-    if (status >= 400 && status < 500) {
+    if (status >= 400 && status < 500 && status !== 401) {
       // A malformed batch (400) can never succeed by retrying it unchanged -- drop.
+      // 401 is deliberately excluded and handled just below.
       console.error('enshu: batch rejected (' + status + '), dropping ' + sent.length + ' event(s)');
       showDeliveryError('Some grades failed to save (status ' + status + '). Reload the page and try again.');
       return;
     }
 
-    // Network error or >=500: put the events back and retry with backoff.
+    if (status === 401) {
+      // The session ended under us -- most likely a password change in another tab, which
+      // invalidates every session for the account. The events are still perfectly valid, so
+      // they are held and retried rather than dropped: losing them would lose review_log
+      // training data that cannot be reconstructed (CLAUDE.md §2.5).
+      console.error('enshu: batch unauthorised (401), holding ' + sent.length + ' event(s)');
+      showDeliveryError('Your session ended. Sign in again in another tab to save your grades -- don\'t close this page.');
+    }
+
+    // 401, network error, or >=500: put the events back and retry with backoff.
     state.pending = sent.concat(state.pending);
     var delaySec = BACKOFF_SECONDS[Math.min(state.backoffIndex, BACKOFF_SECONDS.length - 1)];
     state.backoffIndex++;

@@ -1,6 +1,3 @@
--- name: GetNote :one
-SELECT * FROM notes WHERE id = $1;
-
 -- name: ListNotesInDeck :many
 SELECT n.id, n.fields ->> nt.sort_field_idx AS sort_text, n.tags, n.modified_at, nt.name AS note_type_name,
        (SELECT count(*) FROM cards c WHERE c.note_id = n.id) AS card_count
@@ -41,6 +38,9 @@ JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = sqlc.arg(user_id)
                    AND da.can_view AND da.can_edit_content
 WHERE n.id = sqlc.arg(note_id);
 
+-- No deck_access join (CLAUDE.md §9): the caller (UpdateNoteWithCards) has already taken
+-- LockNoteForContentEdit on this note, which authorises can_view + can_edit_content and holds the
+-- row lock for the rest of the transaction.
 -- name: UpdateNoteContent :execrows
 UPDATE notes SET fields = sqlc.arg(fields), tags = sqlc.arg(tags),
                  checksum = sqlc.arg(checksum), modified_at = now()

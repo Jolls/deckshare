@@ -72,7 +72,6 @@ type Config struct {
 type Service struct {
 	q         *db.Queries
 	beginner  db.Beginner
-	cfg       Config
 	dummyHash string
 	// origins is cfg.Origin split and parsed once at construction, rather than on every
 	// state-changing request in checkOrigin -- it's a fixed deployment setting, never
@@ -107,7 +106,6 @@ func New(dbtx db.Beginner, cfg Config) (*Service, error) {
 	return &Service{
 		q:              db.New(dbtx),
 		beginner:       dbtx,
-		cfg:            cfg,
 		dummyHash:      dummyHash,
 		origins:        origins,
 		loginIP:        newLimiter(loginIPLimit, loginIPWindow),
@@ -182,7 +180,7 @@ func (s *Service) Signup(ctx context.Context, ip, email, password, displayName s
 		log.Printf("seed default note types for user %s: %v", user.ID, err)
 	}
 
-	token, err := s.createSession(ctx, user.ID)
+	token, err := createSession(ctx, s.q, user.ID)
 	if err != nil {
 		return db.User{}, "", err
 	}
@@ -236,7 +234,7 @@ func (s *Service) Login(ctx context.Context, ip, email, password string) (db.Use
 		return db.User{}, "", ErrInvalidCredentials
 	}
 
-	token, err := s.createSession(ctx, user.ID)
+	token, err := createSession(ctx, s.q, user.ID)
 	if err != nil {
 		return db.User{}, "", err
 	}
@@ -252,12 +250,12 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 	return nil
 }
 
-func (s *Service) createSession(ctx context.Context, userID pgtype.UUID) (string, error) {
+func createSession(ctx context.Context, q *db.Queries, userID pgtype.UUID) (string, error) {
 	token, err := newToken()
 	if err != nil {
 		return "", fmt.Errorf("generate session token: %w", err)
 	}
-	err = s.q.CreateSession(ctx, db.CreateSessionParams{
+	err = q.CreateSession(ctx, db.CreateSessionParams{
 		ID:     hashToken(token),
 		UserID: userID,
 		ExpiresAt: pgtype.Timestamptz{
@@ -358,34 +356,58 @@ func (s *Service) UpdateProfile(ctx context.Context, userID pgtype.UUID, display
 // current hash), then validates and persists newPassword. Returns ErrInvalidCredentials if
 // currentPassword does not match -- never distinguishes "wrong password" from any other failure
 // in the response the handler builds, consistent with Login, since this endpoint is also a
-// password-guessing surface.
-func (s *Service) ChangePassword(ctx context.Context, userID pgtype.UUID, currentHash, currentPassword, newPassword string) error {
+// password-guessing surface. On success it invalidates every session for the account and returns
+// the raw token of a replacement session for the caller's own browser.
+func (s *Service) ChangePassword(ctx context.Context, userID pgtype.UUID, currentHash, currentPassword, newPassword string) (string, error) {
 	if msg, ok := validatePassword(newPassword); !ok {
-		return &ValidationError{Msg: msg}
+		return "", &ValidationError{Msg: msg}
 	}
 
 	if ok, retryAfter := s.changePassword.Allow(userID.String()); !ok {
-		return &RateLimitError{RetryAfter: retryAfter}
+		return "", &RateLimitError{RetryAfter: retryAfter}
 	}
 
 	match, err := argon2id.ComparePasswordAndHash(currentPassword, currentHash)
 	if err != nil {
-		return fmt.Errorf("compare password: %w", err)
+		return "", fmt.Errorf("compare password: %w", err)
 	}
 	if !match {
-		return ErrInvalidCredentials
+		return "", ErrInvalidCredentials
 	}
 
 	newHash, err := argon2id.CreateHash(newPassword, argon2id.DefaultParams)
 	if err != nil {
-		return fmt.Errorf("hash password: %w", err)
+		return "", fmt.Errorf("hash password: %w", err)
 	}
 
-	if err := s.q.UpdateUserPassword(ctx, db.UpdateUserPasswordParams{
+	// The password update, the session purge, and the replacement session are one transaction:
+	// a failure between them would leave the new password in place with every old session --
+	// including a stolen one -- still live, which is the whole point of the purge.
+	tx, err := s.beginner.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	qtx := s.q.WithTx(tx)
+
+	if err := qtx.UpdateUserPassword(ctx, db.UpdateUserPasswordParams{
 		ID:           userID,
 		PasswordHash: newHash,
 	}); err != nil {
-		return fmt.Errorf("update user password: %w", err)
+		return "", fmt.Errorf("update user password: %w", err)
 	}
-	return nil
+	// Every session for this account dies with the old password, the acting browser's included;
+	// it gets a fresh one immediately below, so the tab that made the change stays signed in.
+	// sessions_user_id_idx (migration 00002) exists for exactly this query.
+	if _, err := qtx.DeleteSessionsForUser(ctx, userID); err != nil {
+		return "", fmt.Errorf("delete sessions for user: %w", err)
+	}
+	token, err := createSession(ctx, qtx, userID)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("commit password change: %w", err)
+	}
+	return token, nil
 }

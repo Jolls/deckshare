@@ -16,8 +16,8 @@ SELECT desired_retention FROM user_fsrs_params WHERE user_id = $1 AND deck_id = 
 `
 
 type GetDeckFsrsRetentionParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	DeckID pgtype.UUID `json:"deck_id"`
+	UserID pgtype.UUID
+	DeckID pgtype.UUID
 }
 
 func (q *Queries) GetDeckFsrsRetention(ctx context.Context, arg GetDeckFsrsRetentionParams) (float64, error) {
@@ -36,14 +36,14 @@ LIMIT 1
 `
 
 type GetEffectiveFsrsParamsParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	DeckID pgtype.UUID `json:"deck_id"`
+	UserID pgtype.UUID
+	DeckID pgtype.UUID
 }
 
 type GetEffectiveFsrsParamsRow struct {
-	FsrsVersion      int16   `json:"fsrs_version"`
-	Params           []byte  `json:"params"`
-	DesiredRetention float64 `json:"desired_retention"`
+	FsrsVersion      int16
+	Params           []byte
+	DesiredRetention float64
 }
 
 // The per-(user,deck) override if there is one, else the user's global row. deck_id NULLS LAST puts
@@ -96,10 +96,10 @@ DO UPDATE SET fsrs_version = EXCLUDED.fsrs_version, desired_retention = EXCLUDED
 `
 
 type UpsertDeckFsrsRetentionParams struct {
-	UserID           pgtype.UUID `json:"user_id"`
-	DeckID           pgtype.UUID `json:"deck_id"`
-	FsrsVersion      int16       `json:"fsrs_version"`
-	DesiredRetention float64     `json:"desired_retention"`
+	UserID           pgtype.UUID
+	DeckID           pgtype.UUID
+	FsrsVersion      int16
+	DesiredRetention float64
 }
 
 // Authorisation lives in the SELECT source, not a handler guard (CLAUDE.md §9): a caller
@@ -127,9 +127,9 @@ DO UPDATE SET fsrs_version = EXCLUDED.fsrs_version, desired_retention = EXCLUDED
 `
 
 type UpsertGlobalFsrsRetentionParams struct {
-	UserID           pgtype.UUID `json:"user_id"`
-	FsrsVersion      int16       `json:"fsrs_version"`
-	DesiredRetention float64     `json:"desired_retention"`
+	UserID           pgtype.UUID
+	FsrsVersion      int16
+	DesiredRetention float64
 }
 
 // Global row upsert targets the partial unique index (migration 00012:

@@ -17,9 +17,9 @@ ON CONFLICT (sha256) DO NOTHING
 `
 
 type CreateMediaBlobParams struct {
-	Sha256    string `json:"sha256"`
-	SizeBytes int64  `json:"size_bytes"`
-	Mime      string `json:"mime"`
+	Sha256    string
+	SizeBytes int64
+	Mime      string
 }
 
 // Dedup is by content, across ALL users (docs/schema.md, Media). ON CONFLICT DO NOTHING because a
@@ -58,8 +58,8 @@ WHERE mb.sha256 = $1
 `
 
 type GetMediaBlobForUserParams struct {
-	Sha256 string      `json:"sha256"`
-	UserID pgtype.UUID `json:"user_id"`
+	Sha256 string
+	UserID pgtype.UUID
 }
 
 // Used by GET /media/{sha256} (routes.md): a blob is visible to a user only through a deck they

@@ -95,7 +95,8 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 			return
 		}
 
-		if err := a.ChangePassword(r.Context(), user.ID, user.PasswordHash, currentPassword, newPassword); err != nil {
+		token, err := a.ChangePassword(r.Context(), user.ID, user.PasswordHash, currentPassword, newPassword)
+		if err != nil {
 			status, msg, retryAfter, ok := classifyFormError(err, func(e error) (int, string, bool) {
 				if errors.Is(e, auth.ErrInvalidCredentials) {
 					return http.StatusUnauthorized, "Current password is incorrect", true
@@ -116,6 +117,8 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 			return
 		}
 
+		// Must precede render: render calls w.WriteHeader, after which headers are frozen.
+		auth.SetSessionCookie(w, token)
 		render(w, pages["settings"], http.StatusOK, map[string]any{
 			"User":            user,
 			"PasswordSuccess": "Password changed",

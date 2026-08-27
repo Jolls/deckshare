@@ -140,6 +140,14 @@ func TestSecurityHeaders_OnEveryResponse(t *testing.T) {
 			if got := w.Header().Get("Content-Security-Policy"); got != contentSecurityPolicy {
 				t.Errorf("Content-Security-Policy = %q, want %q", got, contentSecurityPolicy)
 			}
+			// Set alongside the CSP by the same middleware, so they share its outside-the-CSRF
+			// -middleware guarantee above.
+			if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+				t.Errorf("X-Content-Type-Options = %q, want %q", got, "nosniff")
+			}
+			if got := w.Header().Get("Referrer-Policy"); got != "same-origin" {
+				t.Errorf("Referrer-Policy = %q, want %q", got, "same-origin")
+			}
 		})
 	}
 }

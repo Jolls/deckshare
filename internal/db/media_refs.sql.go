@@ -17,9 +17,9 @@ ON CONFLICT (deck_id, filename) DO NOTHING
 `
 
 type CreateMediaRefParams struct {
-	DeckID   pgtype.UUID `json:"deck_id"`
-	Filename string      `json:"filename"`
-	Sha256   string      `json:"sha256"`
+	DeckID   pgtype.UUID
+	Filename string
+	Sha256   string
 }
 
 // First-seen-wins (docs/schema.md, Media): within one import collectMedia already resolves a
@@ -35,8 +35,8 @@ SELECT deck_id, filename, sha256 FROM media_refs WHERE deck_id = $1 AND filename
 `
 
 type GetMediaRefParams struct {
-	DeckID   pgtype.UUID `json:"deck_id"`
-	Filename string      `json:"filename"`
+	DeckID   pgtype.UUID
+	Filename string
 }
 
 func (q *Queries) GetMediaRef(ctx context.Context, arg GetMediaRefParams) (MediaRef, error) {
@@ -50,6 +50,8 @@ const listMediaRefsForDeck = `-- name: ListMediaRefsForDeck :many
 SELECT deck_id, filename, sha256 FROM media_refs WHERE deck_id = $1
 `
 
+// No deck_access join (CLAUDE.md §9): the only caller is internal/review's renderQueueRows, for
+// a deck the review handler has already authorised with GetDeckForStudy (can_view AND can_study).
 func (q *Queries) ListMediaRefsForDeck(ctx context.Context, deckID pgtype.UUID) ([]MediaRef, error) {
 	rows, err := q.db.Query(ctx, listMediaRefsForDeck, deckID)
 	if err != nil {

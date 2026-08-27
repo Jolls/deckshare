@@ -20,8 +20,8 @@ WHERE deck_id = $1
 `
 
 type CountDeckAccessHoldersRow struct {
-	ManageCount int64 `json:"manage_count"`
-	DeleteCount int64 `json:"delete_count"`
+	ManageCount int64
+	DeleteCount int64
 }
 
 // The guard itself, run AFTER the mutation inside the same transaction. Zero of either count
@@ -38,8 +38,8 @@ DELETE FROM deck_access WHERE deck_id = $1 AND user_id = $2
 `
 
 type DeleteDeckAccessRowParams struct {
-	DeckID       pgtype.UUID `json:"deck_id"`
-	TargetUserID pgtype.UUID `json:"target_user_id"`
+	DeckID       pgtype.UUID
+	TargetUserID pgtype.UUID
 }
 
 func (q *Queries) DeleteDeckAccessRow(ctx context.Context, arg DeleteDeckAccessRowParams) (int64, error) {
@@ -95,8 +95,8 @@ FOR UPDATE OF d
 `
 
 type LockDeckForAccessChangeParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	DeckID pgtype.UUID `json:"deck_id"`
+	UserID pgtype.UUID
+	DeckID pgtype.UUID
 }
 
 // Locks the deck and authorises an access change. Same 404-shaped no-row contract as
@@ -121,8 +121,8 @@ FOR UPDATE OF d
 `
 
 type LockDeckForDeleteParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	DeckID pgtype.UUID `json:"deck_id"`
+	UserID pgtype.UUID
+	DeckID pgtype.UUID
 }
 
 // Deck deletion and the deck_access last-holder guard. These are not standalone queries: each
@@ -186,14 +186,14 @@ WHERE deck_id = $7 AND user_id = $8
 `
 
 type UpdateDeckAccessRowParams struct {
-	CanView         bool        `json:"can_view"`
-	CanStudy        bool        `json:"can_study"`
-	CanEditContent  bool        `json:"can_edit_content"`
-	CanEditSettings bool        `json:"can_edit_settings"`
-	CanManageAccess bool        `json:"can_manage_access"`
-	CanDelete       bool        `json:"can_delete"`
-	DeckID          pgtype.UUID `json:"deck_id"`
-	TargetUserID    pgtype.UUID `json:"target_user_id"`
+	CanView         bool
+	CanStudy        bool
+	CanEditContent  bool
+	CanEditSettings bool
+	CanManageAccess bool
+	CanDelete       bool
+	DeckID          pgtype.UUID
+	TargetUserID    pgtype.UUID
 }
 
 func (q *Queries) UpdateDeckAccessRow(ctx context.Context, arg UpdateDeckAccessRowParams) (int64, error) {

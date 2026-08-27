@@ -23,13 +23,13 @@ RETURNING id, guid, owner_id, note_type_id, deck_id, fields, tags, checksum, cre
 `
 
 type CreateNoteParams struct {
-	Guid       string      `json:"guid"`
-	Fields     []byte      `json:"fields"`
-	Tags       []string    `json:"tags"`
-	Checksum   int64       `json:"checksum"`
-	UserID     pgtype.UUID `json:"user_id"`
-	NoteTypeID pgtype.UUID `json:"note_type_id"`
-	DeckID     pgtype.UUID `json:"deck_id"`
+	Guid       string
+	Fields     []byte
+	Tags       []string
+	Checksum   int64
+	UserID     pgtype.UUID
+	NoteTypeID pgtype.UUID
+	DeckID     pgtype.UUID
 }
 
 // Owner_id comes from the DECK, not the caller: notes.owner_id is denormalised from
@@ -69,8 +69,8 @@ WHERE n.id = $1 AND da.deck_id = n.deck_id AND da.user_id = $2
 `
 
 type DeleteNoteParams struct {
-	NoteID pgtype.UUID `json:"note_id"`
-	UserID pgtype.UUID `json:"user_id"`
+	NoteID pgtype.UUID
+	UserID pgtype.UUID
 }
 
 func (q *Queries) DeleteNote(ctx context.Context, arg DeleteNoteParams) (int64, error) {
@@ -79,29 +79,6 @@ func (q *Queries) DeleteNote(ctx context.Context, arg DeleteNoteParams) (int64, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const getNote = `-- name: GetNote :one
-SELECT id, guid, owner_id, note_type_id, deck_id, fields, tags, checksum, created_at, modified_at, anki_id FROM notes WHERE id = $1
-`
-
-func (q *Queries) GetNote(ctx context.Context, id pgtype.UUID) (Note, error) {
-	row := q.db.QueryRow(ctx, getNote, id)
-	var i Note
-	err := row.Scan(
-		&i.ID,
-		&i.Guid,
-		&i.OwnerID,
-		&i.NoteTypeID,
-		&i.DeckID,
-		&i.Fields,
-		&i.Tags,
-		&i.Checksum,
-		&i.CreatedAt,
-		&i.ModifiedAt,
-		&i.AnkiID,
-	)
-	return i, err
 }
 
 const getNoteForContentEdit = `-- name: GetNoteForContentEdit :one
@@ -113,8 +90,8 @@ WHERE n.id = $2
 `
 
 type GetNoteForContentEditParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	NoteID pgtype.UUID `json:"note_id"`
+	UserID pgtype.UUID
+	NoteID pgtype.UUID
 }
 
 func (q *Queries) GetNoteForContentEdit(ctx context.Context, arg GetNoteForContentEditParams) (Note, error) {
@@ -172,17 +149,17 @@ LIMIT 200
 `
 
 type ListNotesInDeckParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	DeckID pgtype.UUID `json:"deck_id"`
+	UserID pgtype.UUID
+	DeckID pgtype.UUID
 }
 
 type ListNotesInDeckRow struct {
-	ID           pgtype.UUID        `json:"id"`
-	SortText     interface{}        `json:"sort_text"`
-	Tags         []string           `json:"tags"`
-	ModifiedAt   pgtype.Timestamptz `json:"modified_at"`
-	NoteTypeName string             `json:"note_type_name"`
-	CardCount    int64              `json:"card_count"`
+	ID           pgtype.UUID
+	SortText     interface{}
+	Tags         []string
+	ModifiedAt   pgtype.Timestamptz
+	NoteTypeName string
+	CardCount    int64
 }
 
 func (q *Queries) ListNotesInDeck(ctx context.Context, arg ListNotesInDeckParams) ([]ListNotesInDeckRow, error) {
@@ -222,8 +199,8 @@ FOR UPDATE OF n
 `
 
 type LockNoteForContentEditParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	NoteID pgtype.UUID `json:"note_id"`
+	UserID pgtype.UUID
+	NoteID pgtype.UUID
 }
 
 // Locks the note for the duration of the transaction and authorises the caller in one step --
@@ -254,9 +231,9 @@ WHERE note_id = $2 AND deck_id = $3
 `
 
 type MoveNoteCardsFromDeckParams struct {
-	TargetDeckID pgtype.UUID `json:"target_deck_id"`
-	NoteID       pgtype.UUID `json:"note_id"`
-	SourceDeckID pgtype.UUID `json:"source_deck_id"`
+	TargetDeckID pgtype.UUID
+	NoteID       pgtype.UUID
+	SourceDeckID pgtype.UUID
 }
 
 // Cards filed in the note's OLD home deck follow it; cards deliberately filed elsewhere stay
@@ -280,9 +257,9 @@ WHERE n.id = $1 AND d.id = $2
 `
 
 type MoveNoteToDeckParams struct {
-	NoteID       pgtype.UUID `json:"note_id"`
-	TargetDeckID pgtype.UUID `json:"target_deck_id"`
-	UserID       pgtype.UUID `json:"user_id"`
+	NoteID       pgtype.UUID
+	TargetDeckID pgtype.UUID
+	UserID       pgtype.UUID
 }
 
 // Moving a note must move owner_id with it (docs/schema.md, "must not drift"); migration 00015
@@ -302,12 +279,15 @@ WHERE id = $4
 `
 
 type UpdateNoteContentParams struct {
-	Fields   []byte      `json:"fields"`
-	Tags     []string    `json:"tags"`
-	Checksum int64       `json:"checksum"`
-	NoteID   pgtype.UUID `json:"note_id"`
+	Fields   []byte
+	Tags     []string
+	Checksum int64
+	NoteID   pgtype.UUID
 }
 
+// No deck_access join (CLAUDE.md §9): the caller (UpdateNoteWithCards) has already taken
+// LockNoteForContentEdit on this note, which authorises can_view + can_edit_content and holds the
+// row lock for the rest of the transaction.
 func (q *Queries) UpdateNoteContent(ctx context.Context, arg UpdateNoteContentParams) (int64, error) {
 	result, err := q.db.Exec(ctx, updateNoteContent,
 		arg.Fields,

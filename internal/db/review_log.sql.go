@@ -55,20 +55,20 @@ ON CONFLICT (id) DO NOTHING
 `
 
 type InsertReviewLogParams struct {
-	ID                  pgtype.UUID        `json:"id"`
-	UserID              pgtype.UUID        `json:"user_id"`
-	CardID              pgtype.UUID        `json:"card_id"`
-	Rating              int16              `json:"rating"`
-	ReviewedAt          pgtype.Timestamptz `json:"reviewed_at"`
-	DurationMs          pgtype.Int4        `json:"duration_ms"`
-	StateBefore         int16              `json:"state_before"`
-	LearningStepsBefore int16              `json:"learning_steps_before"`
-	StabilityBefore     pgtype.Float8      `json:"stability_before"`
-	DifficultyBefore    pgtype.Float8      `json:"difficulty_before"`
-	ElapsedDaysBefore   int32              `json:"elapsed_days_before"`
-	ScheduledDaysAfter  int32              `json:"scheduled_days_after"`
-	FsrsVersion         pgtype.Int2        `json:"fsrs_version"`
-	ReviewKind          int16              `json:"review_kind"`
+	ID                  pgtype.UUID
+	UserID              pgtype.UUID
+	CardID              pgtype.UUID
+	Rating              int16
+	ReviewedAt          pgtype.Timestamptz
+	DurationMs          pgtype.Int4
+	StateBefore         int16
+	LearningStepsBefore int16
+	StabilityBefore     pgtype.Float8
+	DifficultyBefore    pgtype.Float8
+	ElapsedDaysBefore   int32
+	ScheduledDaysAfter  int32
+	FsrsVersion         pgtype.Int2
+	ReviewKind          int16
 }
 
 // Every column except id is computed server-side (CLAUDE.md §2.7). anki_id stays NULL for rows this
@@ -132,14 +132,14 @@ ORDER BY reviewed_at, id
 `
 
 type ListReviewLogForCardParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	CardID pgtype.UUID `json:"card_id"`
+	UserID pgtype.UUID
+	CardID pgtype.UUID
 }
 
 type ListReviewLogForCardRow struct {
-	ID         pgtype.UUID        `json:"id"`
-	Rating     int16              `json:"rating"`
-	ReviewedAt pgtype.Timestamptz `json:"reviewed_at"`
+	ID         pgtype.UUID
+	Rating     int16
+	ReviewedAt pgtype.Timestamptz
 }
 
 // The replay path (architecture.md §6); backed by review_log_card_id_user_id_reviewed_at_idx. Only

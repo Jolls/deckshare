@@ -1,6 +1,3 @@
--- name: GetDeck :one
-SELECT * FROM decks WHERE id = $1;
-
 -- name: ListDecksForUser :many
 SELECT d.*, (SELECT count(*) FROM cards c WHERE c.deck_id = d.id) AS card_count
 FROM decks d

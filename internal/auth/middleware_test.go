@@ -59,7 +59,7 @@ func TestCheckOrigin(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &Service{cfg: Config{Origin: tt.configOrigin}}
+			s := &Service{}
 			if tt.configOrigin != "" {
 				for _, o := range strings.Split(tt.configOrigin, ",") {
 					parsed, err := url.Parse(o)
@@ -83,7 +83,7 @@ func TestCheckOrigin(t *testing.T) {
 }
 
 func TestMiddleware_CSRFBlocksBeforeHandler(t *testing.T) {
-	s := &Service{cfg: Config{}}
+	s := &Service{}
 	called := false
 	handler := s.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -103,7 +103,7 @@ func TestMiddleware_CSRFBlocksBeforeHandler(t *testing.T) {
 }
 
 func TestMiddleware_CSRFRejectionIsLogged(t *testing.T) {
-	s := &Service{cfg: Config{}}
+	s := &Service{}
 	handler := s.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("handler should not have been called")
 	}))
@@ -127,7 +127,7 @@ func TestMiddleware_CSRFRejectionIsLogged(t *testing.T) {
 }
 
 func TestMiddleware_CSRFAllowsMatchingOrigin(t *testing.T) {
-	s := &Service{cfg: Config{}}
+	s := &Service{}
 	called := false
 	handler := s.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true

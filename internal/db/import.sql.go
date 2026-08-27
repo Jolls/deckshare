@@ -17,13 +17,13 @@ VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, note_type_id, ordinal, name, f
 `
 
 type CreateImportedFieldParams struct {
-	NoteTypeID pgtype.UUID `json:"note_type_id"`
-	Ordinal    int32       `json:"ordinal"`
-	Name       string      `json:"name"`
-	Font       string      `json:"font"`
-	Size       int32       `json:"size"`
-	IsRtl      bool        `json:"is_rtl"`
-	Sticky     bool        `json:"sticky"`
+	NoteTypeID pgtype.UUID
+	Ordinal    int32
+	Name       string
+	Font       string
+	Size       int32
+	IsRtl      bool
+	Sticky     bool
 }
 
 // The full field row: fields.sql's CreateField carries name only, which would silently drop an
@@ -66,16 +66,16 @@ RETURNING id, guid, owner_id, note_type_id, deck_id, fields, tags, checksum, cre
 `
 
 type CreateImportedNoteParams struct {
-	Guid       string             `json:"guid"`
-	Fields     []byte             `json:"fields"`
-	Tags       []string           `json:"tags"`
-	Checksum   int64              `json:"checksum"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	ModifiedAt pgtype.Timestamptz `json:"modified_at"`
-	AnkiID     pgtype.Int8        `json:"anki_id"`
-	UserID     pgtype.UUID        `json:"user_id"`
-	NoteTypeID pgtype.UUID        `json:"note_type_id"`
-	DeckID     pgtype.UUID        `json:"deck_id"`
+	Guid       string
+	Fields     []byte
+	Tags       []string
+	Checksum   int64
+	CreatedAt  pgtype.Timestamptz
+	ModifiedAt pgtype.Timestamptz
+	AnkiID     pgtype.Int8
+	UserID     pgtype.UUID
+	NoteTypeID pgtype.UUID
+	DeckID     pgtype.UUID
 }
 
 // Same deck_access authorisation as notes.sql's CreateNote, plus the imported columns. owner_id
@@ -118,12 +118,12 @@ RETURNING id, owner_id, name, css, is_cloze, sort_field_idx, anki_id
 `
 
 type CreateImportedNoteTypeParams struct {
-	OwnerID      pgtype.UUID `json:"owner_id"`
-	Name         string      `json:"name"`
-	Css          string      `json:"css"`
-	IsCloze      bool        `json:"is_cloze"`
-	SortFieldIdx int32       `json:"sort_field_idx"`
-	AnkiID       pgtype.Int8 `json:"anki_id"`
+	OwnerID      pgtype.UUID
+	Name         string
+	Css          string
+	IsCloze      bool
+	SortFieldIdx int32
+	AnkiID       pgtype.Int8
 }
 
 func (q *Queries) CreateImportedNoteType(ctx context.Context, arg CreateImportedNoteTypeParams) (NoteType, error) {
@@ -154,13 +154,13 @@ VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, note_type_id, ordinal, name, q
 `
 
 type CreateImportedTemplateParams struct {
-	NoteTypeID  pgtype.UUID `json:"note_type_id"`
-	Ordinal     int32       `json:"ordinal"`
-	Name        string      `json:"name"`
-	Qfmt        string      `json:"qfmt"`
-	Afmt        string      `json:"afmt"`
-	BrowserQfmt string      `json:"browser_qfmt"`
-	BrowserAfmt string      `json:"browser_afmt"`
+	NoteTypeID  pgtype.UUID
+	Ordinal     int32
+	Name        string
+	Qfmt        string
+	Afmt        string
+	BrowserQfmt string
+	BrowserAfmt string
 }
 
 // Same reason as CreateImportedField: templates.sql's CreateTemplate has no browser formats.
@@ -194,8 +194,8 @@ SELECT id, owner_id, name, description, preset, created_at, modified_at, anki_id
 `
 
 type GetDeckByOwnerAndNameParams struct {
-	OwnerID pgtype.UUID `json:"owner_id"`
-	Name    string      `json:"name"`
+	OwnerID pgtype.UUID
+	Name    string
 }
 
 // Import (#58). Every statement here is called only from internal/apkg/dbwrite.go, inside the
@@ -221,8 +221,8 @@ SELECT id, guid, owner_id, note_type_id, deck_id, fields, tags, checksum, create
 `
 
 type GetNoteByOwnerAndGuidParams struct {
-	OwnerID pgtype.UUID `json:"owner_id"`
-	Guid    string      `json:"guid"`
+	OwnerID pgtype.UUID
+	Guid    string
 }
 
 func (q *Queries) GetNoteByOwnerAndGuid(ctx context.Context, arg GetNoteByOwnerAndGuidParams) (Note, error) {
@@ -249,8 +249,8 @@ SELECT id, owner_id, name, css, is_cloze, sort_field_idx, anki_id FROM note_type
 `
 
 type GetNoteTypeByOwnerAndNameParams struct {
-	OwnerID pgtype.UUID `json:"owner_id"`
-	Name    string      `json:"name"`
+	OwnerID pgtype.UUID
+	Name    string
 }
 
 func (q *Queries) GetNoteTypeByOwnerAndName(ctx context.Context, arg GetNoteTypeByOwnerAndNameParams) (NoteType, error) {
@@ -283,17 +283,17 @@ ON CONFLICT (user_id, card_id, anki_id) DO NOTHING
 `
 
 type InsertImportedReviewLogParams struct {
-	UserID              pgtype.UUID        `json:"user_id"`
-	CardID              pgtype.UUID        `json:"card_id"`
-	Rating              int16              `json:"rating"`
-	ReviewedAt          pgtype.Timestamptz `json:"reviewed_at"`
-	DurationMs          pgtype.Int4        `json:"duration_ms"`
-	StateBefore         int16              `json:"state_before"`
-	LearningStepsBefore int16              `json:"learning_steps_before"`
-	ElapsedDaysBefore   int32              `json:"elapsed_days_before"`
-	ScheduledDaysAfter  int32              `json:"scheduled_days_after"`
-	ReviewKind          int16              `json:"review_kind"`
-	AnkiID              pgtype.Int8        `json:"anki_id"`
+	UserID              pgtype.UUID
+	CardID              pgtype.UUID
+	Rating              int16
+	ReviewedAt          pgtype.Timestamptz
+	DurationMs          pgtype.Int4
+	StateBefore         int16
+	LearningStepsBefore int16
+	ElapsedDaysBefore   int32
+	ScheduledDaysAfter  int32
+	ReviewKind          int16
+	AnkiID              pgtype.Int8
 }
 
 // Imported history. id is omitted so the column DEFAULT uuidv7() supplies it -- an imported row
@@ -333,20 +333,20 @@ ON CONFLICT (user_id, card_id) DO NOTHING
 `
 
 type SeedImportedUserCardStateParams struct {
-	UserID        pgtype.UUID        `json:"user_id"`
-	CardID        pgtype.UUID        `json:"card_id"`
-	Due           pgtype.Timestamptz `json:"due"`
-	Stability     float64            `json:"stability"`
-	Difficulty    float64            `json:"difficulty"`
-	State         int16              `json:"state"`
-	Reps          int32              `json:"reps"`
-	Lapses        int32              `json:"lapses"`
-	ElapsedDays   int32              `json:"elapsed_days"`
-	ScheduledDays int32              `json:"scheduled_days"`
-	LearningSteps int16              `json:"learning_steps"`
-	LastReview    pgtype.Timestamptz `json:"last_review"`
-	Suspended     bool               `json:"suspended"`
-	Flag          int16              `json:"flag"`
+	UserID        pgtype.UUID
+	CardID        pgtype.UUID
+	Due           pgtype.Timestamptz
+	Stability     float64
+	Difficulty    float64
+	State         int16
+	Reps          int32
+	Lapses        int32
+	ElapsedDays   int32
+	ScheduledDays int32
+	LearningSteps int16
+	LastReview    pgtype.Timestamptz
+	Suspended     bool
+	Flag          int16
 }
 
 // The seed path for a card that arrives with scheduling state but no review history. DO NOTHING,
@@ -381,8 +381,8 @@ WHERE id = $2 AND anki_id IS NULL
 `
 
 type SetDeckAnkiIDParams struct {
-	AnkiID pgtype.Int8 `json:"anki_id"`
-	DeckID pgtype.UUID `json:"deck_id"`
+	AnkiID pgtype.Int8
+	DeckID pgtype.UUID
 }
 
 // Re-import reuses the owner's deck of that name (docs/schema.md). anki_id is export fidelity
@@ -406,14 +406,14 @@ WHERE n.id = $7 AND da.deck_id = n.deck_id AND da.user_id = $8
 `
 
 type UpdateImportedNoteParams struct {
-	Fields     []byte             `json:"fields"`
-	Tags       []string           `json:"tags"`
-	Checksum   int64              `json:"checksum"`
-	NoteTypeID pgtype.UUID        `json:"note_type_id"`
-	ModifiedAt pgtype.Timestamptz `json:"modified_at"`
-	AnkiID     pgtype.Int8        `json:"anki_id"`
-	NoteID     pgtype.UUID        `json:"note_id"`
-	UserID     pgtype.UUID        `json:"user_id"`
+	Fields     []byte
+	Tags       []string
+	Checksum   int64
+	NoteTypeID pgtype.UUID
+	ModifiedAt pgtype.Timestamptz
+	AnkiID     pgtype.Int8
+	NoteID     pgtype.UUID
+	UserID     pgtype.UUID
 }
 
 // Re-import updates rather than inserts (CLAUDE.md §2.2, apkg-format.md). deck_id is NOT
@@ -444,11 +444,11 @@ RETURNING id, note_id, template_id, ordinal, deck_id, anki_id
 `
 
 type UpsertImportedCardParams struct {
-	NoteID     pgtype.UUID `json:"note_id"`
-	TemplateID pgtype.UUID `json:"template_id"`
-	Ordinal    int32       `json:"ordinal"`
-	DeckID     pgtype.UUID `json:"deck_id"`
-	AnkiID     pgtype.Int8 `json:"anki_id"`
+	NoteID     pgtype.UUID
+	TemplateID pgtype.UUID
+	Ordinal    int32
+	DeckID     pgtype.UUID
+	AnkiID     pgtype.Int8
 }
 
 // cards.deck_id comes from the CARD's own home deck, never flattened to the note's deck

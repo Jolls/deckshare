@@ -16,9 +16,9 @@ INSERT INTO fields (note_type_id, ordinal, name) VALUES ($1, $2, $3) RETURNING i
 `
 
 type CreateFieldParams struct {
-	NoteTypeID pgtype.UUID `json:"note_type_id"`
-	Ordinal    int32       `json:"ordinal"`
-	Name       string      `json:"name"`
+	NoteTypeID pgtype.UUID
+	Ordinal    int32
+	Name       string
 }
 
 func (q *Queries) CreateField(ctx context.Context, arg CreateFieldParams) (Field, error) {
@@ -47,26 +47,6 @@ func (q *Queries) DeleteFieldsForNoteType(ctx context.Context, noteTypeID pgtype
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const getField = `-- name: GetField :one
-SELECT id, note_type_id, ordinal, name, font, size, is_rtl, sticky FROM fields WHERE id = $1
-`
-
-func (q *Queries) GetField(ctx context.Context, id pgtype.UUID) (Field, error) {
-	row := q.db.QueryRow(ctx, getField, id)
-	var i Field
-	err := row.Scan(
-		&i.ID,
-		&i.NoteTypeID,
-		&i.Ordinal,
-		&i.Name,
-		&i.Font,
-		&i.Size,
-		&i.IsRtl,
-		&i.Sticky,
-	)
-	return i, err
 }
 
 const listFieldsForNoteType = `-- name: ListFieldsForNoteType :many
@@ -109,9 +89,9 @@ ORDER BY note_type_id, ordinal
 `
 
 type ListFieldsForNoteTypesRow struct {
-	NoteTypeID pgtype.UUID `json:"note_type_id"`
-	Ordinal    int32       `json:"ordinal"`
-	Name       string      `json:"name"`
+	NoteTypeID pgtype.UUID
+	Ordinal    int32
+	Name       string
 }
 
 func (q *Queries) ListFieldsForNoteTypes(ctx context.Context, noteTypeIds []pgtype.UUID) ([]ListFieldsForNoteTypesRow, error) {
@@ -139,9 +119,9 @@ UPDATE fields SET name = $1 WHERE id = $2 AND note_type_id = $3
 `
 
 type RenameFieldParams struct {
-	Name       string      `json:"name"`
-	ID         pgtype.UUID `json:"id"`
-	NoteTypeID pgtype.UUID `json:"note_type_id"`
+	Name       string
+	ID         pgtype.UUID
+	NoteTypeID pgtype.UUID
 }
 
 func (q *Queries) RenameField(ctx context.Context, arg RenameFieldParams) (int64, error) {

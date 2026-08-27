@@ -28,10 +28,10 @@ INSERT INTO cards (note_id, template_id, ordinal, deck_id) VALUES ($1, $2, $3, $
 `
 
 type CreateCardParams struct {
-	NoteID     pgtype.UUID `json:"note_id"`
-	TemplateID pgtype.UUID `json:"template_id"`
-	Ordinal    int32       `json:"ordinal"`
-	DeckID     pgtype.UUID `json:"deck_id"`
+	NoteID     pgtype.UUID
+	TemplateID pgtype.UUID
+	Ordinal    int32
+	DeckID     pgtype.UUID
 }
 
 // Called once per card in the create set (§0.3's "create" batch is small -- at most one row
@@ -64,9 +64,9 @@ ON CONFLICT (note_id, ordinal) DO NOTHING
 `
 
 type CreateCardsForNewTemplateParams struct {
-	TemplateID pgtype.UUID `json:"template_id"`
-	Ordinal    int32       `json:"ordinal"`
-	NoteTypeID pgtype.UUID `json:"note_type_id"`
+	TemplateID pgtype.UUID
+	Ordinal    int32
+	NoteTypeID pgtype.UUID
 }
 
 // One card per existing note when a template is appended to a non-cloze note type (#54 §0.5).
@@ -85,8 +85,8 @@ DELETE FROM cards WHERE note_id = $1 AND ordinal = ANY($2::int[])
 `
 
 type DeleteCardsByOrdinalsParams struct {
-	NoteID   pgtype.UUID `json:"note_id"`
-	Ordinals []int32     `json:"ordinals"`
+	NoteID   pgtype.UUID
+	Ordinals []int32
 }
 
 func (q *Queries) DeleteCardsByOrdinals(ctx context.Context, arg DeleteCardsByOrdinalsParams) (int64, error) {
@@ -121,10 +121,10 @@ SELECT id, ordinal, template_id, deck_id FROM cards WHERE note_id = $1 ORDER BY 
 `
 
 type ListCardsForNoteForUpdateRow struct {
-	ID         pgtype.UUID `json:"id"`
-	Ordinal    int32       `json:"ordinal"`
-	TemplateID pgtype.UUID `json:"template_id"`
-	DeckID     pgtype.UUID `json:"deck_id"`
+	ID         pgtype.UUID
+	Ordinal    int32
+	TemplateID pgtype.UUID
+	DeckID     pgtype.UUID
 }
 
 // Cards are content addressing only -- no scheduling columns exist here to lose (CLAUDE.md §2.1).

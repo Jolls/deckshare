@@ -9,156 +9,156 @@ import (
 )
 
 type Card struct {
-	ID         pgtype.UUID `json:"id"`
-	NoteID     pgtype.UUID `json:"note_id"`
-	TemplateID pgtype.UUID `json:"template_id"`
-	Ordinal    int32       `json:"ordinal"`
-	DeckID     pgtype.UUID `json:"deck_id"`
-	AnkiID     pgtype.Int8 `json:"anki_id"`
+	ID         pgtype.UUID
+	NoteID     pgtype.UUID
+	TemplateID pgtype.UUID
+	Ordinal    int32
+	DeckID     pgtype.UUID
+	AnkiID     pgtype.Int8
 }
 
 type Deck struct {
-	ID          pgtype.UUID        `json:"id"`
-	OwnerID     pgtype.UUID        `json:"owner_id"`
-	Name        string             `json:"name"`
-	Description string             `json:"description"`
-	Preset      []byte             `json:"preset"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	ModifiedAt  pgtype.Timestamptz `json:"modified_at"`
-	AnkiID      pgtype.Int8        `json:"anki_id"`
+	ID          pgtype.UUID
+	OwnerID     pgtype.UUID
+	Name        string
+	Description string
+	Preset      []byte
+	CreatedAt   pgtype.Timestamptz
+	ModifiedAt  pgtype.Timestamptz
+	AnkiID      pgtype.Int8
 }
 
 type DeckAccess struct {
-	DeckID          pgtype.UUID        `json:"deck_id"`
-	UserID          pgtype.UUID        `json:"user_id"`
-	CanView         bool               `json:"can_view"`
-	CanStudy        bool               `json:"can_study"`
-	CanEditContent  bool               `json:"can_edit_content"`
-	CanEditSettings bool               `json:"can_edit_settings"`
-	CanManageAccess bool               `json:"can_manage_access"`
-	CanDelete       bool               `json:"can_delete"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	DeckID          pgtype.UUID
+	UserID          pgtype.UUID
+	CanView         bool
+	CanStudy        bool
+	CanEditContent  bool
+	CanEditSettings bool
+	CanManageAccess bool
+	CanDelete       bool
+	CreatedAt       pgtype.Timestamptz
 }
 
 type Field struct {
-	ID         pgtype.UUID `json:"id"`
-	NoteTypeID pgtype.UUID `json:"note_type_id"`
-	Ordinal    int32       `json:"ordinal"`
-	Name       string      `json:"name"`
-	Font       string      `json:"font"`
-	Size       int32       `json:"size"`
-	IsRtl      bool        `json:"is_rtl"`
-	Sticky     bool        `json:"sticky"`
+	ID         pgtype.UUID
+	NoteTypeID pgtype.UUID
+	Ordinal    int32
+	Name       string
+	Font       string
+	Size       int32
+	IsRtl      bool
+	Sticky     bool
 }
 
 type MediaBlob struct {
-	Sha256    string             `json:"sha256"`
-	SizeBytes int64              `json:"size_bytes"`
-	Mime      string             `json:"mime"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Sha256    string
+	SizeBytes int64
+	Mime      string
+	CreatedAt pgtype.Timestamptz
 }
 
 type MediaRef struct {
-	DeckID   pgtype.UUID `json:"deck_id"`
-	Filename string      `json:"filename"`
-	Sha256   string      `json:"sha256"`
+	DeckID   pgtype.UUID
+	Filename string
+	Sha256   string
 }
 
 type Note struct {
-	ID         pgtype.UUID        `json:"id"`
-	Guid       string             `json:"guid"`
-	OwnerID    pgtype.UUID        `json:"owner_id"`
-	NoteTypeID pgtype.UUID        `json:"note_type_id"`
-	DeckID     pgtype.UUID        `json:"deck_id"`
-	Fields     []byte             `json:"fields"`
-	Tags       []string           `json:"tags"`
-	Checksum   int64              `json:"checksum"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	ModifiedAt pgtype.Timestamptz `json:"modified_at"`
-	AnkiID     pgtype.Int8        `json:"anki_id"`
+	ID         pgtype.UUID
+	Guid       string
+	OwnerID    pgtype.UUID
+	NoteTypeID pgtype.UUID
+	DeckID     pgtype.UUID
+	Fields     []byte
+	Tags       []string
+	Checksum   int64
+	CreatedAt  pgtype.Timestamptz
+	ModifiedAt pgtype.Timestamptz
+	AnkiID     pgtype.Int8
 }
 
 type NoteType struct {
-	ID           pgtype.UUID `json:"id"`
-	OwnerID      pgtype.UUID `json:"owner_id"`
-	Name         string      `json:"name"`
-	Css          string      `json:"css"`
-	IsCloze      bool        `json:"is_cloze"`
-	SortFieldIdx int32       `json:"sort_field_idx"`
-	AnkiID       pgtype.Int8 `json:"anki_id"`
+	ID           pgtype.UUID
+	OwnerID      pgtype.UUID
+	Name         string
+	Css          string
+	IsCloze      bool
+	SortFieldIdx int32
+	AnkiID       pgtype.Int8
 }
 
 type ReviewLog struct {
-	ID                  pgtype.UUID        `json:"id"`
-	UserID              pgtype.UUID        `json:"user_id"`
-	CardID              pgtype.UUID        `json:"card_id"`
-	Rating              int16              `json:"rating"`
-	ReviewedAt          pgtype.Timestamptz `json:"reviewed_at"`
-	DurationMs          pgtype.Int4        `json:"duration_ms"`
-	StateBefore         int16              `json:"state_before"`
-	LearningStepsBefore int16              `json:"learning_steps_before"`
-	StabilityBefore     pgtype.Float8      `json:"stability_before"`
-	DifficultyBefore    pgtype.Float8      `json:"difficulty_before"`
-	ElapsedDaysBefore   int32              `json:"elapsed_days_before"`
-	ScheduledDaysAfter  int32              `json:"scheduled_days_after"`
-	FsrsVersion         pgtype.Int2        `json:"fsrs_version"`
-	ReviewKind          int16              `json:"review_kind"`
-	AnkiID              pgtype.Int8        `json:"anki_id"`
+	ID                  pgtype.UUID
+	UserID              pgtype.UUID
+	CardID              pgtype.UUID
+	Rating              int16
+	ReviewedAt          pgtype.Timestamptz
+	DurationMs          pgtype.Int4
+	StateBefore         int16
+	LearningStepsBefore int16
+	StabilityBefore     pgtype.Float8
+	DifficultyBefore    pgtype.Float8
+	ElapsedDaysBefore   int32
+	ScheduledDaysAfter  int32
+	FsrsVersion         pgtype.Int2
+	ReviewKind          int16
+	AnkiID              pgtype.Int8
 }
 
 type Session struct {
-	ID        string             `json:"id"`
-	UserID    pgtype.UUID        `json:"user_id"`
-	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	ID        string
+	UserID    pgtype.UUID
+	ExpiresAt pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
 }
 
 type Template struct {
-	ID          pgtype.UUID `json:"id"`
-	NoteTypeID  pgtype.UUID `json:"note_type_id"`
-	Ordinal     int32       `json:"ordinal"`
-	Name        string      `json:"name"`
-	Qfmt        string      `json:"qfmt"`
-	Afmt        string      `json:"afmt"`
-	BrowserQfmt string      `json:"browser_qfmt"`
-	BrowserAfmt string      `json:"browser_afmt"`
+	ID          pgtype.UUID
+	NoteTypeID  pgtype.UUID
+	Ordinal     int32
+	Name        string
+	Qfmt        string
+	Afmt        string
+	BrowserQfmt string
+	BrowserAfmt string
 }
 
 type User struct {
-	ID           pgtype.UUID        `json:"id"`
-	Email        string             `json:"email"`
-	PasswordHash string             `json:"password_hash"`
-	DisplayName  string             `json:"display_name"`
-	Timezone     string             `json:"timezone"`
-	DayStartHour int16              `json:"day_start_hour"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	ID           pgtype.UUID
+	Email        string
+	PasswordHash string
+	DisplayName  string
+	Timezone     string
+	DayStartHour int16
+	CreatedAt    pgtype.Timestamptz
 }
 
 type UserCardState struct {
-	UserID        pgtype.UUID        `json:"user_id"`
-	CardID        pgtype.UUID        `json:"card_id"`
-	Due           pgtype.Timestamptz `json:"due"`
-	Stability     float64            `json:"stability"`
-	Difficulty    float64            `json:"difficulty"`
-	State         int16              `json:"state"`
-	Reps          int32              `json:"reps"`
-	Lapses        int32              `json:"lapses"`
-	ElapsedDays   int32              `json:"elapsed_days"`
-	ScheduledDays int32              `json:"scheduled_days"`
-	LearningSteps int16              `json:"learning_steps"`
-	LastReview    pgtype.Timestamptz `json:"last_review"`
-	Suspended     bool               `json:"suspended"`
-	BuriedUntil   pgtype.Date        `json:"buried_until"`
-	Flag          int16              `json:"flag"`
+	UserID        pgtype.UUID
+	CardID        pgtype.UUID
+	Due           pgtype.Timestamptz
+	Stability     float64
+	Difficulty    float64
+	State         int16
+	Reps          int32
+	Lapses        int32
+	ElapsedDays   int32
+	ScheduledDays int32
+	LearningSteps int16
+	LastReview    pgtype.Timestamptz
+	Suspended     bool
+	BuriedUntil   pgtype.Date
+	Flag          int16
 }
 
 type UserFsrsParam struct {
-	ID               pgtype.UUID        `json:"id"`
-	UserID           pgtype.UUID        `json:"user_id"`
-	DeckID           pgtype.UUID        `json:"deck_id"`
-	FsrsVersion      int16              `json:"fsrs_version"`
-	Params           []byte             `json:"params"`
-	DesiredRetention float64            `json:"desired_retention"`
-	OptimisedAt      pgtype.Timestamptz `json:"optimised_at"`
-	ReviewCountAtFit pgtype.Int4        `json:"review_count_at_fit"`
+	ID               pgtype.UUID
+	UserID           pgtype.UUID
+	DeckID           pgtype.UUID
+	FsrsVersion      int16
+	Params           []byte
+	DesiredRetention float64
+	OptimisedAt      pgtype.Timestamptz
+	ReviewCountAtFit pgtype.Int4
 }

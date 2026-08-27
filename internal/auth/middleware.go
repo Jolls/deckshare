@@ -119,28 +119,28 @@ func (s *Service) checkOrigin(r *http.Request) bool {
 	return strings.EqualFold(parsed.Host, r.Host)
 }
 
-// SetSessionCookie writes the __Host- session cookie with token as its value.
-func SetSessionCookie(w http.ResponseWriter, token string) {
-	http.SetCookie(w, &http.Cookie{
+// sessionCookie is the single definition of the session cookie's attributes. Secure, Path=/ and
+// the absence of Domain are the three things the __Host- prefix requires the browser to enforce
+// (architecture.md §12) -- having one constructor is what stops the set and clear paths from
+// drifting apart on any of them.
+func sessionCookie(value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
 		Name:     CookieName,
-		Value:    token,
+		Value:    value,
 		Path:     "/",
 		Secure:   true,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(SessionLifetime.Seconds()),
-	})
+		MaxAge:   maxAge,
+	}
+}
+
+// SetSessionCookie writes the __Host- session cookie with token as its value.
+func SetSessionCookie(w http.ResponseWriter, token string) {
+	http.SetCookie(w, sessionCookie(token, int(SessionLifetime.Seconds())))
 }
 
 // ClearSessionCookie removes the session cookie.
 func ClearSessionCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     CookieName,
-		Value:    "",
-		Path:     "/",
-		Secure:   true,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
-	})
+	http.SetCookie(w, sessionCookie("", -1))
 }

@@ -19,9 +19,9 @@ RETURNING id, email, password_hash, display_name, timezone, day_start_hour, crea
 `
 
 type CreateUserParams struct {
-	Email        string `json:"email"`
-	PasswordHash string `json:"password_hash"`
-	DisplayName  string `json:"display_name"`
+	Email        string
+	PasswordHash string
+	DisplayName  string
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
@@ -93,8 +93,8 @@ UPDATE users SET password_hash = $2 WHERE id = $1
 `
 
 type UpdateUserPasswordParams struct {
-	ID           pgtype.UUID `json:"id"`
-	PasswordHash string      `json:"password_hash"`
+	ID           pgtype.UUID
+	PasswordHash string
 }
 
 func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error {
@@ -107,10 +107,10 @@ UPDATE users SET display_name = $2, timezone = $3, day_start_hour = $4 WHERE id 
 `
 
 type UpdateUserProfileParams struct {
-	ID           pgtype.UUID `json:"id"`
-	DisplayName  string      `json:"display_name"`
-	Timezone     string      `json:"timezone"`
-	DayStartHour int16       `json:"day_start_hour"`
+	ID           pgtype.UUID
+	DisplayName  string
+	Timezone     string
+	DayStartHour int16
 }
 
 func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) error {

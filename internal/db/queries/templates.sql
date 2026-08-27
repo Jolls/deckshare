@@ -1,6 +1,3 @@
--- name: GetTemplate :one
-SELECT * FROM templates WHERE id = $1;
-
 -- name: ListTemplatesForNoteType :many
 SELECT * FROM templates WHERE note_type_id = $1 ORDER BY ordinal;
 
