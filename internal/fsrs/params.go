@@ -31,6 +31,11 @@ func (p Params) Version() int { return p.version }
 // DesiredRetention is the target retrievability used to compute intervals.
 func (p Params) DesiredRetention() float64 { return p.desiredRetention }
 
+// supportedVersion is the only fsrs_version this package will schedule with: FSRS-6, 21 weights
+// (docs/plans/53-fsrs-wrapper.md Resolved Decision 4). 4.5 and 5 stay in weightCountFor so a row
+// declaring one gets ErrUnsupportedVersion rather than ErrUnknownVersion.
+const supportedVersion = 6
+
 // NewParams validates a stored user_fsrs_params row. weights is the decoded params JSON array;
 // fsrsVersion is the row's fsrs_version. Only FSRS-6 (21 weights) is currently supported for
 // scheduling -- see docs/plans/53-fsrs-wrapper.md Resolved Decision 4.
@@ -42,7 +47,7 @@ func NewParams(fsrsVersion int, weights []float64, desiredRetention float64) (Pa
 	if len(weights) != wantCount {
 		return Params{}, fmt.Errorf("%w: fsrs_version %d wants %d weights, got %d", ErrWeightCount, fsrsVersion, wantCount, len(weights))
 	}
-	if fsrsVersion != 6 {
+	if fsrsVersion != supportedVersion {
 		return Params{}, fmt.Errorf("%w: fsrs_version %d", ErrUnsupportedVersion, fsrsVersion)
 	}
 	for i, w := range weights {
@@ -64,7 +69,7 @@ func NewParams(fsrsVersion int, weights []float64, desiredRetention float64) (Pa
 // entirely).
 func NewDefaultParams(desiredRetention float64) (Params, error) {
 	w := gofsrs.DefaultWeights()
-	return NewParams(6, w[:], desiredRetention)
+	return NewParams(supportedVersion, w[:], desiredRetention)
 }
 
 // maxLearningSteps bounds CardState.LearningSteps: go-fsrs's Card.RemainingSteps is only ever
@@ -78,15 +83,19 @@ func NewDefaultParams(desiredRetention float64) (Params, error) {
 // toLibCard check.
 var maxLearningSteps = max(len(gofsrs.DefaultLearningSteps()), len(gofsrs.DefaultRelearningSteps()))
 
-// engine builds the go-fsrs scheduler over p. Fuzz is always off: the library's fuzz seed is
-// derived from wall-clock milliseconds at call time (scheduler.go's initSeed), so a batch-preview
-// precompute and a grade-time recompute of the same prior state at different instants would
-// disagree by design with fuzz on -- which would make the CLAUDE.md §10.2 parity property flaky
-// rather than meaningful. There is no exported way to turn it on.
+// engine builds the go-fsrs scheduler over p. Fuzz is always off. The library's seed is
+// fmt.Sprintf("%d_%d_%f", now.UnixMilli(), reps, difficulty*stability) (scheduler.go's initSeed)
+// -- a pure function of the caller-supplied now, not of the process clock, so it is reproducible
+// given identical inputs and replay would stay deterministic either way. What breaks is preview
+// parity: the batch-fetch precompute passes the fetch instant and the grade-time recompute passes
+// the event's reviewedAt, never the same millisecond, so with fuzz on the two would disagree by
+// design -- which would make the CLAUDE.md §10.2 parity property flaky rather than meaningful.
+// Pinned by TestLibraryFuzzSeedIsPureInItsInputs and TestLibraryFuzzVariesWithNow
+// (schedule_test.go). There is no exported way to turn it on.
 func (p Params) engine() *gofsrs.FSRS {
 	return gofsrs.NewFSRS(gofsrs.Parameters{
 		RequestRetention: p.desiredRetention,
-		MaximumInterval:  36500,
+		MaximumInterval:  gofsrs.DefaultParam().MaximumInterval,
 		W:                p.weights,
 		EnableShortTerm:  true,
 		EnableFuzz:       false,

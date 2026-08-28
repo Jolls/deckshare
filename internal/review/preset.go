@@ -41,8 +41,8 @@ func parseDeckPreset(preset []byte) (deckPreset, bool) {
 // NewPerDay reads decks.preset. Absent, malformed, or out of range -> DefaultNewPerDay; a value
 // inside 0..MaxNewPerDay is returned as written, 0 included (no new cards from this deck).
 func NewPerDay(preset []byte) int32 {
-	var p deckPreset
-	if err := json.Unmarshal(preset, &p); err != nil || p.New == nil || p.New.PerDay == nil {
+	p, ok := parseDeckPreset(preset)
+	if !ok || p.New == nil || p.New.PerDay == nil {
 		return DefaultNewPerDay
 	}
 	v := *p.New.PerDay
@@ -65,8 +65,8 @@ func NewRemaining(perDay int32, introducedToday int64) int32 {
 // inside 0..MaxRevPerDay is returned as written, 0 included (no review-state cards from this
 // deck). Enforced completely independently of NewPerDay (#115), same as Anki's own model.
 func RevPerDay(preset []byte) int32 {
-	var p deckPreset
-	if err := json.Unmarshal(preset, &p); err != nil || p.Rev == nil || p.Rev.PerDay == nil {
+	p, ok := parseDeckPreset(preset)
+	if !ok || p.Rev == nil || p.Rev.PerDay == nil {
 		return DefaultRevPerDay
 	}
 	v := *p.Rev.PerDay

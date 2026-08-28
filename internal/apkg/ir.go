@@ -137,6 +137,10 @@ type IrMedia struct {
 	Data      []byte
 }
 
+// secondsPerDay is Anki's day length wherever a column encodes an interval as a whole number of
+// days -- cards.ivl, revlog.ivl, revlog.lastIvl, and our own scheduled_days on the way in and out.
+const secondsPerDay = 86400
+
 // intervalSeconds normalises Anki's dual-unit interval: days when positive, seconds when
 // negative (apkg-format.md). Applies to cards.ivl, revlog.ivl and revlog.lastIvl alike -- the IR
 // carries seconds throughout so the distinction cannot reappear downstream.
@@ -144,7 +148,7 @@ func intervalSeconds(ivl int64) int64 {
 	if ivl < 0 {
 		return -ivl
 	}
-	return ivl * 86400
+	return ivl * secondsPerDay
 }
 
 // splitFields splits notes.flds on \x1f (unit separator).
@@ -153,11 +157,11 @@ func splitFields(flds string) []string {
 }
 
 // splitTags splits notes.tags, which is space-separated AND space-surrounded, dropping empties.
+// strings.Fields never returns nil -- it allocates with make even for an empty result -- which
+// matters: an IrNote with no tags must compare equal to a spec built the same way
+// (synthetic_test.go's expectedIR).
 func splitTags(tags string) []string {
-	fields := strings.Fields(tags)
-	out := make([]string, 0, len(fields))
-	out = append(out, fields...)
-	return out
+	return strings.Fields(tags)
 }
 
 // normaliseDeckName converts schema 18's \x1f hierarchy separator to schema 11's "::".
@@ -204,21 +208,21 @@ func resolveDue(queue, typ int32, due, odue, odid int64, crt time.Time) IrDue {
 // resolveHomeDecks fills every IrNote.HomeDeckAnkiID from the note's lowest-AnkiID card's
 // DeckAnkiID (architecture.md §20). Notes with no cards keep 0 and are reported as a warning.
 func resolveHomeDecks(notes []IrNote, cards []IrCard) []string {
-	lowestCard := make(map[int64]IrCard, len(notes))
-	for _, c := range cards {
-		existing, ok := lowestCard[c.NoteAnkiID]
-		if !ok || c.AnkiID < existing.AnkiID {
-			lowestCard[c.NoteAnkiID] = c
+	lowestCard := make(map[int64]int, len(notes))
+	for i, c := range cards {
+		j, ok := lowestCard[c.NoteAnkiID]
+		if !ok || c.AnkiID < cards[j].AnkiID {
+			lowestCard[c.NoteAnkiID] = i
 		}
 	}
 	var warnings []string
 	for i := range notes {
-		c, ok := lowestCard[notes[i].AnkiID]
+		j, ok := lowestCard[notes[i].AnkiID]
 		if !ok {
-			warnings = append(warnings, "note "+guidOrAnki(notes[i])+" has no cards; skipped")
+			warnings = append(warnings, "note "+guidOrAnki(notes[i])+" has no cards, so it has no home deck")
 			continue
 		}
-		notes[i].HomeDeckAnkiID = c.DeckAnkiID
+		notes[i].HomeDeckAnkiID = cards[j].DeckAnkiID
 	}
 	return warnings
 }

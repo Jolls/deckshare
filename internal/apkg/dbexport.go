@@ -137,7 +137,7 @@ func Export(ctx context.Context, tx pgx.Tx, ownerID pgtype.UUID, now time.Time) 
 		cards = append(cards, IrCard{
 			AnkiID: id, NoteAnkiID: noteAnkiID[c.NoteID], DeckAnkiID: deckAnkiID[c.DeckID],
 			Ordinal: c.Ordinal, Type: sched.Type, Queue: sched.Queue, Due: sched.Due,
-			IntervalSeconds: sched.IntervalSeconds, Factor: 2500,
+			IntervalSeconds: sched.IntervalSeconds, Factor: ankiDefaultFactor,
 			Reps: sched.Reps, Lapses: sched.Lapses, Flag: sched.Flag,
 			Suspended: sched.Queue == ankiQueueSuspended,
 			Buried:    sched.Queue == ankiQueueSchedBuried || sched.Queue == ankiQueueUserBuried,
@@ -155,7 +155,7 @@ func Export(ctx context.Context, tx pgx.Tx, ownerID pgtype.UUID, now time.Time) 
 		id := exportAnkiID(r.AnkiID, r.ReviewedAt.Time.UnixMilli())
 		reviews = append(reviews, IrReview{
 			AnkiID: id, CardAnkiID: cid, ReviewedAt: r.ReviewedAt.Time.UTC(),
-			Rating: r.Rating, IntervalSeconds: int64(r.ScheduledDaysAfter) * 86400,
+			Rating: r.Rating, IntervalSeconds: int64(r.ScheduledDaysAfter) * secondsPerDay,
 			DurationMs: durationMsValue(r.DurationMs), Kind: r.ReviewKind,
 		})
 	}
@@ -218,7 +218,7 @@ func deriveCardScheduling(state db.UserCardState, hasState bool, now time.Time, 
 
 	return cardScheduling{
 		Queue: queue, Type: typ, Due: due,
-		IntervalSeconds: int64(state.ScheduledDays) * 86400,
+		IntervalSeconds: int64(state.ScheduledDays) * secondsPerDay,
 		Reps:            state.Reps, Lapses: state.Lapses, Flag: state.Flag,
 		FSRS: &IrFSRSState{Stability: state.Stability, Difficulty: state.Difficulty},
 	}

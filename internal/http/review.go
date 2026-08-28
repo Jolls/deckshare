@@ -48,20 +48,7 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 		}
 
 		clock := now()
-		window, err := studyDayWindow(r.Context(), q, user.ID, clock)
-		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
-		params, err := review.EffectiveParams(r.Context(), q, user.ID, deckID)
-		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
-		batch, err := review.BuildBatch(r.Context(), store, params, user.ID, deckID, deck.Name,
-			window, review.NewPerDay(deck.Preset), review.RevPerDay(deck.Preset),
-			review.ParseRevOrder(deck.Preset), review.ParseNewMix(deck.Preset),
-			review.Cursor{AtStart: true}, initialBatchSize, clock)
+		batch, err := buildStudyBatch(r.Context(), store, user.ID, deck, review.Cursor{AtStart: true}, initialBatchSize, clock)
 		if err != nil {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
@@ -74,7 +61,6 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 
 		render(w, pages["review"], http.StatusOK, map[string]any{
 			"User": user, "Deck": deck, "CSS": css, "Batch": toBatchView(batch),
-			"StudyDayEnd": window.End.UTC().Format(time.RFC3339Nano),
 		})
 	})))
 
@@ -109,20 +95,7 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 			return
 		}
 		clock := now()
-		window, err := studyDayWindow(r.Context(), q, user.ID, clock)
-		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
-		params, err := review.EffectiveParams(r.Context(), q, user.ID, deckID)
-		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
-		batch, err := review.BuildBatch(r.Context(), store, params, user.ID, deckID, deck.Name,
-			window, review.NewPerDay(deck.Preset), review.RevPerDay(deck.Preset),
-			review.ParseRevOrder(deck.Preset), review.ParseNewMix(deck.Preset),
-			cur, refillBatchSize, clock)
+		batch, err := buildStudyBatch(r.Context(), store, user.ID, deck, cur, refillBatchSize, clock)
 		if err != nil {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
@@ -174,6 +147,29 @@ func studyDayWindow(ctx context.Context, q *db.Queries, userID pgtype.UUID, now 
 	return review.StudyDay{Start: row.StudyDayStart.Time, End: row.StudyDayEnd.Time}, nil
 }
 
+// buildStudyBatch resolves the study-day window and the caller's effective FSRS params for deck,
+// then builds one batch from it -- the shared tail of GET /decks/{id}/review and
+// GET /api/reviews/next, so the two can never fetch a batch under different settings.
+func buildStudyBatch(ctx context.Context, store db.DBTX, userID pgtype.UUID, deck db.Deck,
+	cur review.Cursor, limit int32, clock time.Time) (review.Batch, error) {
+	q := db.New(store)
+	window, err := studyDayWindow(ctx, q, userID, clock)
+	if err != nil {
+		return review.Batch{}, err
+	}
+	params, err := review.EffectiveParams(ctx, q, userID, deck.ID)
+	if err != nil {
+		return review.Batch{}, err
+	}
+	batch, err := review.BuildBatch(ctx, store, params, userID, deck.ID, deck.Name, window,
+		review.NewPerDay(deck.Preset), review.RevPerDay(deck.Preset),
+		review.ParseRevOrder(deck.Preset), review.ParseNewMix(deck.Preset), cur, limit, clock)
+	if err != nil {
+		return review.Batch{}, err
+	}
+	return batch, nil
+}
+
 // noteTypeCSS sanitises each note type's CSS blob once per page (never per card, #55) so a
 // refilled card can never arrive before its styles.
 func noteTypeCSS(ctx context.Context, q *db.Queries, userID, deckID pgtype.UUID) ([]template.CSS, error) {
@@ -209,46 +205,53 @@ type wireBatch struct {
 	Events []wireEvent `json:"events"`
 }
 
+// errBadBatch is decodeBatch's single failure mode: every violation is answered identically
+// (400, no detail, nothing written), so there is nothing for the error value to carry.
+var errBadBatch = errors.New("http: malformed review batch")
+
 // parseBatchRequest decodes and strictly validates the request body. Any failure writes 400 and
-// returns ok=false; nothing is ever written to the database for a malformed batch. Decoding into
-// this five-field struct -- never DisallowUnknownFields, never map[string]any -- is the mechanism
-// that makes extra client-supplied fields (stability, due, ...) silently ignored rather than
-// rejected or stored (CLAUDE.md §10.1, §2.7).
+// returns ok=false; nothing is ever written to the database for a malformed batch.
 func parseBatchRequest(w http.ResponseWriter, r *http.Request) ([]review.Event, bool) {
-	var batch wireBatch
-	if err := json.NewDecoder(io.LimitReader(r.Body, maxBatchBody)).Decode(&batch); err != nil {
+	events, err := decodeBatch(r)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return nil, false
 	}
+	return events, true
+}
+
+// decodeBatch is the validation itself. Decoding into the five-field wireEvent struct -- never
+// DisallowUnknownFields, never map[string]any -- is the mechanism that makes extra
+// client-supplied fields (stability, due, ...) silently ignored rather than rejected or stored
+// (CLAUDE.md §10.1, §2.7).
+func decodeBatch(r *http.Request) ([]review.Event, error) {
+	var batch wireBatch
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxBatchBody)).Decode(&batch); err != nil {
+		return nil, errBadBatch
+	}
 	if len(batch.Events) < 1 || len(batch.Events) > maxEventsPerPost {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return nil, false
+		return nil, errBadBatch
 	}
 
 	events := make([]review.Event, len(batch.Events))
 	for i, we := range batch.Events {
 		var id, cardID pgtype.UUID
 		if err := id.Scan(we.ID); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return nil, false
+			return nil, errBadBatch
 		}
 		if err := cardID.Scan(we.CardID); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return nil, false
+			return nil, errBadBatch
 		}
 		rating := fsrs.Rating(we.Rating)
 		if !rating.Valid() {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return nil, false
+			return nil, errBadBatch
 		}
 		reviewedAt, err := time.Parse(time.RFC3339Nano, we.ReviewedAt)
 		if err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return nil, false
+			return nil, errBadBatch
 		}
 		if we.DurationMs != nil && (*we.DurationMs < 1 || *we.DurationMs > 3_600_000) {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return nil, false
+			return nil, errBadBatch
 		}
 		events[i] = review.Event{
 			ID:         id,
@@ -258,7 +261,7 @@ func parseBatchRequest(w http.ResponseWriter, r *http.Request) ([]review.Event, 
 			DurationMs: we.DurationMs,
 		}
 	}
-	return events, true
+	return events, nil
 }
 
 // -- View models: template/JSON shapes, kept out of internal/review so that package stays free

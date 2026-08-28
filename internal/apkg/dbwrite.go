@@ -59,7 +59,7 @@ func Import(ctx context.Context, tx pgx.Tx, ownerID pgtype.UUID, col *IrCollecti
 		return ImportResult{}, err
 	}
 
-	noteTypeByAnkiID, templatesByNoteType, isClozeByNoteType, err := importNoteTypes(ctx, q, ownerID, col.NoteTypes, &result)
+	noteTypeByAnkiID, err := importNoteTypes(ctx, q, ownerID, col.NoteTypes, &result)
 	if err != nil {
 		return ImportResult{}, err
 	}
@@ -69,22 +69,29 @@ func Import(ctx context.Context, tx pgx.Tx, ownerID pgtype.UUID, col *IrCollecti
 		return ImportResult{}, err
 	}
 
-	cardByAnkiID, cardCountByDeckID, err := importCards(ctx, q, col.Cards, noteByAnkiID, noteTypeByAnkiID, templatesByNoteType, isClozeByNoteType, deckByAnkiID, col.Notes, &result)
+	cards, err := importCards(ctx, q, col, noteByAnkiID, noteTypeByAnkiID, deckByAnkiID, &result)
 	if err != nil {
 		return ImportResult{}, err
 	}
 
+	// Ordered by the package's own deck list, not by map iteration: ImportResult.Decks decides
+	// which deck /import redirects to (internal/http/import.go), and randomised order makes that
+	// redirect vary run to run whenever two decks tie on card count. Deduped because two Anki
+	// deck ids can resolve to one Enshu deck, and importMedia refs each deck once.
 	seenDeck := make(map[pgtype.UUID]bool, len(deckByAnkiID))
-	for _, id := range deckByAnkiID {
-		if seenDeck[id] {
+	deckIDs := make([]pgtype.UUID, 0, len(deckByAnkiID))
+	for _, d := range col.Decks {
+		id, ok := deckByAnkiID[d.AnkiID]
+		if !ok || seenDeck[id] {
 			continue
 		}
 		seenDeck[id] = true
-		result.Decks = append(result.Decks, ImportedDeck{ID: id, CardCount: cardCountByDeckID[id]})
+		deckIDs = append(deckIDs, id)
+		result.Decks = append(result.Decks, ImportedDeck{ID: id, CardCount: cards.CountByDeck[id]})
 	}
 
-	lockIDs := make([]pgtype.UUID, 0, len(cardByAnkiID))
-	for _, id := range cardByAnkiID {
+	lockIDs := make([]pgtype.UUID, 0, len(cards.IDByAnkiID))
+	for _, id := range cards.IDByAnkiID {
 		lockIDs = append(lockIDs, id)
 	}
 	if len(lockIDs) > 0 {
@@ -93,19 +100,15 @@ func Import(ctx context.Context, tx pgx.Tx, ownerID pgtype.UUID, col *IrCollecti
 		}
 	}
 
-	cardHasReviews, err := importReviews(ctx, tx, q, ownerID, col.Reviews, cardByAnkiID, &result)
+	cardHasReviews, err := importReviews(ctx, tx, q, ownerID, col.Reviews, cards, &result)
 	if err != nil {
 		return ImportResult{}, err
 	}
 
-	if err := seedCardStates(ctx, q, ownerID, col.Cards, cardByAnkiID, cardHasReviews, now, &result); err != nil {
+	if err := seedCardStates(ctx, q, ownerID, col.Cards, cards.IDByAnkiID, cardHasReviews, now, &result); err != nil {
 		return ImportResult{}, err
 	}
 
-	deckIDs := make([]pgtype.UUID, 0, len(deckByAnkiID))
-	for _, id := range deckByAnkiID {
-		deckIDs = append(deckIDs, id)
-	}
 	if err := importMedia(ctx, q, blobs, deckIDs, col.Media, &result); err != nil {
 		return ImportResult{}, err
 	}
@@ -197,13 +200,20 @@ func importDecks(ctx context.Context, tx pgx.Tx, q *db.Queries, ownerID pgtype.U
 	return deckByAnkiID, nil
 }
 
+// importedNoteType is what importNoteTypes resolved for one of the package's note types: the row
+// it created or reused, that row's templates keyed by ordinal, and whether it is a cloze type --
+// which files every card under template ordinal 0 whatever the card's own ordinal says.
+type importedNoteType struct {
+	ID        pgtype.UUID
+	Templates map[int32]pgtype.UUID
+	IsCloze   bool
+}
+
 // importNoteTypes creates or reuses each note type by (owner, name). Reuse requires the same
 // field count -- notes.fields is a positional array indexed by fields.ordinal, so importing into
 // a note type of a different width renders every field into the wrong slot.
-func importNoteTypes(ctx context.Context, q *db.Queries, ownerID pgtype.UUID, noteTypes []IrNoteType, result *ImportResult) (map[int64]pgtype.UUID, map[int64]map[int32]pgtype.UUID, map[int64]bool, error) {
-	noteTypeByAnkiID := make(map[int64]pgtype.UUID, len(noteTypes))
-	templatesByNoteType := make(map[int64]map[int32]pgtype.UUID, len(noteTypes))
-	isClozeByNoteType := make(map[int64]bool, len(noteTypes))
+func importNoteTypes(ctx context.Context, q *db.Queries, ownerID pgtype.UUID, noteTypes []IrNoteType, result *ImportResult) (map[int64]importedNoteType, error) {
+	noteTypeByAnkiID := make(map[int64]importedNoteType, len(noteTypes))
 
 	for _, nt := range noteTypes {
 		ankiID := pgtype.Int8{Int64: nt.AnkiID, Valid: true}
@@ -219,7 +229,7 @@ func importNoteTypes(ctx context.Context, q *db.Queries, ownerID pgtype.UUID, no
 				AnkiID:       ankiID,
 			})
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("apkg: creating note type %q: %w", nt.Name, err)
+				return nil, fmt.Errorf("apkg: creating note type %q: %w", nt.Name, err)
 			}
 			for _, f := range nt.Fields {
 				if _, err := q.CreateImportedField(ctx, db.CreateImportedFieldParams{
@@ -231,7 +241,7 @@ func importNoteTypes(ctx context.Context, q *db.Queries, ownerID pgtype.UUID, no
 					IsRtl:      f.IsRTL,
 					Sticky:     f.Sticky,
 				}); err != nil {
-					return nil, nil, nil, fmt.Errorf("apkg: creating field %q of note type %q: %w", f.Name, nt.Name, err)
+					return nil, fmt.Errorf("apkg: creating field %q of note type %q: %w", f.Name, nt.Name, err)
 				}
 			}
 			templates := make(map[int32]pgtype.UUID, len(nt.Templates))
@@ -246,49 +256,45 @@ func importNoteTypes(ctx context.Context, q *db.Queries, ownerID pgtype.UUID, no
 					BrowserAfmt: t.BrowserAfmt,
 				})
 				if err != nil {
-					return nil, nil, nil, fmt.Errorf("apkg: creating template %q of note type %q: %w", t.Name, nt.Name, err)
+					return nil, fmt.Errorf("apkg: creating template %q of note type %q: %w", t.Name, nt.Name, err)
 				}
 				templates[t.Ordinal] = createdT.ID
 			}
-			noteTypeByAnkiID[nt.AnkiID] = created.ID
-			templatesByNoteType[nt.AnkiID] = templates
-			isClozeByNoteType[nt.AnkiID] = nt.IsCloze
+			noteTypeByAnkiID[nt.AnkiID] = importedNoteType{ID: created.ID, Templates: templates, IsCloze: nt.IsCloze}
 			result.NoteTypesCreated++
 			continue
 		}
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("apkg: looking up note type %q: %w", nt.Name, err)
+			return nil, fmt.Errorf("apkg: looking up note type %q: %w", nt.Name, err)
 		}
 
 		existingFields, err := q.ListFieldsForNoteType(ctx, existing.ID)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("apkg: listing fields of note type %q: %w", nt.Name, err)
+			return nil, fmt.Errorf("apkg: listing fields of note type %q: %w", nt.Name, err)
 		}
 		if len(existingFields) != len(nt.Fields) {
-			return nil, nil, nil, fmt.Errorf("apkg: note type %q: %w", nt.Name, ErrNoteTypeMismatch)
+			return nil, fmt.Errorf("apkg: note type %q: %w", nt.Name, ErrNoteTypeMismatch)
 		}
 		existingTemplates, err := q.ListTemplatesForNoteType(ctx, existing.ID)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("apkg: listing templates of note type %q: %w", nt.Name, err)
+			return nil, fmt.Errorf("apkg: listing templates of note type %q: %w", nt.Name, err)
 		}
 		templates := make(map[int32]pgtype.UUID, len(existingTemplates))
 		for _, t := range existingTemplates {
 			templates[t.Ordinal] = t.ID
 		}
-		noteTypeByAnkiID[nt.AnkiID] = existing.ID
-		templatesByNoteType[nt.AnkiID] = templates
-		isClozeByNoteType[nt.AnkiID] = existing.IsCloze
+		noteTypeByAnkiID[nt.AnkiID] = importedNoteType{ID: existing.ID, Templates: templates, IsCloze: existing.IsCloze}
 		result.NoteTypesReused++
 	}
-	return noteTypeByAnkiID, templatesByNoteType, isClozeByNoteType, nil
+	return noteTypeByAnkiID, nil
 }
 
 // importNotes creates or updates each note by (owner, guid). A re-import never moves deck_id --
 // a note the user has since filed elsewhere must stay there.
-func importNotes(ctx context.Context, q *db.Queries, ownerID pgtype.UUID, notes []IrNote, deckByAnkiID map[int64]pgtype.UUID, noteTypeByAnkiID map[int64]pgtype.UUID, result *ImportResult) (map[int64]pgtype.UUID, error) {
+func importNotes(ctx context.Context, q *db.Queries, ownerID pgtype.UUID, notes []IrNote, deckByAnkiID map[int64]pgtype.UUID, noteTypeByAnkiID map[int64]importedNoteType, result *ImportResult) (map[int64]pgtype.UUID, error) {
 	noteByAnkiID := make(map[int64]pgtype.UUID, len(notes))
 	for _, n := range notes {
-		noteTypeID, ok := noteTypeByAnkiID[n.NoteTypeAnkiID]
+		nt, ok := noteTypeByAnkiID[n.NoteTypeAnkiID]
 		if !ok {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("note %q: note type did not resolve; skipped", n.Guid))
 			continue
@@ -310,7 +316,7 @@ func importNotes(ctx context.Context, q *db.Queries, ownerID pgtype.UUID, notes 
 			created, err := q.CreateImportedNote(ctx, db.CreateImportedNoteParams{
 				Guid:       n.Guid,
 				UserID:     ownerID,
-				NoteTypeID: noteTypeID,
+				NoteTypeID: nt.ID,
 				DeckID:     deckID,
 				Fields:     fieldsJSON,
 				Tags:       n.Tags,
@@ -334,7 +340,7 @@ func importNotes(ctx context.Context, q *db.Queries, ownerID pgtype.UUID, notes 
 			Fields:     fieldsJSON,
 			Tags:       n.Tags,
 			Checksum:   n.Checksum,
-			NoteTypeID: noteTypeID,
+			NoteTypeID: nt.ID,
 			ModifiedAt: pgtype.Timestamptz{Time: n.Modified, Valid: true},
 			AnkiID:     ankiID,
 			NoteID:     existing.ID,
@@ -351,35 +357,45 @@ func importNotes(ctx context.Context, q *db.Queries, ownerID pgtype.UUID, notes 
 // importCards upserts each card, filing deck_id from the card's OWN home deck (architecture.md
 // §20), never the note's. ON CONFLICT (note_id, ordinal) keeps the existing card id and, with it,
 // its user_card_state and review_log history.
-func importCards(ctx context.Context, q *db.Queries, cards []IrCard, noteByAnkiID map[int64]pgtype.UUID, noteTypeByAnkiID map[int64]pgtype.UUID, templatesByNoteType map[int64]map[int32]pgtype.UUID, isClozeByNoteType map[int64]bool, deckByAnkiID map[int64]pgtype.UUID, notes []IrNote, result *ImportResult) (map[int64]pgtype.UUID, map[pgtype.UUID]int, error) {
-	noteTypeAnkiIDByNoteAnkiID := make(map[int64]int64, len(notes))
-	homeDeckByNoteAnkiID := make(map[int64]int64, len(notes))
-	for _, n := range notes {
-		noteTypeAnkiIDByNoteAnkiID[n.AnkiID] = n.NoteTypeAnkiID
-		homeDeckByNoteAnkiID[n.AnkiID] = n.HomeDeckAnkiID
+// importedCards is what importCards resolved: the database id and the deck of every card it
+// wrote, keyed by the card's Anki id, plus the per-deck tally ImportResult.Decks reports.
+type importedCards struct {
+	IDByAnkiID   map[int64]pgtype.UUID
+	DeckByAnkiID map[int64]pgtype.UUID
+	CountByDeck  map[pgtype.UUID]int
+}
+
+func importCards(ctx context.Context, q *db.Queries, col *IrCollection, noteByAnkiID map[int64]pgtype.UUID, noteTypeByAnkiID map[int64]importedNoteType, deckByAnkiID map[int64]pgtype.UUID, result *ImportResult) (importedCards, error) {
+	noteTypeOf := make(map[int64]importedNoteType, len(col.Notes))
+	homeDeckOf := make(map[int64]int64, len(col.Notes))
+	for _, n := range col.Notes {
+		noteTypeOf[n.AnkiID] = noteTypeByAnkiID[n.NoteTypeAnkiID]
+		homeDeckOf[n.AnkiID] = n.HomeDeckAnkiID
 	}
 
-	cardByAnkiID := make(map[int64]pgtype.UUID, len(cards))
-	cardCountByDeckID := make(map[pgtype.UUID]int, len(deckByAnkiID))
-	for _, c := range cards {
+	out := importedCards{
+		IDByAnkiID:   make(map[int64]pgtype.UUID, len(col.Cards)),
+		DeckByAnkiID: make(map[int64]pgtype.UUID, len(col.Cards)),
+		CountByDeck:  make(map[pgtype.UUID]int, len(deckByAnkiID)),
+	}
+	for _, c := range col.Cards {
 		noteID, ok := noteByAnkiID[c.NoteAnkiID]
 		if !ok {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("card (anki_id %d): note did not resolve; skipped", c.AnkiID))
 			continue
 		}
-		noteTypeAnkiID := noteTypeAnkiIDByNoteAnkiID[c.NoteAnkiID]
-		templates := templatesByNoteType[noteTypeAnkiID]
+		nt := noteTypeOf[c.NoteAnkiID]
 
 		var templateID pgtype.UUID
-		if isClozeByNoteType[noteTypeAnkiID] {
-			id, ok := templates[0]
+		if nt.IsCloze {
+			id, ok := nt.Templates[0]
 			if !ok {
 				result.Warnings = append(result.Warnings, fmt.Sprintf("card (anki_id %d): cloze note type has no template 0; skipped", c.AnkiID))
 				continue
 			}
 			templateID = id
 		} else {
-			id, ok := templates[c.Ordinal]
+			id, ok := nt.Templates[c.Ordinal]
 			if !ok {
 				result.Warnings = append(result.Warnings, fmt.Sprintf("card (anki_id %d): no template at ordinal %d; skipped", c.AnkiID, c.Ordinal))
 				continue
@@ -391,7 +407,7 @@ func importCards(ctx context.Context, q *db.Queries, cards []IrCard, noteByAnkiI
 		if !ok {
 			// Fall back to the note's home deck only when the card's own deck id does not
 			// resolve (a package referencing a deck it does not define).
-			deckID, ok = deckByAnkiID[homeDeckByNoteAnkiID[c.NoteAnkiID]]
+			deckID, ok = deckByAnkiID[homeDeckOf[c.NoteAnkiID]]
 			if !ok {
 				result.Warnings = append(result.Warnings, fmt.Sprintf("card (anki_id %d): neither its own deck nor its note's home deck resolved; skipped", c.AnkiID))
 				continue
@@ -407,14 +423,22 @@ func importCards(ctx context.Context, q *db.Queries, cards []IrCard, noteByAnkiI
 			AnkiID:     pgtype.Int8{Int64: c.AnkiID, Valid: true},
 		})
 		if err != nil {
-			return nil, nil, fmt.Errorf("apkg: upserting card (anki_id %d): %w", c.AnkiID, err)
+			return importedCards{}, fmt.Errorf("apkg: upserting card (anki_id %d): %w", c.AnkiID, err)
 		}
-		cardByAnkiID[c.AnkiID] = created.ID
-		cardCountByDeckID[deckID]++
+		out.IDByAnkiID[c.AnkiID] = created.ID
+		out.DeckByAnkiID[c.AnkiID] = deckID
+		out.CountByDeck[deckID]++
 		result.CardsUpserted++
 	}
-	return cardByAnkiID, cardCountByDeckID, nil
+	return out, nil
 }
+
+// review_log.state_before values, matching go-fsrs's State enum (docs/schema.md).
+const (
+	reviewStateLearning   int16 = 1
+	reviewStateReview     int16 = 2
+	reviewStateRelearning int16 = 3
+)
 
 // reviewKindToState maps revlog.type onto review_log.state_before: 0 learning -> Learning,
 // 1 review -> Review, 2 relearning -> Relearning, 3 cram -> Review (closest existing state;
@@ -422,39 +446,41 @@ func importCards(ctx context.Context, q *db.Queries, cards []IrCard, noteByAnkiI
 func reviewKindToState(kind int16) int16 {
 	switch kind {
 	case 0:
-		return int16(reviewStateLearning)
+		return reviewStateLearning
 	case 2:
-		return int16(reviewStateRelearning)
+		return reviewStateRelearning
 	default: // 1 (review), 3 (cram)
-		return int16(reviewStateReview)
+		return reviewStateReview
 	}
 }
-
-const (
-	reviewStateLearning   = 1
-	reviewStateReview     = 2
-	reviewStateRelearning = 3
-)
 
 // importReviews inserts each review_log row and replays the affected card's history through the
 // scheduler -- apkg-format.md's preferred warm-start over seeding from a snapshot. Returns which
 // cards received at least one review, so seedCardStates knows which ones to skip.
-func importReviews(ctx context.Context, tx pgx.Tx, q *db.Queries, ownerID pgtype.UUID, reviews []IrReview, cardByAnkiID map[int64]pgtype.UUID, result *ImportResult) (map[int64]bool, error) {
+func importReviews(ctx context.Context, tx pgx.Tx, q *db.Queries, ownerID pgtype.UUID, reviews []IrReview, cards importedCards, result *ImportResult) (map[int64]bool, error) {
+	// Grouped in first-appearance order rather than iterated as a map: ImportResult.Warnings is
+	// shown to the importing user, and map iteration is randomised per process, so the same
+	// package would otherwise report its warnings in a different order every run.
+	order := make([]int64, 0, len(reviews))
 	byCard := make(map[int64][]IrReview, len(reviews))
 	for _, r := range reviews {
+		if _, seen := byCard[r.CardAnkiID]; !seen {
+			order = append(order, r.CardAnkiID)
+		}
 		byCard[r.CardAnkiID] = append(byCard[r.CardAnkiID], r)
 	}
 
 	cardHasReviews := make(map[int64]bool, len(byCard))
+	paramsCache := review.NewParamsCache()
 
-	for cardAnkiID, rs := range byCard {
-		cardID, ok := cardByAnkiID[cardAnkiID]
+	for _, cardAnkiID := range order {
+		cardID, ok := cards.IDByAnkiID[cardAnkiID]
 		if !ok {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("review log for card (anki_id %d): card did not resolve; skipped", cardAnkiID))
 			continue
 		}
 
-		for _, r := range rs {
+		for _, r := range byCard[cardAnkiID] {
 			n, err := q.InsertImportedReviewLog(ctx, db.InsertImportedReviewLogParams{
 				UserID:              ownerID,
 				CardID:              cardID,
@@ -464,7 +490,7 @@ func importReviews(ctx context.Context, tx pgx.Tx, q *db.Queries, ownerID pgtype
 				StateBefore:         reviewKindToState(r.Kind),
 				LearningStepsBefore: 0,
 				ElapsedDaysBefore:   0,
-				ScheduledDaysAfter:  maxInt32(0, int32(r.IntervalSeconds/86400)),
+				ScheduledDaysAfter:  max(0, int32(r.IntervalSeconds/secondsPerDay)),
 				ReviewKind:          r.Kind,
 				AnkiID:              pgtype.Int8{Int64: r.AnkiID, Valid: true},
 			})
@@ -474,11 +500,9 @@ func importReviews(ctx context.Context, tx pgx.Tx, q *db.Queries, ownerID pgtype
 			result.ReviewsInserted += int(n)
 		}
 
-		cardRow, err := q.GetCard(ctx, cardID)
-		if err != nil {
-			return nil, fmt.Errorf("apkg: reading deck of card (anki_id %d): %w", cardAnkiID, err)
-		}
-		params, err := review.EffectiveParams(ctx, q, ownerID, cardRow.DeckID)
+		// The card's deck is what importCards just filed it under: UpsertImportedCard's
+		// ON CONFLICT sets deck_id = EXCLUDED.deck_id, so re-reading the row cannot disagree.
+		params, err := paramsCache.Get(ctx, q, ownerID, cards.DeckByAnkiID[cardAnkiID])
 		if err != nil {
 			return nil, fmt.Errorf("apkg: resolving fsrs params for card (anki_id %d): %w", cardAnkiID, err)
 		}
@@ -496,13 +520,6 @@ func durationMsParam(ms int32) pgtype.Int4 {
 		return pgtype.Int4{}
 	}
 	return pgtype.Int4{Int32: ms, Valid: true}
-}
-
-func maxInt32(a, b int32) int32 {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // seedCardStates writes user_card_state for a card that carries scheduling state but has zero
@@ -546,7 +563,7 @@ func seedCardStates(ctx context.Context, q *db.Queries, ownerID pgtype.UUID, car
 			Reps:          c.Reps,
 			Lapses:        c.Lapses,
 			ElapsedDays:   0,
-			ScheduledDays: maxInt32(0, int32(c.IntervalSeconds/86400)),
+			ScheduledDays: max(0, int32(c.IntervalSeconds/secondsPerDay)),
 			LearningSteps: 0,
 			LastReview:    lastReview,
 			Suspended:     c.Suspended,

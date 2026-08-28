@@ -193,25 +193,32 @@ about: there was never a second implementation to drift out of sync with, so the
 pin two ways. `user_fsrs_params.fsrs_version` still matters (invariant §2.3) — it's what makes a
 historical `review_log` replay-able after `go-fsrs` upgrades — just not for this reason.
 
-**Don't trust an FSRS library's own parameter validation; check explicitly before calling it.**
-The TypeScript prototype's scheduler (`ts-fsrs`) coerced rather than rejected a bad weight —
-clamping a `NaN` to `0` instead of refusing it, silently substituting a default for a falsy
-`request_retention` — which is exactly the "plausible but wrong, forever" failure invariant §2.3
-exists to prevent: a corrupt optimiser fit or a hand-edited `user_fsrs_params` row would schedule
-happily and wrongly with nothing raised. Verify `go-fsrs`'s validation behaviour before relying
-on it, and if it's similarly permissive, reject explicitly before calling it: wrong parameter
-count for the declared `fsrs_version`, any non-finite weight, `desired_retention` outside `(0,
-1)`.
+**`go-fsrs` does not validate; it coerces — verified, and we check explicitly before calling it.**
+`NewFSRS` (`fsrs.go`) clips every weight into a hard-coded per-index range, and if `Validate()`
+still fails after clipping it silently replaces the *entire* `Parameters` value — all 21 weights
+and `RequestRetention` with them — with `DefaultParam()`. Neither path returns an error, so a
+corrupt optimiser fit or a hand-edited `user_fsrs_params` row would schedule happily and wrongly:
+exactly the "plausible but wrong, forever" failure invariant §2.3 exists to prevent, and a step
+worse than the `ts-fsrs` coercion the TypeScript prototype hit. `internal/fsrs.NewParams`
+therefore rejects first — wrong parameter count for the declared `fsrs_version`, any non-finite
+weight, `desired_retention` outside `(0, 1]`. The library's behaviour is pinned by
+`TestLibraryClipsOutOfRangeWeightSilently`, `TestLibraryReplacesTheWholeSetOnNonFiniteWeight` and
+`TestLibraryReplacesRetentionOutOfRange` (`internal/fsrs/params_test.go`). One gap is deliberate
+and tracked in [#67](https://github.com/Jolls/enshu/issues/67): a finite but out-of-range weight
+passes our check and is clipped silently, recorded by `TestOurValidationDoesNotCatchClipping`.
 
-**Verify `go-fsrs`'s fuzz behaviour and force it off (or deterministic) before relying on
-batch-precompute/grade-time parity.** FSRS's optional "fuzz" randomises an interval slightly; if
-`go-fsrs` seeds it from wall-clock time or another non-reproducible source rather than
-deterministically from the card, the four-branch preview computed at batch-fetch time and the
-same `Repeat()` call re-run at grade time would legitimately disagree — which is precisely the
-drift CLAUDE.md §10.2's consistency test exists to catch, and a random source would make that
-test flaky rather than meaningful. The historical-replay path (`replayReviews`, above) needs the
-same determinism for a different reason: replaying one `review_log` twice must produce the same
-`user_card_state`, or `recomputeUserCardState` isn't actually idempotent.
+**`go-fsrs`'s fuzz is deterministic in its inputs, but `now` is one of them — so it is forced off.
+Verified.** `Scheduler.initSeed` (`scheduler.go`) builds the PRNG seed as
+`fmt.Sprintf("%d_%d_%f", now.UnixMilli(), reps, difficulty*stability)`. It is *not* drawn from the
+process clock or any other non-reproducible source, so the historical-replay path is safe either
+way: `replayReviews` feeds stored `reviewed_at` values back in and converges on the same
+`user_card_state` every time. Preview parity is the case that breaks — the four-branch preview is
+computed at the batch-fetch instant while the grade-time recompute passes the event's
+`reviewedAt`, never the same millisecond, so with fuzz on the two would disagree by design and
+CLAUDE.md §10.2's consistency test would be flaky rather than meaningful. `internal/fsrs`'s engine
+therefore hard-codes `EnableFuzz: false` with no exported way to turn it on. Library behaviour
+pinned by `TestLibraryFuzzSeedIsPureInItsInputs` and `TestLibraryFuzzVariesWithNow`
+(`internal/fsrs/schedule_test.go`); ours by `TestFuzzIsOff`.
 
 ---
 
@@ -493,7 +500,8 @@ check is CLAUDE.md §10.2: the batch-time precompute and the grade-time recomput
 verified by test, because both call `go-fsrs.Repeat` and a drift between them would mean two
 implementations exist after all.
 
-**The server-side recompute path is load-bearing.** `replayReviews` replays `review_log`
+**The server-side recompute path is load-bearing.** `replayReviews` — `internal/review`'s
+`ReplayCard`, over the pure `replayStates` — replays `review_log`
 through `go-fsrs` to rebuild `user_card_state`. It is what the live path above calls one event
 at a time, what batch-fetch calls to build the four-branch preview, and what import backfill,
 parameter refits, and post-incident repair call in bulk. Never delete it as "unused."
@@ -810,12 +818,7 @@ seemed tidier."
 | Add-ons | Plugin API | No plugin system (§11) |
 | Empty cards on cloze-ordinal removal | Kept as "empty cards" until the user runs Tools → Empty Cards | Deleted immediately by the edit that removed the ordinal, cascading that card's `user_card_state` (§54, `internal/db/cards.go`'s `SyncNoteCards`, docs/schema.md's card-regeneration diff rule). No empty-cards concept exists; building one wasn't required by any Phase 1 step |
 
-### Unforced — obsolete, and due for removal
-
-*The specific identifiers below (`IrNote.primaryDeckAnkiId`, `src/lib/server/apkg/ir.ts`) name
-the superseded TypeScript importer (§1). The data-model conclusion is language-independent and
-is the design the Go importer should follow: file `cards.deck_id` from each card's own home
-deck, never flattened to the note's deck.*
+### Unforced — resolved
 
 **One note, one deck.** First, the cardinality, because it is easy to misread: **a card belongs
 to exactly one deck** — `cards.did` is a single column, and so is our `cards.deck_id`. We match
@@ -825,30 +828,28 @@ membership in two decks.
 
 What Anki does *not* do is require a note's cards to share a deck. Each card carries its own
 `did`, which is why "Deck Override" on a card template works and why a note's reverse card can
-live in its own deck. People use this. `IrNote.primaryDeckAnkiId` collapses a note's cards to
-one deck — the home deck of the lowest-numbered card — and that is the whole of the deviation.
+live in its own deck. People use this.
 
-**It is not a multiuser deviation, and its stated reason has already expired.** The rationale
-recorded in `src/lib/server/apkg/ir.ts` is:
+**The deviation this row used to record is gone.** The superseded TypeScript importer's
+`IrNote.primaryDeckAnkiId` (`src/lib/server/apkg/ir.ts`, §1) collapsed a note's cards to one
+deck — the home deck of its lowest-numbered card — and justified it by
+`UNIQUE (deck_id, guid)`, which required a note to have exactly one deck or its identity was
+undefined. [#32](https://github.com/Jolls/enshu/issues/32) replaced that key with
+`UNIQUE (owner_id, guid)` (§2.2), so the constraint that forced the flattening stopped existing;
+the multiuser argument is what *removed* it, not what created it.
 
-> Our schema scopes them to notes — `notes.deck_id` with `UNIQUE (deck_id, guid)` — because
-> that unique index is the whole idempotency guarantee, so the reader has to pick one.
+**The Go importer never inherited it** ([#58](https://github.com/Jolls/enshu/issues/58)). The
+rule, and where it is enforced:
 
-That was correct when written. A note keyed on `(deck_id, guid)` must have exactly one deck or
-its identity is undefined. But #32 replaced that key with `UNIQUE (owner_id, guid)`, so the
-constraint that forced the flattening no longer exists — and the multiuser argument is what
-*removed* it, not what created it. The comment simply outlived the schema.
-
-**Nothing is lost yet.** `IrCard.deckAnkiId` already carries each card's own home deck, so the
-IR is faithful today; `primaryDeckAnkiId` is a derived convenience with no consumer, because
-the database writer is #33 and unbuilt. The fidelity loss only materialises if #33 files cards
-by their note's deck instead of their own.
-
-So the resolution is cheap and belongs to #33: **file `cards.deck_id` from
-`IrCard.deckAnkiId`**, and keep `notes.deck_id` as the note's home deck — where it was first
-filed, where the notes list shows it, and the default for cards generated later. No migration,
-no reader change, one decision in the writer. `primaryDeckAnkiId` then either becomes that home
-deck or goes away.
+- `IrCard.DeckAnkiID` (`internal/apkg/ir.go`) is each card's own home deck — `odid` when
+  `odid != 0`, else `did`. `internal/apkg/dbwrite.go`'s `importCards` files `cards.deck_id`
+  from it, never from the note. `internal/db/queries/import.sql`'s `UpsertImportedCard` carries
+  the same note.
+- `IrNote.HomeDeckAnkiID` is the note's home deck — the deck of its lowest-numbered card. It
+  fills `notes.deck_id` only: where the note was first filed, where the notes list shows it, and
+  the default for cards generated later. A re-import never moves it.
+- Guarded by `TestImport_FilesCardDeckFromCardsOwnDeck` and `TestImport_ReimportDoesNotMoveNotes`
+  (`internal/apkg/dbwrite_test.go`). A change that reintroduces the flattening fails the first.
 
 One consequence, settled in [#51](https://github.com/Jolls/enshu/issues/51): deleting a deck
 deletes the cards filed in it, and a note goes only when it has **no cards left anywhere** — so a
@@ -858,5 +859,4 @@ cascades while `notes.deck_id` restricts, and deck deletion runs as an ordered t
 `internal/db/deletion.go`. `review_log` keeps every row: its `card_id` is not a foreign key, the
 same shape Anki's `revlog.cid` has, which is what lets a studied deck be deletable without any
 `DELETE` path over training data (CLAUDE.md §2.5). Full policy: docs/schema.md, Deletion policy;
-reasoning: `docs/plans/51-deletion-policy.md`. Filing `cards.deck_id` from `IrCard.deckAnkiId`
-remains #33's job — the schema is ready for it.
+reasoning: `docs/plans/51-deletion-policy.md`.

@@ -97,6 +97,26 @@ type Outcome struct {
 	LearningSteps int16
 }
 
+// CardStateAt carries an Outcome forward into the prior CardState a later Schedule/PreviewAll
+// call reads. Outcome has no LastReview of its own -- that "when" belongs to review_log, not to a
+// single Schedule call (architecture.md §6) -- and the caller always knows it, since reviewedAt is
+// the now that produced the Outcome. It lives here rather than in internal/review because
+// internal/review's replay and this package's CLAUDE.md §10.2 parity test must fold identically:
+// two copies of the same field list drift the moment a field is added to either struct.
+func (o Outcome) CardStateAt(reviewedAt time.Time) CardState {
+	return CardState{
+		Due:           o.Due,
+		Stability:     o.Stability,
+		Difficulty:    o.Difficulty,
+		State:         o.State,
+		Reps:          o.Reps,
+		Lapses:        o.Lapses,
+		ScheduledDays: o.ScheduledDays,
+		LearningSteps: o.LearningSteps,
+		LastReview:    reviewedAt,
+	}
+}
+
 // Preview holds the four branches invariant §2.6 requires the server to precompute at
 // batch-fetch time. A struct, not a map: fixed arity, no iteration-order surprises, and every
 // branch is statically reachable.
@@ -186,6 +206,14 @@ func PreviewAll(p Params, prior CardState, now time.Time) (Preview, error) {
 	}, nil
 }
 
+// libStabilityMin and libDifficultyMin mirror go-fsrs's unexported sMin/dMin (arithmetic.go:8,10),
+// the bounds its validateCard applies to a non-New card. Checked here so the error names our
+// field rather than theirs; keep them in step with the library on upgrade.
+const (
+	libStabilityMin  = 0.001
+	libDifficultyMin = 1.0
+)
+
 func toLibCard(prior CardState) (gofsrs.Card, error) {
 	if !prior.State.Valid() {
 		return gofsrs.Card{}, fmt.Errorf("%w: State = %d", ErrInvalidCardState, prior.State)
@@ -208,7 +236,7 @@ func toLibCard(prior CardState) (gofsrs.Card, error) {
 	if math.IsNaN(prior.Difficulty) || math.IsInf(prior.Difficulty, 0) {
 		return gofsrs.Card{}, fmt.Errorf("%w: Difficulty = %v", ErrInvalidCardState, prior.Difficulty)
 	}
-	if prior.State != New && (prior.Stability < 0.001 || prior.Difficulty < 1.0) {
+	if prior.State != New && (prior.Stability < libStabilityMin || prior.Difficulty < libDifficultyMin) {
 		return gofsrs.Card{}, fmt.Errorf("%w: Stability = %v, Difficulty = %v below minimum for non-New state", ErrInvalidCardState, prior.Stability, prior.Difficulty)
 	}
 
@@ -234,7 +262,7 @@ func fromLibCard(card gofsrs.Card) Outcome {
 		Reps:          clampToInt32(card.Reps),
 		Lapses:        clampToInt32(card.Lapses),
 		ScheduledDays: clampToInt32(card.ScheduledDays),
-		LearningSteps: int16(card.RemainingSteps), // bounded by maxLearningSteps well within int16
+		LearningSteps: clampToInt16(card.RemainingSteps), // defensive: mirrors Reps/Lapses/ScheduledDays above
 	}
 }
 
@@ -248,4 +276,19 @@ func clampToInt32(v uint64) int32 {
 		return math.MaxInt32
 	}
 	return int32(v)
+}
+
+// clampToInt16 mirrors clampToInt32's rationale (saturate rather than wrap on cast) for
+// LearningSteps, the one Outcome field narrowed to int16 instead of int32. Unlike clampToInt32's
+// uint64 input, v is signed, so this also saturates on underflow -- a negative RemainingSteps
+// should never happen, but should it, 0 is the sane floor for a "steps remaining" count.
+func clampToInt16(v int) int16 {
+	switch {
+	case v > math.MaxInt16:
+		return math.MaxInt16
+	case v < 0:
+		return 0
+	default:
+		return int16(v)
+	}
 }

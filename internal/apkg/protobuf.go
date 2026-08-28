@@ -1,6 +1,9 @@
 package apkg
 
-import "fmt"
+import (
+	"encoding/binary"
+	"fmt"
+)
 
 // protoWireType is the low three bits of a protobuf tag.
 type protoWireType uint8
@@ -52,10 +55,7 @@ func decodeProto(b []byte) ([]protoField, error) {
 			if len(b) < 8 {
 				return nil, fmt.Errorf("apkg: truncated protobuf fixed64: %w", ErrSchema18Config)
 			}
-			var v uint64
-			for i := 0; i < 8; i++ {
-				v |= uint64(b[i]) << (8 * i)
-			}
+			v := binary.LittleEndian.Uint64(b[:8])
 			b = b[8:]
 			fields = append(fields, protoField{Number: num, Type: wt, Varint: v})
 		case protoBytes:
@@ -73,10 +73,7 @@ func decodeProto(b []byte) ([]protoField, error) {
 			if len(b) < 4 {
 				return nil, fmt.Errorf("apkg: truncated protobuf fixed32: %w", ErrSchema18Config)
 			}
-			var v uint64
-			for i := 0; i < 4; i++ {
-				v |= uint64(b[i]) << (8 * i)
-			}
+			v := uint64(binary.LittleEndian.Uint32(b[:4]))
 			b = b[4:]
 			fields = append(fields, protoField{Number: num, Type: wt, Varint: v})
 		default:
@@ -87,59 +84,47 @@ func decodeProto(b []byte) ([]protoField, error) {
 }
 
 // decodeVarint reads a base-128 varint from the start of b. Returns the value and the number of
-// bytes consumed, or (0, 0) on a truncated or overlong (>10 byte) varint.
+// bytes consumed. binary.Uvarint's own error convention is n == 0 (truncated) or n < 0 (overflow,
+// -n bytes read) -- both satisfy the `n <= 0` check every call site above already makes, so this
+// is a drop-in replacement for the hand-rolled loop it used to be, and it additionally rejects an
+// overlong (>10 byte / >64-bit) varint outright instead of silently truncating it.
 func decodeVarint(b []byte) (uint64, int) {
-	var v uint64
-	for i := 0; i < len(b) && i < 10; i++ {
-		v |= uint64(b[i]&0x7f) << (7 * i)
-		if b[i]&0x80 == 0 {
-			return v, i + 1
+	return binary.Uvarint(b)
+}
+
+// protoLast returns the last occurrence of field number n with wire type wt. Last, not first:
+// protobuf's own rule for a repeated scalar is that the final value wins.
+func protoLast(fields []protoField, n uint32, wt protoWireType) (protoField, bool) {
+	var out protoField
+	var found bool
+	for _, f := range fields {
+		if f.Number == n && f.Type == wt {
+			out, found = f, true
 		}
 	}
-	return 0, 0
+	return out, found
 }
 
 // protoString returns the last occurrence of field number n as a string, and whether it was
 // present with wire type 2.
 func protoString(fields []protoField, n uint32) (string, bool) {
-	var s string
-	var found bool
-	for _, f := range fields {
-		if f.Number == n && f.Type == protoBytes {
-			s = string(f.Bytes)
-			found = true
-		}
-	}
-	return s, found
+	f, ok := protoLast(fields, n, protoBytes)
+	return string(f.Bytes), ok
 }
 
 // protoUint returns the last varint occurrence of field number n.
 func protoUint(fields []protoField, n uint32) (uint64, bool) {
-	var v uint64
-	var found bool
-	for _, f := range fields {
-		if f.Number == n && f.Type == protoVarint {
-			v = f.Varint
-			found = true
-		}
-	}
-	return v, found
+	f, ok := protoLast(fields, n, protoVarint)
+	return f.Varint, ok
 }
 
 // protoMessage returns the last length-delimited occurrence of n, decoded as a nested message.
 func protoMessage(fields []protoField, n uint32) ([]protoField, bool) {
-	var b []byte
-	var found bool
-	for _, f := range fields {
-		if f.Number == n && f.Type == protoBytes {
-			b = f.Bytes
-			found = true
-		}
-	}
-	if !found {
+	f, ok := protoLast(fields, n, protoBytes)
+	if !ok {
 		return nil, false
 	}
-	nested, err := decodeProto(b)
+	nested, err := decodeProto(f.Bytes)
 	if err != nil {
 		return nil, false
 	}

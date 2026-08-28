@@ -1,6 +1,3 @@
--- name: GetCard :one
-SELECT * FROM cards WHERE id = $1;
-
 -- Cards are content addressing only -- no scheduling columns exist here to lose (CLAUDE.md §2.1).
 -- These four statements are the whole of card regeneration; see internal/db/cards.go for the
 -- diff that calls them and docs/schema.md's card-regeneration trap for why it is a diff.

@@ -19,7 +19,9 @@ ON CONFLICT (user_id, card_id) DO UPDATE SET
 WHERE user_card_state.last_review IS NULL OR user_card_state.last_review < EXCLUDED.last_review;
 
 -- The replay writer: unguarded, because a rebuild from review_log IS the newest truth for this card by
--- construction (architecture.md §6). Only internal/review.ReplayCard may call this.
+-- construction (architecture.md §6). Reached only through internal/review's writeReplayedState -- from
+-- ReplayCard and from GradeBatch's out-of-order branch -- and only with the (user, card) advisory lock
+-- held. Never call it from anywhere the lock is not already taken.
 -- name: UpsertUserCardStateFromReplay :exec
 INSERT INTO user_card_state (user_id, card_id, due, stability, difficulty, state, reps, lapses,
                              elapsed_days, scheduled_days, learning_steps, last_review)

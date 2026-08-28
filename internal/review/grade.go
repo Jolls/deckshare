@@ -95,15 +95,60 @@ func durationMsArg(d *int32) pgtype.Int4 {
 	return pgtype.Int4{Int32: *d, Valid: true}
 }
 
+// appendReviewLogRow appends this event's one review_log row (§2.5, append-only). Every column
+// but the id is derived from state the server already holds (§2.7). ok is false when the id was
+// already taken -- a pure retry, which must NOT be rescheduled from the row it already advanced.
+func appendReviewLogRow(ctx context.Context, q *db.Queries, p fsrs.Params, userID pgtype.UUID,
+	ev Event, prior fsrs.CardState, outcome fsrs.Outcome, elapsedDaysBefore int32) (bool, error) {
+	n, err := q.InsertReviewLog(ctx, db.InsertReviewLogParams{
+		ID:                  ev.ID,
+		UserID:              userID,
+		CardID:              ev.CardID,
+		Rating:              int16(ev.Rating),
+		ReviewedAt:          pgtype.Timestamptz{Time: ev.ReviewedAt, Valid: true},
+		DurationMs:          durationMsArg(ev.DurationMs),
+		StateBefore:         int16(prior.State),
+		LearningStepsBefore: prior.LearningSteps,
+		StabilityBefore:     pgtype.Float8{Float64: prior.Stability, Valid: true},
+		DifficultyBefore:    pgtype.Float8{Float64: prior.Difficulty, Valid: true},
+		ElapsedDaysBefore:   elapsedDaysBefore,
+		ScheduledDaysAfter:  outcome.ScheduledDays,
+		FsrsVersion:         pgtype.Int2{Int16: int16(p.Version()), Valid: true},
+		ReviewKind:          reviewKind(prior.State),
+	})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// duplicateOf answers a retry: the id is already in review_log, so nothing further is written and
+// the stored state is reported as it stands.
+func duplicateOf(ctx context.Context, q *db.Queries, userID, cardID pgtype.UUID) (*CardStateDTO, Status, error) {
+	dto, err := currentStateDTO(ctx, q, userID, cardID)
+	if err != nil {
+		return nil, "", err
+	}
+	return dto, StatusDuplicate, nil
+}
+
+// beforeInLogOrder reports whether (aAt, aID) sorts before (bAt, bID) under review_log's own
+// ordering -- ORDER BY reviewed_at, id, which is what ListReviewLogForCard returns and what
+// replayStates requires of its input. One definition, so the in-batch sort and insertSorted's
+// binary search cannot disagree about it.
+func beforeInLogOrder(aAt time.Time, aID pgtype.UUID, bAt time.Time, bID pgtype.UUID) bool {
+	if !aAt.Equal(bAt) {
+		return aAt.Before(bAt)
+	}
+	return bytes.Compare(aID.Bytes[:], bID.Bytes[:]) < 0
+}
+
 // insertSorted inserts ev into rows (already sorted by (ReviewedAt, ID)) at its correct position,
 // tie-broken on ID bytes to match ORDER BY reviewed_at, id in ListReviewLogForCard. Returns the
 // merged slice and ev's index in it.
 func insertSorted(rows []LoggedReview, ev LoggedReview) ([]LoggedReview, int) {
 	idx := sort.Search(len(rows), func(i int) bool {
-		if !rows[i].ReviewedAt.Equal(ev.ReviewedAt) {
-			return rows[i].ReviewedAt.After(ev.ReviewedAt)
-		}
-		return bytes.Compare(rows[i].ID.Bytes[:], ev.ID.Bytes[:]) > 0
+		return beforeInLogOrder(ev.ReviewedAt, ev.ID, rows[i].ReviewedAt, rows[i].ID)
 	})
 	merged := make([]LoggedReview, len(rows)+1)
 	copy(merged, rows[:idx])
@@ -137,6 +182,12 @@ func GradeBatch(ctx context.Context, tx pgx.Tx, userID pgtype.UUID, now time.Tim
 	q := db.New(tx)
 	now = now.Truncate(time.Microsecond)
 
+	// order/results are keyed by event id, not (event id, card id): GradeBatch dedupes cardIDs
+	// below but not event ids, so two events sharing an id but naming different cards collide
+	// here and in InsertReviewLog's PK. Reachable only by a client reusing its own event id
+	// (impractical by accident given UUIDv7) -- self-harming only, review_log/§2.7 stay intact.
+	// The second such event is answered `duplicate` with its review silently dropped; deliberately
+	// left as behavior, not a bug, per the #126 audit.
 	order := make([]pgtype.UUID, len(evs))
 	results := make(map[pgtype.UUID]Result, len(evs))
 	live := make([]Event, 0, len(evs))
@@ -211,11 +262,11 @@ func GradeBatch(ctx context.Context, tx pgx.Tx, userID pgtype.UUID, now time.Tim
 			fresh = append(fresh, ev)
 			continue
 		}
-		dto, err := currentStateDTO(ctx, q, userID, ev.CardID)
+		dto, status, err := duplicateOf(ctx, q, userID, ev.CardID)
 		if err != nil {
 			return nil, err
 		}
-		results[ev.ID] = Result{ID: ev.ID, CardID: ev.CardID, Status: StatusDuplicate, After: dto}
+		results[ev.ID] = Result{ID: ev.ID, CardID: ev.CardID, Status: status, After: dto}
 	}
 	if len(fresh) == 0 {
 		return orderedResults(order, results), nil
@@ -223,22 +274,14 @@ func GradeBatch(ctx context.Context, tx pgx.Tx, userID pgtype.UUID, now time.Tim
 
 	// Apply in reviewed_at order so two grades of the same card in one batch converge correctly.
 	sort.Slice(fresh, func(i, j int) bool {
-		if !fresh[i].ReviewedAt.Equal(fresh[j].ReviewedAt) {
-			return fresh[i].ReviewedAt.Before(fresh[j].ReviewedAt)
-		}
-		return bytes.Compare(fresh[i].ID.Bytes[:], fresh[j].ID.Bytes[:]) < 0
+		return beforeInLogOrder(fresh[i].ReviewedAt, fresh[i].ID, fresh[j].ReviewedAt, fresh[j].ID)
 	})
 
-	paramsCache := make(map[pgtype.UUID]fsrs.Params, len(deckOf))
+	paramsCache := NewParamsCache()
 	for _, ev := range fresh {
-		deckID := deckOf[ev.CardID]
-		p, ok := paramsCache[deckID]
-		if !ok {
-			p, err = EffectiveParams(ctx, q, userID, deckID)
-			if err != nil {
-				return nil, err
-			}
-			paramsCache[deckID] = p
+		p, err := paramsCache.Get(ctx, q, userID, deckOf[ev.CardID])
+		if err != nil {
+			return nil, err
 		}
 
 		after, status, err := gradeEvent(ctx, q, p, userID, ev)
@@ -278,33 +321,17 @@ func gradeInOrder(ctx context.Context, q *db.Queries, p fsrs.Params, userID pgty
 		return nil, "", err
 	}
 
-	inserted, err := q.InsertReviewLog(ctx, db.InsertReviewLogParams{
-		ID:                  ev.ID,
-		UserID:              userID,
-		CardID:              ev.CardID,
-		Rating:              int16(ev.Rating),
-		ReviewedAt:          pgtype.Timestamptz{Time: ev.ReviewedAt, Valid: true},
-		DurationMs:          durationMsArg(ev.DurationMs),
-		StateBefore:         int16(before.State),
-		LearningStepsBefore: before.LearningSteps,
-		StabilityBefore:     pgtype.Float8{Float64: before.Stability, Valid: true},
-		DifficultyBefore:    pgtype.Float8{Float64: before.Difficulty, Valid: true},
-		ElapsedDaysBefore:   elapsedDaysBefore,
-		ScheduledDaysAfter:  outcome.ScheduledDays,
-		FsrsVersion:         pgtype.Int2{Int16: int16(p.Version()), Valid: true},
-		ReviewKind:          reviewKind(before.State),
-	})
+	inserted, err := appendReviewLogRow(ctx, q, p, userID, ev, before, outcome, elapsedDaysBefore)
 	if err != nil {
 		return nil, "", err
 	}
-	if inserted == 0 {
-		// A concurrent inserter won the race for this id; this is a pure retry -- write nothing
-		// else, must NOT be rescheduled from the row it already advanced.
-		dto, err := currentStateDTO(ctx, q, userID, ev.CardID)
-		if err != nil {
-			return nil, "", err
-		}
-		return dto, StatusDuplicate, nil
+	if !inserted {
+		// The id was already taken. The (user, card) advisory lock serialises two *batches* for
+		// the same card, so a competing batch cannot land here -- what does is one client reusing
+		// an id, twice in this batch or across two cards (whose lock keys differ). review_log.id
+		// is a global PK, so either way the second insert conflicts. Pure retry: write nothing
+		// else, and do NOT reschedule from the row the first insert already advanced.
+		return duplicateOf(ctx, q, userID, ev.CardID)
 	}
 
 	if _, err := q.UpsertUserCardStateOnReview(ctx, db.UpsertUserCardStateOnReviewParams{
@@ -325,7 +352,12 @@ func gradeInOrder(ctx context.Context, q *db.Queries, p fsrs.Params, userID pgty
 	}
 
 	// Re-read rather than trust outcome directly: the guarded upsert's WHERE clause is the
-	// authority on what actually landed if a newer last_review is somehow already stored.
+	// authority on what actually landed. Its guard is strict (last_review < EXCLUDED), and
+	// gradeEvent routes an event whose reviewedAt EQUALS the stored last_review here rather than
+	// to the out-of-order branch -- so a second grade at the same microsecond appends its
+	// review_log row and leaves user_card_state untouched. That is deliberate: review_log stays
+	// the complete truth (§2.5) and a replay reconciles. The DTO returned is the stored state,
+	// not `outcome`.
 	dto, err := currentStateDTO(ctx, q, userID, ev.CardID)
 	if err != nil {
 		return nil, "", err
@@ -338,11 +370,7 @@ func gradeOutOfOrder(ctx context.Context, q *db.Queries, p fsrs.Params, userID p
 	if err != nil {
 		return nil, "", err
 	}
-	logged := make([]LoggedReview, len(existingRows))
-	for i, r := range existingRows {
-		logged[i] = LoggedReview{ID: r.ID, Rating: fsrs.Rating(r.Rating), ReviewedAt: r.ReviewedAt.Time.UTC()}
-	}
-	merged, evIdx := insertSorted(logged, LoggedReview{ID: ev.ID, Rating: ev.Rating, ReviewedAt: ev.ReviewedAt})
+	merged, evIdx := insertSorted(loggedReviews(existingRows), LoggedReview{ID: ev.ID, Rating: ev.Rating, ReviewedAt: ev.ReviewedAt})
 
 	priors, final, err := replayStates(p, merged)
 	if err != nil {
@@ -355,50 +383,16 @@ func gradeOutOfOrder(ctx context.Context, q *db.Queries, p fsrs.Params, userID p
 		return nil, "", err
 	}
 
-	inserted, err := q.InsertReviewLog(ctx, db.InsertReviewLogParams{
-		ID:                  ev.ID,
-		UserID:              userID,
-		CardID:              ev.CardID,
-		Rating:              int16(ev.Rating),
-		ReviewedAt:          pgtype.Timestamptz{Time: ev.ReviewedAt, Valid: true},
-		DurationMs:          durationMsArg(ev.DurationMs),
-		StateBefore:         int16(priorForEv.State),
-		LearningStepsBefore: priorForEv.LearningSteps,
-		StabilityBefore:     pgtype.Float8{Float64: priorForEv.Stability, Valid: true},
-		DifficultyBefore:    pgtype.Float8{Float64: priorForEv.Difficulty, Valid: true},
-		ElapsedDaysBefore:   elapsedDaysBefore,
-		ScheduledDaysAfter:  outcomeForEv.ScheduledDays,
-		FsrsVersion:         pgtype.Int2{Int16: int16(p.Version()), Valid: true},
-		ReviewKind:          reviewKind(priorForEv.State),
-	})
+	inserted, err := appendReviewLogRow(ctx, q, p, userID, ev, priorForEv, outcomeForEv, elapsedDaysBefore)
 	if err != nil {
 		return nil, "", err
 	}
-	if inserted == 0 {
-		dto, err := currentStateDTO(ctx, q, userID, ev.CardID)
-		if err != nil {
-			return nil, "", err
-		}
-		return dto, StatusDuplicate, nil
+	if !inserted {
+		return duplicateOf(ctx, q, userID, ev.CardID)
 	}
 
 	lastReviewedAt := merged[len(merged)-1].ReviewedAt
-	elapsedDaysFinal := fsrs.ElapsedDays(priors[len(priors)-1], lastReviewedAt)
-
-	if err := q.UpsertUserCardStateFromReplay(ctx, db.UpsertUserCardStateFromReplayParams{
-		UserID:        userID,
-		CardID:        ev.CardID,
-		Due:           pgtype.Timestamptz{Time: final.Due, Valid: true},
-		Stability:     final.Stability,
-		Difficulty:    final.Difficulty,
-		State:         int16(final.State),
-		Reps:          final.Reps,
-		Lapses:        final.Lapses,
-		ElapsedDays:   elapsedDaysFinal,
-		ScheduledDays: final.ScheduledDays,
-		LearningSteps: final.LearningSteps,
-		LastReview:    pgtype.Timestamptz{Time: lastReviewedAt, Valid: true},
-	}); err != nil {
+	if err := writeReplayedState(ctx, q, userID, ev.CardID, priors[len(priors)-1], final, lastReviewedAt); err != nil {
 		return nil, "", err
 	}
 

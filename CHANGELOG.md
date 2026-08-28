@@ -3,6 +3,41 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.33] - 2026-08-27
+
+### Changed
+- Simplified `internal/apkg`'s reader/writer: consolidated error wrapping, deduped zip-member and
+  protobuf varint/fixed-width decoding onto `encoding/binary`, split an oversized schema-18 reader
+  into per-table helpers, made deck/note-type/review import ordering deterministic instead of
+  Go-map-order-dependent, and wrapped collection export writes in one transaction — no behavior
+  change ([#124](https://github.com/Jolls/enshu/issues/124)).
+- Simplified `internal/fsrs`: named the supported parameter-count constant, deduped
+  `CardState`-from-`Outcome` conversion into one `Outcome.CardStateAt` method (removing two
+  duplicate copies in `internal/review` and its own tests), and sourced `MaximumInterval` from
+  `go-fsrs`'s own default instead of a hardcoded literal ([#125](https://github.com/Jolls/enshu/issues/125)).
+- Simplified `internal/review` and `internal/http/review.go`: renamed `newlimit.go` to `preset.go`
+  to match its actual contents, deduped `review_log` ordering/insertion logic and the two GET
+  handlers' batch-fetch tail, removed the never-read `Card.Prior`/`Batch.StudyDayEnd` fields and
+  the `data-study-day-end` attribute, and deduped `web/static/review.js`'s two "first pending card"
+  scans and its dead `confirmedAfter`/`slot.unseen` writes — no behavior change
+  ([#126](https://github.com/Jolls/enshu/issues/126)).
+- Introduced `review.ParamsCache`, a shared per-deck FSRS-params memoizer, and moved `GradeBatch`'s
+  and `internal/apkg`'s import replay onto it instead of each maintaining its own copy of the same
+  cache — no behavior change ([#124](https://github.com/Jolls/enshu/issues/124),
+  [#126](https://github.com/Jolls/enshu/issues/126)).
+
+### Fixed
+- `internal/fsrs`'s `LearningSteps` conversion from the underlying library now saturates instead
+  of silently wrapping on an out-of-range value ([#125](https://github.com/Jolls/enshu/issues/125)).
+- Corrected a misleading `resolveHomeDecks` warning message and the
+  `UpsertUserCardStateFromReplay` SQL comment, which understated which callers may reach it
+  ([#124](https://github.com/Jolls/enshu/issues/124), [#126](https://github.com/Jolls/enshu/issues/126)).
+
+### Removed
+- Deleted the orphaned `GetCard` query and the unused `takePending` export from
+  `window.enshuReview` ([#124](https://github.com/Jolls/enshu/issues/124),
+  [#126](https://github.com/Jolls/enshu/issues/126)).
+
 ## [0.1.32] - 2026-08-26
 
 ### Security

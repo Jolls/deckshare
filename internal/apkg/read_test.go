@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
+	"sort"
 	"testing"
 	"time"
 )
@@ -335,20 +336,12 @@ func assertIRMatches(t *testing.T, got, want *IrCollection) {
 
 func sortedNoteTypes(nts []IrNoteType) []IrNoteType {
 	out := append([]IrNoteType(nil), nts...)
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j].AnkiID < out[j-1].AnkiID; j-- {
-			out[j], out[j-1] = out[j-1], out[j]
-		}
-	}
+	sort.Slice(out, func(i, j int) bool { return out[i].AnkiID < out[j].AnkiID })
 	return out
 }
 
 func sortedDecks(ds []IrDeck) []IrDeck {
 	out := append([]IrDeck(nil), ds...)
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j].AnkiID < out[j-1].AnkiID; j-- {
-			out[j], out[j-1] = out[j-1], out[j]
-		}
-	}
+	sort.Slice(out, func(i, j int) bool { return out[i].AnkiID < out[j].AnkiID })
 	return out
 }
