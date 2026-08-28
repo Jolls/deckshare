@@ -76,6 +76,9 @@ func registerImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 // actually landed in (the largest ImportedDeck.CardCount), since a package's own Decks list
 // doesn't say that -- Anki collections routinely carry an untouched "Default" deck alongside the
 // one actually exported. Falls back to the deck list if nothing resolved (e.g. an empty package).
+// On a tie, the first in decks wins, which after apkg.Import's deterministic ordering
+// (dbwrite.go) means the deck with the lowest Anki deck id -- an accepted, documented tie-break
+// rather than a chosen one.
 func resultingDeckPath(decks []apkg.ImportedDeck) string {
 	var best *apkg.ImportedDeck
 	for i := range decks {

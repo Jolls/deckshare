@@ -29,16 +29,14 @@ type Card struct {
 	Question template.HTML // sanitised by render, {{type:Field}} widget already spliced
 	Answer   template.HTML
 	Preview  fsrs.Preview // all four branches [§2.6] -- the whole reason the client never waits
-	Prior    CardStateDTO
 }
 
 // Batch is one page of the reviewer's queue: the initial batch rendered inline in the page
 // response, or one GET /api/reviews/next refill.
 type Batch struct {
-	Cards       []Card
-	Cursor      string // opaque; "" when Exhausted
-	Exhausted   bool
-	StudyDayEnd time.Time
+	Cards     []Card
+	Cursor    string // opaque; "" when Exhausted
+	Exhausted bool
 }
 
 // queueRow is the common shape BuildBatch's two source shapes -- ListDueCardsForStudyRow (the
@@ -206,8 +204,7 @@ func buildSingleBatch(ctx context.Context, q *db.Queries, p fsrs.Params, userID,
 	}
 
 	batch := Batch{
-		Exhausted:   int32(len(rows)) < limit,
-		StudyDayEnd: window.End,
+		Exhausted: int32(len(rows)) < limit,
 	}
 	if len(rows) == 0 {
 		return batch, nil
@@ -275,8 +272,7 @@ func buildMixedBatch(ctx context.Context, q *db.Queries, p fsrs.Params, userID, 
 	// rows for the next refill to pick up via the carried-forward sub-cursors.
 	combined := len(reviewRows) + len(newRows)
 	batch := Batch{
-		Exhausted:   int32(len(reviewRows)) < limit && int32(len(newRows)) < limit && int32(combined) <= limit,
-		StudyDayEnd: window.End,
+		Exhausted: int32(len(reviewRows)) < limit && int32(len(newRows)) < limit && int32(combined) <= limit,
 	}
 
 	picks := interleave(len(reviewRows), len(newRows), int(limit))
@@ -428,7 +424,6 @@ func renderQueueRows(ctx context.Context, q *db.Queries, deckID pgtype.UUID, dec
 			Question: render.TypeAnswerInput(rendered.Question),
 			Answer:   render.TypeAnswerExpected(rendered.Answer),
 			Preview:  preview,
-			Prior:    cardStateToDTO(prior),
 		})
 	}
 	return cards, nil

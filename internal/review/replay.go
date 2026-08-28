@@ -18,22 +18,40 @@ type LoggedReview struct {
 	ReviewedAt time.Time
 }
 
-// outcomeToCardState carries an Outcome forward into the next CardState a later Schedule/Repeat
-// call reads. Outcome has no LastReview field of its own (architecture.md §6: review_log, not
-// user_card_state, is what "when" belongs to during a single Schedule call) -- the caller always
-// knows it, since it is the reviewedAt that produced the Outcome.
-func outcomeToCardState(o fsrs.Outcome, reviewedAt time.Time) fsrs.CardState {
-	return fsrs.CardState{
-		Due:           o.Due,
-		Stability:     o.Stability,
-		Difficulty:    o.Difficulty,
-		State:         o.State,
-		Reps:          o.Reps,
-		Lapses:        o.Lapses,
-		ScheduledDays: o.ScheduledDays,
-		LearningSteps: o.LearningSteps,
-		LastReview:    reviewedAt,
+// loggedReviews reduces ListReviewLogForCard's rows to what a replay folds. The query's
+// ORDER BY reviewed_at, id is what makes the result already sorted the way replayStates requires;
+// UTC() normalises pgtype's location so a later comparison against an incoming event's timestamp
+// is on one clock.
+func loggedReviews(rows []db.ListReviewLogForCardRow) []LoggedReview {
+	out := make([]LoggedReview, len(rows))
+	for i, r := range rows {
+		out[i] = LoggedReview{ID: r.ID, Rating: fsrs.Rating(r.Rating), ReviewedAt: r.ReviewedAt.Time.UTC()}
 	}
+	return out
+}
+
+// writeReplayedState persists a replay's tail: final is the state after the last row, lastPrior
+// the state immediately before it, lastReviewedAt its reviewed_at. It writes through the
+// UNGUARDED UpsertUserCardStateFromReplay -- a rebuild from review_log is the newest truth for
+// the card by construction (architecture.md §6) -- so it must only ever be reached with the
+// (user, card) advisory lock held. Both callers (ReplayCard, GradeBatch's out-of-order branch)
+// satisfy that.
+func writeReplayedState(ctx context.Context, q *db.Queries, userID, cardID pgtype.UUID,
+	lastPrior, final fsrs.CardState, lastReviewedAt time.Time) error {
+	return q.UpsertUserCardStateFromReplay(ctx, db.UpsertUserCardStateFromReplayParams{
+		UserID:        userID,
+		CardID:        cardID,
+		Due:           pgtype.Timestamptz{Time: final.Due, Valid: true},
+		Stability:     final.Stability,
+		Difficulty:    final.Difficulty,
+		State:         int16(final.State),
+		Reps:          final.Reps,
+		Lapses:        final.Lapses,
+		ElapsedDays:   fsrs.ElapsedDays(lastPrior, lastReviewedAt),
+		ScheduledDays: final.ScheduledDays,
+		LearningSteps: final.LearningSteps,
+		LastReview:    pgtype.Timestamptz{Time: lastReviewedAt, Valid: true},
+	})
 }
 
 // replayStates folds rows (which MUST already be sorted by (reviewed_at, id)) through
@@ -50,7 +68,7 @@ func replayStates(p fsrs.Params, rows []LoggedReview) (priors []fsrs.CardState, 
 		if err != nil {
 			return nil, fsrs.CardState{}, err
 		}
-		state = outcomeToCardState(outcome, row.ReviewedAt)
+		state = outcome.CardStateAt(row.ReviewedAt)
 	}
 	return priors, state, nil
 }
@@ -72,35 +90,14 @@ func ReplayCard(ctx context.Context, tx pgx.Tx, p fsrs.Params, userID, cardID pg
 		return fsrs.CardState{}, nil
 	}
 
-	logged := make([]LoggedReview, len(rows))
-	for i, r := range rows {
-		logged[i] = LoggedReview{ID: r.ID, Rating: fsrs.Rating(r.Rating), ReviewedAt: r.ReviewedAt.Time.UTC()}
-	}
-
+	logged := loggedReviews(rows)
 	priors, final, err := replayStates(p, logged)
 	if err != nil {
 		return fsrs.CardState{}, err
 	}
-
 	lastReviewedAt := logged[len(logged)-1].ReviewedAt
-	elapsedDays := fsrs.ElapsedDays(priors[len(priors)-1], lastReviewedAt)
-
-	if err := q.UpsertUserCardStateFromReplay(ctx, db.UpsertUserCardStateFromReplayParams{
-		UserID:        userID,
-		CardID:        cardID,
-		Due:           pgtype.Timestamptz{Time: final.Due, Valid: true},
-		Stability:     final.Stability,
-		Difficulty:    final.Difficulty,
-		State:         int16(final.State),
-		Reps:          final.Reps,
-		Lapses:        final.Lapses,
-		ElapsedDays:   elapsedDays,
-		ScheduledDays: final.ScheduledDays,
-		LearningSteps: final.LearningSteps,
-		LastReview:    pgtype.Timestamptz{Time: lastReviewedAt, Valid: true},
-	}); err != nil {
+	if err := writeReplayedState(ctx, q, userID, cardID, priors[len(priors)-1], final, lastReviewedAt); err != nil {
 		return fsrs.CardState{}, err
 	}
-
 	return final, nil
 }

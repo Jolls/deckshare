@@ -35,13 +35,9 @@ func Write(col *IrCollection, w io.Writer) error {
 		return err
 	}
 
-	mediaIndex := make(map[string]string, len(col.Media))
-	for _, m := range col.Media {
-		mediaIndex[m.Index] = m.Filename
-	}
-	mediaJSON, err := json.Marshal(mediaIndex)
+	mediaJSON, err := encodeMediaIndex(col.Media)
 	if err != nil {
-		return fmt.Errorf("apkg: marshalling media index: %w", err)
+		return err
 	}
 
 	zw := zip.NewWriter(w)
@@ -129,13 +125,22 @@ func writeCollection(dbh *sql.DB, col *IrCollection) error {
 	if err != nil {
 		return err
 	}
-	if _, err := dbh.Exec("INSERT INTO col (id, crt, ver, models, decks) VALUES (1,?,11,?,?)",
+
+	// One transaction for every row below: SQLite otherwise commits -- and fsyncs -- once per
+	// Exec, which on a real collection is one commit per note, card and revlog row.
+	tx, err := dbh.Begin()
+	if err != nil {
+		return fmt.Errorf("apkg: beginning collection transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec("INSERT INTO col (id, crt, ver, models, decks) VALUES (1,?,11,?,?)",
 		col.Crt.Unix(), string(modelsJSON), string(decksJSON)); err != nil {
 		return fmt.Errorf("apkg: inserting col row: %w", err)
 	}
 
 	for _, n := range col.Notes {
-		if _, err := dbh.Exec("INSERT INTO notes (id, guid, mid, mod, tags, flds, csum) VALUES (?,?,?,?,?,?,?)",
+		if _, err := tx.Exec("INSERT INTO notes (id, guid, mid, mod, tags, flds, csum) VALUES (?,?,?,?,?,?,?)",
 			n.AnkiID, n.Guid, n.NoteTypeAnkiID, n.Modified.Unix(), encodeTags(n.Tags), strings.Join(n.Fields, "\x1f"), n.Checksum); err != nil {
 			return fmt.Errorf("apkg: inserting note %q: %w", n.Guid, err)
 		}
@@ -147,7 +152,7 @@ func writeCollection(dbh *sql.DB, col *IrCollection) error {
 			return fmt.Errorf("apkg: encoding cards.data for card (anki_id %d): %w", c.AnkiID, err)
 		}
 		due := unresolveDue(c.Queue, c.Due, col.Crt)
-		if _, err := dbh.Exec("INSERT INTO cards (id, nid, did, ord, type, queue, due, ivl, factor, reps, lapses, odue, odid, flags, data) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+		if _, err := tx.Exec("INSERT INTO cards (id, nid, did, ord, type, queue, due, ivl, factor, reps, lapses, odue, odid, flags, data) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
 			c.AnkiID, c.NoteAnkiID, c.DeckAnkiID, c.Ordinal, c.Type, c.Queue, due,
 			unintervalSeconds(c.IntervalSeconds), c.Factor, c.Reps, c.Lapses, 0, 0, int32(c.Flag), data); err != nil {
 			return fmt.Errorf("apkg: inserting card (anki_id %d): %w", c.AnkiID, err)
@@ -155,13 +160,16 @@ func writeCollection(dbh *sql.DB, col *IrCollection) error {
 	}
 
 	for _, r := range col.Reviews {
-		if _, err := dbh.Exec("INSERT INTO revlog (id, cid, ease, ivl, lastIvl, factor, time, type) VALUES (?,?,?,?,?,?,?,?)",
+		if _, err := tx.Exec("INSERT INTO revlog (id, cid, ease, ivl, lastIvl, factor, time, type) VALUES (?,?,?,?,?,?,?,?)",
 			r.AnkiID, r.CardAnkiID, r.Rating, unintervalSeconds(r.IntervalSeconds), unintervalSeconds(r.LastIntervalSeconds),
 			r.Factor, r.DurationMs, r.Kind); err != nil {
 			return fmt.Errorf("apkg: inserting revlog row (anki_id %d): %w", r.AnkiID, err)
 		}
 	}
 
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("apkg: committing collection: %w", err)
+	}
 	return nil
 }
 
@@ -254,8 +262,8 @@ func unresolveDue(queue int32, d IrDue, crt time.Time) int64 {
 // unintervalSeconds is intervalSeconds run in reverse: a whole number of days encodes as a
 // positive day count (Anki's common case), anything else as negative seconds.
 func unintervalSeconds(s int64) int64 {
-	if s%86400 == 0 {
-		return s / 86400
+	if s%secondsPerDay == 0 {
+		return s / secondsPerDay
 	}
 	return -s
 }

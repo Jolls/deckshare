@@ -3,7 +3,9 @@ package apkg
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/binary"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
@@ -31,7 +33,7 @@ func TestRead_MemberCountCeiling(t *testing.T) {
 	limits := DefaultArchiveLimits()
 	members := map[string][]byte{}
 	for i := 0; i <= limits.MaxMembers; i++ {
-		members[string(rune('a'))+itoaTest(i)] = []byte("x")
+		members["a"+strconv.Itoa(i)] = []byte("x")
 	}
 	pkg := zipMembers(t, members)
 	_, err := Read(bytes.NewReader(pkg), int64(len(pkg)), limits)
@@ -75,7 +77,7 @@ func TestRead_TotalSizeCeiling(t *testing.T) {
 }
 
 func TestRead_ZstdDeclaredSizeRejectedBeforeDecompressing(t *testing.T) {
-	pkg := buildOversizePackage(t, true)
+	pkg := buildOversizePackage(t)
 	limits := ArchiveLimits{MaxMembers: 100, MaxMemberBytes: 1 << 20, MaxTotalBytes: 10 << 20}
 	_, err := Read(bytes.NewReader(pkg), int64(len(pkg)), limits)
 	if !errors.Is(err, ErrMemberTooLarge) {
@@ -149,8 +151,8 @@ func TestRead_MediaIndexProtobuf(t *testing.T) {
 func encodeMediaEntry(name string) []byte {
 	entry := encodeProtoString(mediaEntryNameField, name)
 	var out []byte
-	out = appendVarint(out, uint64(mediaEntryField)<<3|uint64(protoBytes))
-	out = appendVarint(out, uint64(len(entry)))
+	out = binary.AppendUvarint(out, uint64(mediaEntryField)<<3|uint64(protoBytes))
+	out = binary.AppendUvarint(out, uint64(len(entry)))
 	out = append(out, entry...)
 	return out
 }
@@ -298,16 +300,3 @@ func TestRead_MediaMemberDroppedWhenZstdExceedsBudget(t *testing.T) {
 	}
 }
 
-func itoaTest(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
-}

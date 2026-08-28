@@ -321,6 +321,25 @@ with the multiuser seam cut through it: their `cards` row becomes our `user_card
 Lossy in that direction by definition — a shared deck's other users' progress cannot be
 represented in an Anki collection. That's fine and expected, but the UI should say so.
 
+### Known export losses
+
+Three round-trip losses are permanent given the current schema — each would need a new column to
+fix, and none is planned:
+
+- **`revlog.factor` and `revlog.lastIvl`** (`IrReview.Factor`, `IrReview.LastIntervalSeconds`) are
+  read from an imported `.apkg`'s `revlog` table but never persisted anywhere in Enshu's schema, so
+  a re-exported collection always writes `0` for both on every review row.
+- **FSRS `Position` and `DesiredRetention`** (`IrFSRSState.Position`, `.DesiredRetention`) are
+  likewise read on import and not persisted, so export always writes their zero value.
+- **`col.crt`** (the collection's creation timestamp) is not stored by Enshu at all — a deck has no
+  single "collection" it belongs to the way an Anki collection does — so `Export` synthesises a
+  value via `deriveCrt` rather than round-tripping an original one.
+
+None of these affect scheduling correctness or `.apkg` readability: every field above is either
+purely informational (SM-2 legacy data Enshu doesn't schedule from — see the `primaryDeckAnkiId`/
+`factor` discussion elsewhere in this doc) or a value Anki's own importer recomputes/tolerates a
+default for.
+
 ---
 
 ## What the one real export confirmed

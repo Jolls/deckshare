@@ -85,7 +85,6 @@
     return {
       cardId: el.dataset.cardId,
       el: el,
-      unseen: el.dataset.unseen === 'true',
       branches: {
         1: branch(el, 'again'),
         2: branch(el, 'hard'),
@@ -107,11 +106,17 @@
 
   // -- Advance -----------------------------------------------------------
 
-  function showNext() {
-    var idx = -1;
+  // Index of the next card to show: the first slot not yet graded this session. -1 when every
+  // slot is done.
+  function firstPendingIndex() {
     for (var i = 0; i < state.queue.length; i++) {
-      if (!state.queue[i].done) { idx = i; break; }
+      if (!state.queue[i].done) return i;
     }
+    return -1;
+  }
+
+  function showNext() {
+    var idx = firstPendingIndex();
     var stage = document.getElementById('review-stage');
     if (idx === -1) {
       state.current = null;
@@ -265,11 +270,7 @@
   }
 
   function maybeShowDone() {
-    var hasUpcoming = false;
-    for (var i = 0; i < state.queue.length; i++) {
-      if (!state.queue[i].done) { hasUpcoming = true; break; }
-    }
-    if (!hasUpcoming && state.exhausted) {
+    if (firstPendingIndex() === -1 && state.exhausted) {
       var done = document.getElementById('review-done');
       if (done) done.hidden = false;
     }
@@ -332,8 +333,10 @@
   }
 
   // Drains and returns state.pending, stashing the result in state.inFlight so a failure can put
-  // it back. Called exactly once per flush cycle (flush() itself, or flushOnUnload's sendBeacon
-  // fallback -- never both, since each checks state.pending/state.inFlight first).
+  // it back. flush() will not call this while a request is outstanding; flushOnUnload deliberately
+  // can -- a pagehide beacon has to go out even mid-flight -- and its overwrite of state.inFlight
+  // is harmless, because onBatchSettled puts back the array its own closure captured, not
+  // state.inFlight.
   function takePending() {
     if (state.pending.length === 0) return [];
     state.inFlight = state.pending;
@@ -354,9 +357,7 @@
         if (r.status === 'rejected' || r.status === 'forbidden') {
           console.error('enshu: event ' + r.id + ' ' + r.status + ', dropped permanently');
           showDeliveryError('A grade could not be saved (' + r.status + '). Check your device clock or deck access.');
-          continue;
         }
-        if (r.after) applyAfter(r.cardId, r.after);
       }
       if (state.pending.length > 0) scheduleFlush();
       return;
@@ -396,15 +397,6 @@
     if (el) el.hidden = true;
   }
 
-  // Cosmetic reconciliation only: the card is already graded and off-screen by the time its
-  // server-confirmed <after> arrives (architecture.md §6 -- there is nothing to compare it
-  // against, since the client never computed a value of its own).
-  function applyAfter(cardId, after) {
-    for (var i = 0; i < state.queue.length; i++) {
-      if (state.queue[i].cardId === cardId) { state.queue[i].confirmedAfter = after; }
-    }
-  }
-
   // -- uuidv7 --------------------------------------------------------------
 
   // crypto.randomUUID() is v4 and is not a substitute (schema.md specifies UUIDv7 ids).
@@ -427,7 +419,6 @@
   window.enshuReview = {
     deckId: function () { return state.deckId; },
     cursor: function () { return state.cursor; },
-    takePending: takePending,
   };
 
   if (document.readyState === 'loading') {

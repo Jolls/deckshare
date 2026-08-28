@@ -73,7 +73,9 @@ type UpsertUserCardStateFromReplayParams struct {
 }
 
 // The replay writer: unguarded, because a rebuild from review_log IS the newest truth for this card by
-// construction (architecture.md §6). Only internal/review.ReplayCard may call this.
+// construction (architecture.md §6). Reached only through internal/review's writeReplayedState -- from
+// ReplayCard and from GradeBatch's out-of-order branch -- and only with the (user, card) advisory lock
+// held. Never call it from anywhere the lock is not already taken.
 func (q *Queries) UpsertUserCardStateFromReplay(ctx context.Context, arg UpsertUserCardStateFromReplayParams) error {
 	_, err := q.db.Exec(ctx, upsertUserCardStateFromReplay,
 		arg.UserID,

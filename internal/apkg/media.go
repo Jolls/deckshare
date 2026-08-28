@@ -34,6 +34,21 @@ func readMediaIndex(b []byte) (map[string]string, error) {
 	return decodeProtoMediaIndex(b)
 }
 
+// encodeMediaIndex is readMediaIndex's inverse for the legacy container's JSON spelling, which is
+// the only one Write emits (write.go: schema 11, legacy zip, no meta member). The protobuf
+// spelling is read-only.
+func encodeMediaIndex(files []IrMedia) ([]byte, error) {
+	idx := make(map[string]string, len(files))
+	for _, m := range files {
+		idx[m.Index] = m.Filename
+	}
+	b, err := json.Marshal(idx)
+	if err != nil {
+		return nil, fmt.Errorf("apkg: marshalling media index: %w", err)
+	}
+	return b, nil
+}
+
 // decodeProtoMediaIndex is the protobuf media-index decode logic, kept separate for direct
 // testing.
 func decodeProtoMediaIndex(b []byte) (map[string]string, error) {

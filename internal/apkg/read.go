@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -42,14 +43,32 @@ func init() {
 // failure at that point is a driver-level detail with nothing left for the caller to act on, and
 // CLAUDE.md §9's "no swallowed errors" is aimed at errors that could affect what gets imported,
 // not at post-success resource teardown.
-func closeQuietly(c interface{ Close() error }) {
+func closeQuietly(c io.Closer) {
 	if err := c.Close(); err != nil {
 		return
 	}
 }
 
+// corrupt wraps a driver, scan or decode failure as ErrCorruptCollection while keeping the cause
+// in the message. errors.Is(err, ErrCorruptCollection) still matches -- the sentinel is what
+// callers and tests switch on -- but a genuinely malformed package now says what actually failed
+// instead of only that something did. The %w-then-%v shape matches openArchive below.
+func corrupt(what string, cause error) error {
+	return fmt.Errorf("apkg: %s: %w: %v", what, ErrCorruptCollection, cause)
+}
+
+// rowsErr is the tail every scan loop ends with: report an iteration failure as a corrupt
+// collection, or nil.
+func rowsErr(rows *sql.Rows, what string) error {
+	if err := rows.Err(); err != nil {
+		return corrupt(what, err)
+	}
+	return nil
+}
+
 // ArchiveLimits bounds an untrusted package (architecture.md §8: a shared deck is other users'
-// bytes). Zero fields are rejected -- use DefaultArchiveLimits and adjust.
+// bytes). The values are not validated: a zero-valued ArchiveLimits rejects every package, since
+// MaxMembers 0 fails any archive with a member. Start from DefaultArchiveLimits and adjust.
 type ArchiveLimits struct {
 	MaxMembers     int   // zip entries in the archive
 	MaxMemberBytes int64 // decompressed bytes of any one member
@@ -95,15 +114,9 @@ func Read(r io.ReaderAt, size int64, limits ArchiveLimits) (*IrCollection, error
 	if err != nil {
 		return nil, err
 	}
-	collBytes, err := memberBytes(collMember, limits, &budget)
+	collBytes, err := memberPlain(collMember, limits, &budget)
 	if err != nil {
 		return nil, err
-	}
-	if sniffZstd(collBytes) {
-		collBytes, err = decompressZstd(collBytes, limits, &budget)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	dbh, cleanup, err := openCollection(collBytes)
@@ -152,15 +165,9 @@ func Read(r io.ReaderAt, size int64, limits ArchiveLimits) (*IrCollection, error
 
 	var media []IrMedia
 	if mediaMember := findMember(z, "media"); mediaMember != nil {
-		mediaBytes, err := memberBytes(mediaMember, limits, &budget)
+		mediaBytes, err := memberPlain(mediaMember, limits, &budget)
 		if err != nil {
 			return nil, err
-		}
-		if sniffZstd(mediaBytes) {
-			mediaBytes, err = decompressZstd(mediaBytes, limits, &budget)
-			if err != nil {
-				return nil, err
-			}
 		}
 		idx, err := readMediaIndex(mediaBytes)
 		if err != nil {
@@ -221,6 +228,21 @@ func memberBytes(f *zip.File, limits ArchiveLimits, budget *int64) ([]byte, erro
 	}
 	*budget -= int64(len(buf))
 	return buf, nil
+}
+
+// memberPlain reads one member and transparently decompresses it when it is a zstd frame -- the
+// modern container spells both the collection and the media index that way, the legacy one stores
+// them plain (apkg-format.md's Container section). Sniffed on the magic number, never on the
+// package's declared version, so a version number's meaning cannot be got wrong.
+func memberPlain(f *zip.File, limits ArchiveLimits, budget *int64) ([]byte, error) {
+	b, err := memberBytes(f, limits, budget)
+	if err != nil {
+		return nil, err
+	}
+	if !sniffZstd(b) {
+		return b, nil
+	}
+	return decompressZstd(b, limits, budget)
 }
 
 func findMember(z *zip.Reader, name string) *zip.File {
@@ -289,11 +311,15 @@ func zstdDeclaredSize(b []byte) (int64, bool, error) {
 		return 0, false, ErrBadZstdFrame
 	}
 	var v uint64
-	for i := 0; i < fcsSize; i++ {
-		v |= uint64(b[off+i]) << (8 * i)
-	}
-	if fcsSize == 2 {
-		v += 256
+	switch fcsSize {
+	case 1:
+		v = uint64(b[off])
+	case 2:
+		v = uint64(binary.LittleEndian.Uint16(b[off:])) + 256 // the 2-byte field is offset by 256
+	case 4:
+		v = uint64(binary.LittleEndian.Uint32(b[off:]))
+	case 8:
+		v = binary.LittleEndian.Uint64(b[off:])
 	}
 	return int64(v), true, nil
 }
@@ -379,18 +405,18 @@ func detectSchema(dbh *sql.DB) (int, error) {
 	tables := map[string]bool{}
 	rows, err := dbh.Query("SELECT name FROM sqlite_master WHERE type='table'")
 	if err != nil {
-		return 0, fmt.Errorf("apkg: listing collection tables: %w", ErrCorruptCollection)
+		return 0, corrupt("listing collection tables", err)
 	}
 	defer closeQuietly(rows)
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			return 0, fmt.Errorf("apkg: reading table name: %w", ErrCorruptCollection)
+			return 0, corrupt("reading table name", err)
 		}
 		tables[name] = true
 	}
 	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("apkg: iterating collection tables: %w", ErrCorruptCollection)
+		return 0, corrupt("iterating collection tables", err)
 	}
 
 	if tables["notetypes"] && tables["fields"] && tables["templates"] && tables["decks"] {
@@ -405,7 +431,7 @@ func detectSchema(dbh *sql.DB) (int, error) {
 func readCrt(dbh *sql.DB) (time.Time, error) {
 	var crt int64
 	if err := dbh.QueryRow("SELECT crt FROM col LIMIT 1").Scan(&crt); err != nil {
-		return time.Time{}, fmt.Errorf("apkg: reading col.crt: %w", ErrCorruptCollection)
+		return time.Time{}, corrupt("reading col.crt", err)
 	}
 	return time.Unix(crt, 0).UTC(), nil
 }
@@ -413,16 +439,16 @@ func readCrt(dbh *sql.DB) (time.Time, error) {
 func readSchema11(dbh *sql.DB) ([]IrNoteType, []IrDeck, error) {
 	var modelsJSON, decksJSON []byte
 	if err := dbh.QueryRow(sqlSelectCol11).Scan(new(int64), &modelsJSON, &decksJSON); err != nil {
-		return nil, nil, fmt.Errorf("apkg: reading col.models/decks: %w", ErrCorruptCollection)
+		return nil, nil, corrupt("reading col.models/decks", err)
 	}
 
 	var models map[string]ankiModel11
 	if err := json.Unmarshal(modelsJSON, &models); err != nil {
-		return nil, nil, fmt.Errorf("apkg: decoding col.models: %w", ErrCorruptCollection)
+		return nil, nil, corrupt("decoding col.models", err)
 	}
 	var deckMap map[string]ankiDeck11
 	if err := json.Unmarshal(decksJSON, &deckMap); err != nil {
-		return nil, nil, fmt.Errorf("apkg: decoding col.decks: %w", ErrCorruptCollection)
+		return nil, nil, corrupt("decoding col.decks", err)
 	}
 
 	noteTypes := make([]IrNoteType, 0, len(models))
@@ -481,63 +507,84 @@ func readSchema11(dbh *sql.DB) ([]IrNoteType, []IrDeck, error) {
 // of #61 for kind/css/qfmt/afmt/font/size/media/deck-kind. See ankischema.go for which
 // properties are still unverified and therefore left at their zero value.
 func readSchema18(dbh *sql.DB) ([]IrNoteType, []IrDeck, error) {
-	ntRows, err := dbh.Query(sqlSelectNotetypes18)
+	noteTypes, ntByID, err := readNotetypes18(dbh)
 	if err != nil {
-		return nil, nil, fmt.Errorf("apkg: reading notetypes: %w", ErrCorruptCollection)
+		return nil, nil, err
 	}
-	type ntRow struct {
-		id     int64
-		name   string
-		config []byte
+	if err := readFields18(dbh, noteTypes, ntByID); err != nil {
+		return nil, nil, err
 	}
-	var ntRowsList []ntRow
-	for ntRows.Next() {
-		var r ntRow
-		if err := ntRows.Scan(&r.id, &r.name, &r.config); err != nil {
-			closeQuietly(ntRows)
-			return nil, nil, fmt.Errorf("apkg: scanning notetypes row: %w", ErrCorruptCollection)
-		}
-		ntRowsList = append(ntRowsList, r)
+	if err := readTemplates18(dbh, noteTypes, ntByID); err != nil {
+		return nil, nil, err
 	}
-	if err := ntRows.Err(); err != nil {
-		closeQuietly(ntRows)
-		return nil, nil, fmt.Errorf("apkg: iterating notetypes: %w", ErrCorruptCollection)
+	for i := range noteTypes {
+		sortFieldsByOrdinal(noteTypes[i].Fields)
+		sortTemplatesByOrdinal(noteTypes[i].Templates)
 	}
-	closeQuietly(ntRows)
+	if err := validateSchema18Decode(noteTypes); err != nil {
+		return nil, nil, err
+	}
+	decks, err := readDecks18(dbh)
+	if err != nil {
+		return nil, nil, err
+	}
+	return noteTypes, decks, nil
+}
 
-	noteTypes := make([]IrNoteType, 0, len(ntRowsList))
+// readNotetypes18 returns the note types in id order plus an index from notetypes.id into that
+// slice, which readFields18 and readTemplates18 use to attach their rows.
+func readNotetypes18(dbh *sql.DB) ([]IrNoteType, map[int64]int, error) {
+	rows, err := dbh.Query(sqlSelectNotetypes18)
+	if err != nil {
+		return nil, nil, corrupt("reading notetypes", err)
+	}
+	defer closeQuietly(rows)
+
+	var noteTypes []IrNoteType
 	ntByID := map[int64]int{}
-	for _, r := range ntRowsList {
-		fields, err := decodeProto(r.config)
+	for rows.Next() {
+		var id int64
+		var name string
+		var config []byte
+		if err := rows.Scan(&id, &name, &config); err != nil {
+			return nil, nil, corrupt("scanning notetypes row", err)
+		}
+		fields, err := decodeProto(config)
 		if err != nil {
-			return nil, nil, fmt.Errorf("apkg: decoding notetypes.config for %q: %w", r.name, err)
+			return nil, nil, fmt.Errorf("apkg: decoding notetypes.config for %q: %w", name, err)
 		}
 		kind, _ := protoUint(fields, ntConfigKindField)
 		sortField, _ := protoUint(fields, ntConfigSortFieldField)
 		css, _ := protoString(fields, ntConfigCSSField)
-		nt := IrNoteType{
-			AnkiID:       r.id,
-			Name:         r.name,
+		ntByID[id] = len(noteTypes)
+		noteTypes = append(noteTypes, IrNoteType{
+			AnkiID:       id,
+			Name:         name,
 			CSS:          css,
 			IsCloze:      kind == 1,
 			SortFieldIdx: int32(sortField),
-		}
-		ntByID[r.id] = len(noteTypes)
-		noteTypes = append(noteTypes, nt)
+		})
 	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, corrupt("iterating notetypes", err)
+	}
+	return noteTypes, ntByID, nil
+}
 
-	fRows, err := dbh.Query(sqlSelectFields18)
+func readFields18(dbh *sql.DB, noteTypes []IrNoteType, ntByID map[int64]int) error {
+	rows, err := dbh.Query(sqlSelectFields18)
 	if err != nil {
-		return nil, nil, fmt.Errorf("apkg: reading fields: %w", ErrCorruptCollection)
+		return corrupt("reading fields", err)
 	}
-	for fRows.Next() {
+	defer closeQuietly(rows)
+
+	for rows.Next() {
 		var ntid int64
 		var ord int32
 		var name string
 		var config []byte
-		if err := fRows.Scan(&ntid, &ord, &name, &config); err != nil {
-			closeQuietly(fRows)
-			return nil, nil, fmt.Errorf("apkg: scanning fields row: %w", ErrCorruptCollection)
+		if err := rows.Scan(&ntid, &ord, &name, &config); err != nil {
+			return corrupt("scanning fields row", err)
 		}
 		i, ok := ntByID[ntid]
 		if !ok {
@@ -545,8 +592,7 @@ func readSchema18(dbh *sql.DB) ([]IrNoteType, []IrDeck, error) {
 		}
 		fields, err := decodeProto(config)
 		if err != nil {
-			closeQuietly(fRows)
-			return nil, nil, fmt.Errorf("apkg: decoding fields.config for %q: %w", name, err)
+			return fmt.Errorf("apkg: decoding fields.config for %q: %w", name, err)
 		}
 		font, _ := protoString(fields, fieldConfigFontField)
 		size, _ := protoUint(fields, fieldConfigSizeField)
@@ -559,24 +605,23 @@ func readSchema18(dbh *sql.DB) ([]IrNoteType, []IrDeck, error) {
 			Size:    int32(size),
 		})
 	}
-	if err := fRows.Err(); err != nil {
-		closeQuietly(fRows)
-		return nil, nil, fmt.Errorf("apkg: iterating fields: %w", ErrCorruptCollection)
-	}
-	closeQuietly(fRows)
+	return rowsErr(rows, "iterating fields")
+}
 
-	tRows, err := dbh.Query(sqlSelectTemplates18)
+func readTemplates18(dbh *sql.DB, noteTypes []IrNoteType, ntByID map[int64]int) error {
+	rows, err := dbh.Query(sqlSelectTemplates18)
 	if err != nil {
-		return nil, nil, fmt.Errorf("apkg: reading templates: %w", ErrCorruptCollection)
+		return corrupt("reading templates", err)
 	}
-	for tRows.Next() {
+	defer closeQuietly(rows)
+
+	for rows.Next() {
 		var ntid int64
 		var ord int32
 		var name string
 		var config []byte
-		if err := tRows.Scan(&ntid, &ord, &name, &config); err != nil {
-			closeQuietly(tRows)
-			return nil, nil, fmt.Errorf("apkg: scanning templates row: %w", ErrCorruptCollection)
+		if err := rows.Scan(&ntid, &ord, &name, &config); err != nil {
+			return corrupt("scanning templates row", err)
 		}
 		i, ok := ntByID[ntid]
 		if !ok {
@@ -584,8 +629,7 @@ func readSchema18(dbh *sql.DB) ([]IrNoteType, []IrDeck, error) {
 		}
 		fields, err := decodeProto(config)
 		if err != nil {
-			closeQuietly(tRows)
-			return nil, nil, fmt.Errorf("apkg: decoding templates.config for %q: %w", name, err)
+			return fmt.Errorf("apkg: decoding templates.config for %q: %w", name, err)
 		}
 		qfmt, _ := protoString(fields, tmplConfigQFmtField)
 		afmt, _ := protoString(fields, tmplConfigAFmtField)
@@ -598,42 +642,32 @@ func readSchema18(dbh *sql.DB) ([]IrNoteType, []IrDeck, error) {
 			Afmt:    afmt,
 		})
 	}
-	if err := tRows.Err(); err != nil {
-		closeQuietly(tRows)
-		return nil, nil, fmt.Errorf("apkg: iterating templates: %w", ErrCorruptCollection)
-	}
-	closeQuietly(tRows)
+	return rowsErr(rows, "iterating templates")
+}
 
-	for i := range noteTypes {
-		sortFieldsByOrdinal(noteTypes[i].Fields)
-		sortTemplatesByOrdinal(noteTypes[i].Templates)
-	}
-
-	if err := validateSchema18Decode(noteTypes); err != nil {
-		return nil, nil, err
-	}
-
-	dRows, err := dbh.Query(sqlSelectDecks18)
+func readDecks18(dbh *sql.DB) ([]IrDeck, error) {
+	rows, err := dbh.Query(sqlSelectDecks18)
 	if err != nil {
-		return nil, nil, fmt.Errorf("apkg: reading decks: %w", ErrCorruptCollection)
+		return nil, corrupt("reading decks", err)
 	}
-	defer closeQuietly(dRows)
+	defer closeQuietly(rows)
+
 	var decks []IrDeck
-	for dRows.Next() {
+	for rows.Next() {
 		var id int64
 		var name string
 		var common, kind []byte
-		if err := dRows.Scan(&id, &name, &common, &kind); err != nil {
-			return nil, nil, fmt.Errorf("apkg: scanning decks row: %w", ErrCorruptCollection)
+		if err := rows.Scan(&id, &name, &common, &kind); err != nil {
+			return nil, corrupt("scanning decks row", err)
 		}
 		// decks.common's field numbers (e.g. description) are still unverified (#61): no deck in
 		// a real export sets one. Decoded only to reject a corrupt blob; Description stays "".
 		if _, err := decodeProto(common); err != nil {
-			return nil, nil, fmt.Errorf("apkg: decoding decks.common for %q: %w", name, err)
+			return nil, fmt.Errorf("apkg: decoding decks.common for %q: %w", name, err)
 		}
 		kindFields, err := decodeProto(kind)
 		if err != nil {
-			return nil, nil, fmt.Errorf("apkg: decoding decks.kind for %q: %w", name, err)
+			return nil, fmt.Errorf("apkg: decoding decks.kind for %q: %w", name, err)
 		}
 		// decks.kind is a oneof: field 1 (deckKindNormalField) wraps a non-filtered deck's
 		// config, confirmed against a real export (#61). The filtered variant's own field number
@@ -646,11 +680,10 @@ func readSchema18(dbh *sql.DB) ([]IrNoteType, []IrDeck, error) {
 			IsFiltered: !isNormal,
 		})
 	}
-	if err := dRows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("apkg: iterating decks: %w", ErrCorruptCollection)
+	if err := rows.Err(); err != nil {
+		return nil, corrupt("iterating decks", err)
 	}
-
-	return noteTypes, decks, nil
+	return decks, nil
 }
 
 // validateSchema18Decode fails loudly rather than importing plausible-looking wrong data: every
@@ -673,7 +706,7 @@ func validateSchema18Decode(noteTypes []IrNoteType) error {
 func readNotes(dbh *sql.DB) ([]IrNote, error) {
 	rows, err := dbh.Query(sqlSelectNotes)
 	if err != nil {
-		return nil, fmt.Errorf("apkg: reading notes: %w", ErrCorruptCollection)
+		return nil, corrupt("reading notes", err)
 	}
 	defer closeQuietly(rows)
 
@@ -682,7 +715,7 @@ func readNotes(dbh *sql.DB) ([]IrNote, error) {
 		var id, mid, mod, csum int64
 		var guid, tags, flds string
 		if err := rows.Scan(&id, &guid, &mid, &mod, &tags, &flds, &csum); err != nil {
-			return nil, fmt.Errorf("apkg: scanning note row: %w", ErrCorruptCollection)
+			return nil, corrupt("scanning note row", err)
 		}
 		notes = append(notes, IrNote{
 			AnkiID:         id,
@@ -696,7 +729,7 @@ func readNotes(dbh *sql.DB) ([]IrNote, error) {
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("apkg: iterating notes: %w", ErrCorruptCollection)
+		return nil, corrupt("iterating notes", err)
 	}
 	return notes, nil
 }
@@ -704,7 +737,7 @@ func readNotes(dbh *sql.DB) ([]IrNote, error) {
 func readCards(dbh *sql.DB, crt time.Time) ([]IrCard, error) {
 	rows, err := dbh.Query(sqlSelectCards)
 	if err != nil {
-		return nil, fmt.Errorf("apkg: reading cards: %w", ErrCorruptCollection)
+		return nil, corrupt("reading cards", err)
 	}
 	defer closeQuietly(rows)
 
@@ -714,7 +747,7 @@ func readCards(dbh *sql.DB, crt time.Time) ([]IrCard, error) {
 		var ord, typ, queue, factor, reps, lapses, flags int32
 		var data []byte
 		if err := rows.Scan(&id, &nid, &did, &ord, &typ, &queue, &due, &ivl, &factor, &reps, &lapses, &odue, &odid, &flags, &data); err != nil {
-			return nil, fmt.Errorf("apkg: scanning card row: %w", ErrCorruptCollection)
+			return nil, corrupt("scanning card row", err)
 		}
 
 		deckAnkiID := did
@@ -759,7 +792,7 @@ func readCards(dbh *sql.DB, crt time.Time) ([]IrCard, error) {
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("apkg: iterating cards: %w", ErrCorruptCollection)
+		return nil, corrupt("iterating cards", err)
 	}
 	return cards, nil
 }
@@ -769,7 +802,7 @@ func readCards(dbh *sql.DB, crt time.Time) ([]IrCard, error) {
 func readRevlog(dbh *sql.DB) ([]IrReview, []string, error) {
 	var hasTable bool
 	if err := dbh.QueryRow("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='revlog')").Scan(&hasTable); err != nil {
-		return nil, nil, fmt.Errorf("apkg: probing for revlog table: %w", ErrCorruptCollection)
+		return nil, nil, corrupt("probing for revlog table", err)
 	}
 	if !hasTable {
 		return nil, nil, nil
@@ -777,7 +810,7 @@ func readRevlog(dbh *sql.DB) ([]IrReview, []string, error) {
 
 	rows, err := dbh.Query(sqlSelectRevlog)
 	if err != nil {
-		return nil, nil, fmt.Errorf("apkg: reading revlog: %w", ErrCorruptCollection)
+		return nil, nil, corrupt("reading revlog", err)
 	}
 	defer closeQuietly(rows)
 
@@ -787,7 +820,7 @@ func readRevlog(dbh *sql.DB) ([]IrReview, []string, error) {
 		var id, cid, ivl, lastIvl int64
 		var ease, factor, dur, typ int32
 		if err := rows.Scan(&id, &cid, &ease, &ivl, &lastIvl, &factor, &dur, &typ); err != nil {
-			return nil, nil, fmt.Errorf("apkg: scanning revlog row: %w", ErrCorruptCollection)
+			return nil, nil, corrupt("scanning revlog row", err)
 		}
 		if ease == 0 {
 			warnings = append(warnings, fmt.Sprintf("revlog: dropped manual reschedule row (id %d)", id))
@@ -806,7 +839,7 @@ func readRevlog(dbh *sql.DB) ([]IrReview, []string, error) {
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("apkg: iterating revlog: %w", ErrCorruptCollection)
+		return nil, nil, corrupt("iterating revlog", err)
 	}
 	return reviews, warnings, nil
 }

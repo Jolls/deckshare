@@ -37,3 +37,27 @@ func EffectiveParams(ctx context.Context, q *db.Queries, userID, deckID pgtype.U
 	}
 	return fsrs.NewParams(int(row.FsrsVersion), weights, row.DesiredRetention)
 }
+
+// ParamsCache memoizes EffectiveParams per deck for the lifetime of one call (a grade batch, an
+// apkg import): both touch many cards but few decks, and EffectiveParams is a per-(user, deck)
+// lookup, so resolving it once per deck instead of once per card avoids a redundant DB round trip
+// per row. Not safe for concurrent use; each caller owns its own instance.
+type ParamsCache struct {
+	byDeck map[pgtype.UUID]fsrs.Params
+}
+
+func NewParamsCache() *ParamsCache {
+	return &ParamsCache{byDeck: make(map[pgtype.UUID]fsrs.Params)}
+}
+
+func (c *ParamsCache) Get(ctx context.Context, q *db.Queries, userID, deckID pgtype.UUID) (fsrs.Params, error) {
+	if p, ok := c.byDeck[deckID]; ok {
+		return p, nil
+	}
+	p, err := EffectiveParams(ctx, q, userID, deckID)
+	if err != nil {
+		return fsrs.Params{}, err
+	}
+	c.byDeck[deckID] = p
+	return p, nil
+}

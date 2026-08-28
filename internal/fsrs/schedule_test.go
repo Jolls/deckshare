@@ -47,48 +47,76 @@ func TestFuzzIsOff(t *testing.T) {
 	}
 }
 
-// TestLibraryFuzzIsWallClockSeeded is a characterisation test of go-fsrs itself, not our
-// wrapper: it constructs a Scheduler with EnableFuzz true directly and demonstrates the seed is
-// derived from wall-clock milliseconds (scheduler.go's initSeed), which is exactly why our
-// wrapper hard-codes fuzz off (params.go's engine method) -- a batch-preview computed at fetch
-// time and a grade-time recompute of the same prior state would otherwise disagree by design,
-// making the CLAUDE.md §10.2 parity property flaky rather than meaningful. If a future go-fsrs
-// upgrade changes this seeding and this test starts failing, that is the signal to revisit the
-// fuzz-off decision -- not a reason to skip or delete this test.
-func TestLibraryFuzzIsWallClockSeeded(t *testing.T) {
-	weights := gofsrs.DefaultWeights()
-	params := gofsrs.Parameters{
+// The two tests below characterise go-fsrs itself, not our wrapper. They pin what architecture.md
+// §3 flagged as unverified: exactly what the library's fuzz seed depends on. scheduler.go's
+// initSeed builds it as fmt.Sprintf("%d_%d_%f", now.UnixMilli(), reps, difficulty*stability), so
+// it is deterministic -- §3's worry about a "non-reproducible source" does not hold -- but now is
+// one of its inputs, and preview (fetch instant) and grade (reviewedAt) never pass the same now.
+// That, and only that, is why params.go's engine hard-codes EnableFuzz: false. If a go-fsrs
+// upgrade changes the seeding, one of these two fails, and that is the signal to revisit the
+// fuzz-off decision -- not a reason to skip or delete them.
+
+// fuzzOnEngine is what params.go's engine() would build with fuzz turned on: the one
+// configuration our wrapper deliberately refuses to produce, so it is constructed here by hand.
+func fuzzOnEngine() *gofsrs.FSRS {
+	return gofsrs.NewFSRS(gofsrs.Parameters{
 		RequestRetention: 0.9,
 		MaximumInterval:  36500,
-		W:                weights,
+		W:                gofsrs.DefaultWeights(),
 		EnableShortTerm:  true,
 		EnableFuzz:       true,
 		LearningSteps:    gofsrs.DefaultLearningSteps(),
 		RelearningSteps:  gofsrs.DefaultRelearningSteps(),
-	}
-	engine := gofsrs.NewFSRS(params)
+	})
+}
 
-	card := gofsrs.Card{
+// fuzzableCard is a Review-state card whose intervals land far past the 2.5-day threshold below
+// which fuzz is a no-op (arithmetic.go's nextInterval), so fuzz actually engages.
+func fuzzableCard() gofsrs.Card {
+	return gofsrs.Card{
 		State:      gofsrs.Review,
 		Stability:  50,
 		Difficulty: 5,
 		LastReview: fixedNow().Add(-30 * 24 * time.Hour),
 	}
+}
 
-	now1 := fixedNow()
-	now2 := fixedNow().Add(time.Millisecond)
+func TestLibraryFuzzSeedIsPureInItsInputs(t *testing.T) {
+	engine := fuzzOnEngine()
+	card := fuzzableCard()
 
-	log1, err := engine.Repeat(card, now1)
+	first, err := engine.Repeat(card, fixedNow())
 	if err != nil {
 		t.Fatalf("Repeat: %v", err)
 	}
-	log2, err := engine.Repeat(card, now2)
-	if err != nil {
-		t.Fatalf("Repeat: %v", err)
+	for i := 0; i < 20; i++ {
+		again, err := engine.Repeat(card, fixedNow())
+		if err != nil {
+			t.Fatalf("Repeat: %v", err)
+		}
+		for _, r := range []gofsrs.Rating{gofsrs.Again, gofsrs.Hard, gofsrs.Good, gofsrs.Easy} {
+			if again[r].Card.ScheduledDays != first[r].Card.ScheduledDays {
+				t.Fatalf("iteration %d rating %v: ScheduledDays = %d, want %d -- even with fuzz on, the same (card, now) must be reproducible; a process-clock or crypto/rand seed would break replay determinism, not just preview parity",
+					i, r, again[r].Card.ScheduledDays, first[r].Card.ScheduledDays)
+			}
+		}
 	}
+}
 
-	if log1[gofsrs.Good].Card.ScheduledDays == log2[gofsrs.Good].Card.ScheduledDays {
-		t.Skip("fuzz did not produce a different result across a 1ms now-shift on this input; not evidence the seed is not wall-clock derived, but this particular input didn't exercise it")
+func TestLibraryFuzzVariesWithNow(t *testing.T) {
+	engine := fuzzOnEngine()
+	card := fuzzableCard()
+
+	distinct := map[uint64]struct{}{}
+	for i := 0; i < 200; i++ {
+		log, err := engine.Repeat(card, fixedNow().Add(time.Duration(i)*time.Millisecond))
+		if err != nil {
+			t.Fatalf("Repeat: %v", err)
+		}
+		distinct[log[gofsrs.Good].Card.ScheduledDays] = struct{}{}
+	}
+	if len(distinct) < 2 {
+		t.Fatalf("Good.ScheduledDays took %d distinct value(s) across 200 one-millisecond shifts of now, want >= 2 -- now is a seed input (scheduler.go's initSeed), which is the whole reason EnableFuzz stays false in params.go's engine", len(distinct))
 	}
 }
 

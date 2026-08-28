@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -300,24 +301,33 @@ func zipMembers(t *testing.T, members map[string][]byte) []byte {
 	return buf.Bytes()
 }
 
+// unzipMembers is zipMembers in reverse: every member of pkg, read into a name -> bytes map.
+func unzipMembers(t *testing.T, pkg []byte) map[string][]byte {
+	t.Helper()
+	zr, err := zip.NewReader(bytes.NewReader(pkg), int64(len(pkg)))
+	if err != nil {
+		t.Fatalf("opening package: %v", err)
+	}
+	members := make(map[string][]byte, len(zr.File))
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("opening member %q: %v", f.Name, err)
+		}
+		var buf bytes.Buffer
+		if _, err := buf.ReadFrom(rc); err != nil {
+			t.Fatalf("reading member %q: %v", f.Name, err)
+		}
+		closeQuietly(rc)
+		members[f.Name] = buf.Bytes()
+	}
+	return members
+}
+
 func insertNotesCardsRevlog(dbh *sql.DB, spec synthSpec) error {
 	for _, n := range spec.Notes {
-		flds := ""
-		for i, f := range n.Fields {
-			if i > 0 {
-				flds += "\x1f"
-			}
-			flds += f
-		}
-		tags := ""
-		for _, tg := range n.Tags {
-			tags += " " + tg
-		}
-		if tags != "" {
-			tags += " "
-		}
 		if _, err := dbh.Exec("INSERT INTO notes (id, guid, mid, mod, tags, flds, csum) VALUES (?,?,?,?,?,?,?)",
-			n.AnkiID, n.Guid, n.NoteTypeAnkiID, n.Mod, tags, flds, n.Csum); err != nil {
+			n.AnkiID, n.Guid, n.NoteTypeAnkiID, n.Mod, encodeTags(n.Tags), strings.Join(n.Fields, "\x1f"), n.Csum); err != nil {
 			return err
 		}
 	}
@@ -481,49 +491,27 @@ func buildSchema18Package(t *testing.T, spec synthSpec) []byte {
 	return zipMembers(t, map[string][]byte{"collection.anki21": collBytes})
 }
 
+// normaliseDeckNameToSchema18 is normaliseDeckName run in reverse: schema 18 separates the deck
+// hierarchy with \x1f, schema 11 with "::".
 func normaliseDeckNameToSchema18(name string) string {
-	out := make([]byte, 0, len(name))
-	for i := 0; i < len(name); i++ {
-		if i+1 < len(name) && name[i] == ':' && name[i+1] == ':' {
-			out = append(out, '\x1f')
-			i++
-			continue
-		}
-		out = append(out, name[i])
-	}
-	return string(out)
+	return strings.ReplaceAll(name, "::", "\x1f")
 }
 
 // buildZstdPackage re-wraps pkg's collection and media members as zstd frames, producing the
 // modern container from any builder's output.
 func buildZstdPackage(t *testing.T, pkg []byte) []byte {
 	t.Helper()
-	zr, err := zip.NewReader(bytes.NewReader(pkg), int64(len(pkg)))
-	if err != nil {
-		t.Fatalf("opening input package: %v", err)
-	}
 	enc, err := zstd.NewWriter(nil, zstd.WithSingleSegment(true))
 	if err != nil {
 		t.Fatalf("creating zstd encoder: %v", err)
 	}
 	defer closeQuietly(enc)
 
-	members := map[string][]byte{}
-	for _, f := range zr.File {
-		rc, err := f.Open()
-		if err != nil {
-			t.Fatalf("opening member %q: %v", f.Name, err)
+	members := unzipMembers(t, pkg)
+	for name, data := range members {
+		if name == "collection.anki21" || name == "media" {
+			members[name] = enc.EncodeAll(data, nil)
 		}
-		var buf bytes.Buffer
-		if _, err := buf.ReadFrom(rc); err != nil {
-			t.Fatalf("reading member %q: %v", f.Name, err)
-		}
-		closeQuietly(rc)
-		data := buf.Bytes()
-		if f.Name == "collection.anki21" || f.Name == "media" {
-			data = enc.EncodeAll(data, nil)
-		}
-		members[f.Name] = data
 	}
 	return zipMembers(t, members)
 }
@@ -534,26 +522,7 @@ func buildZstdPackage(t *testing.T, pkg []byte) []byte {
 // success.
 func buildDowngradeStubPackage(t *testing.T) []byte {
 	t.Helper()
-	real := buildSchema11Package(t, defaultSynthSpec(t))
-	zr, err := zip.NewReader(bytes.NewReader(real), int64(len(real)))
-	if err != nil {
-		t.Fatalf("opening real package: %v", err)
-	}
-	var realCollBytes []byte
-	for _, f := range zr.File {
-		if f.Name == "collection.anki21" {
-			rc, err := f.Open()
-			if err != nil {
-				t.Fatalf("opening collection member: %v", err)
-			}
-			var buf bytes.Buffer
-			if _, err := buf.ReadFrom(rc); err != nil {
-				t.Fatalf("reading collection member: %v", err)
-			}
-			closeQuietly(rc)
-			realCollBytes = buf.Bytes()
-		}
-	}
+	realColl := unzipMembers(t, buildSchema11Package(t, defaultSynthSpec(t)))["collection.anki21"]
 
 	stubSpec := synthSpec{
 		Crt:       defaultSynthSpec(t).Crt,
@@ -562,30 +531,11 @@ func buildDowngradeStubPackage(t *testing.T) []byte {
 		Notes:     []synthNote{{AnkiID: 901, Guid: "stub-guid", NoteTypeAnkiID: 9001, Fields: []string{"please upgrade"}}},
 		Cards:     []synthCard{{AnkiID: 902, NoteAnkiID: 901, Did: 1, Ord: 0, Type: ankiTypeNew, Queue: ankiQueueNew, Due: 1}},
 	}
-	stub := buildSchema11Package(t, stubSpec)
-	zrStub, err := zip.NewReader(bytes.NewReader(stub), int64(len(stub)))
-	if err != nil {
-		t.Fatalf("opening stub package: %v", err)
-	}
-	var stubCollBytes []byte
-	for _, f := range zrStub.File {
-		if f.Name == "collection.anki21" {
-			rc, err := f.Open()
-			if err != nil {
-				t.Fatalf("opening stub collection member: %v", err)
-			}
-			var buf bytes.Buffer
-			if _, err := buf.ReadFrom(rc); err != nil {
-				t.Fatalf("reading stub collection member: %v", err)
-			}
-			closeQuietly(rc)
-			stubCollBytes = buf.Bytes()
-		}
-	}
+	stubColl := unzipMembers(t, buildSchema11Package(t, stubSpec))["collection.anki21"]
 
 	return zipMembers(t, map[string][]byte{
-		"collection.anki21": realCollBytes,
-		"collection.anki2":  stubCollBytes,
+		"collection.anki21": realColl,
+		"collection.anki2":  stubColl,
 	})
 }
 
@@ -692,32 +642,12 @@ func buildQuotedModelIDPackage(t *testing.T) []byte {
 }
 
 // buildOversizePackage returns a package whose "media" INDEX member (distinct from the numbered
-// media file members, which are also zstd-sniffed but tolerate a non-zstd payload -- media.go)
-// is a zstd frame. declaredOnly writes a frame whose declared
-// Frame_Content_Size exceeds any reasonable limit while the actual payload is tiny, exercising
-// the before-decompression gate specifically; !declaredOnly writes a frame whose declared size
-// is accurate.
-func buildOversizePackage(t *testing.T, declaredOnly bool) []byte {
+// media file members, which are also zstd-sniffed but tolerate a non-zstd payload -- media.go) is
+// a zstd frame declaring a Frame_Content_Size far past any reasonable limit while the actual
+// payload is tiny, exercising decompressZstd's before-decompression gate specifically.
+func buildOversizePackage(t *testing.T) []byte {
 	t.Helper()
-	spec := defaultSynthSpec(t)
-	pkg := buildSchema11Package(t, spec)
-	zr, err := zip.NewReader(bytes.NewReader(pkg), int64(len(pkg)))
-	if err != nil {
-		t.Fatalf("opening package: %v", err)
-	}
-	members := map[string][]byte{}
-	for _, f := range zr.File {
-		rc, err := f.Open()
-		if err != nil {
-			t.Fatalf("opening member %q: %v", f.Name, err)
-		}
-		var buf bytes.Buffer
-		if _, err := buf.ReadFrom(rc); err != nil {
-			t.Fatalf("reading member %q: %v", f.Name, err)
-		}
-		closeQuietly(rc)
-		members[f.Name] = buf.Bytes()
-	}
+	members := unzipMembers(t, buildSchema11Package(t, defaultSynthSpec(t)))
 
 	enc, err := zstd.NewWriter(nil, zstd.WithSingleSegment(true))
 	if err != nil {
@@ -725,11 +655,7 @@ func buildOversizePackage(t *testing.T, declaredOnly bool) []byte {
 	}
 	defer closeQuietly(enc)
 
-	frame := enc.EncodeAll([]byte(`{}`), nil)
-	if declaredOnly {
-		frame = patchZstdDeclaredSize(t, frame, 10<<30) // 10 GiB, dwarfs any test limit
-	}
-	members["media"] = frame
+	members["media"] = patchZstdDeclaredSize(t, enc.EncodeAll([]byte(`{}`), nil), 10<<30) // 10 GiB, dwarfs any test limit
 
 	return zipMembers(t, members)
 }
@@ -795,24 +721,16 @@ func patchZstdDeclaredSize(t *testing.T, frame []byte, newSize uint64) []byte {
 // it does not encode -- so no production code exists only for tests).
 func encodeProtoVarint(num uint32, v uint64) []byte {
 	var out []byte
-	out = appendVarint(out, uint64(num)<<3|uint64(protoVarint))
-	out = appendVarint(out, v)
+	out = binary.AppendUvarint(out, uint64(num)<<3|uint64(protoVarint))
+	out = binary.AppendUvarint(out, v)
 	return out
 }
 
 // encodeProtoString mirrors decodeProto's length-delimited field encoding, test-only.
 func encodeProtoString(num uint32, s string) []byte {
 	var out []byte
-	out = appendVarint(out, uint64(num)<<3|uint64(protoBytes))
-	out = appendVarint(out, uint64(len(s)))
+	out = binary.AppendUvarint(out, uint64(num)<<3|uint64(protoBytes))
+	out = binary.AppendUvarint(out, uint64(len(s)))
 	out = append(out, s...)
 	return out
-}
-
-func appendVarint(b []byte, v uint64) []byte {
-	for v >= 0x80 {
-		b = append(b, byte(v)|0x80)
-		v >>= 7
-	}
-	return append(b, byte(v))
 }

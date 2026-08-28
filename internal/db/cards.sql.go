@@ -97,24 +97,6 @@ func (q *Queries) DeleteCardsByOrdinals(ctx context.Context, arg DeleteCardsByOr
 	return result.RowsAffected(), nil
 }
 
-const getCard = `-- name: GetCard :one
-SELECT id, note_id, template_id, ordinal, deck_id, anki_id FROM cards WHERE id = $1
-`
-
-func (q *Queries) GetCard(ctx context.Context, id pgtype.UUID) (Card, error) {
-	row := q.db.QueryRow(ctx, getCard, id)
-	var i Card
-	err := row.Scan(
-		&i.ID,
-		&i.NoteID,
-		&i.TemplateID,
-		&i.Ordinal,
-		&i.DeckID,
-		&i.AnkiID,
-	)
-	return i, err
-}
-
 const listCardsForNoteForUpdate = `-- name: ListCardsForNoteForUpdate :many
 
 SELECT id, ordinal, template_id, deck_id FROM cards WHERE note_id = $1 ORDER BY ordinal FOR UPDATE

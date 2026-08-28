@@ -40,23 +40,6 @@ func jitteredDefaultWeights(rng *rand.Rand) []float64 {
 	return out
 }
 
-// applyOutcome writes an Outcome back into a CardState the way internal/review will eventually
-// write a graded Outcome into user_card_state: this is what makes each step of the sequence a
-// prior state derived from a real prior Schedule call, not a synthetic one.
-func applyOutcome(out Outcome, now time.Time) CardState {
-	return CardState{
-		Due:           out.Due,
-		Stability:     out.Stability,
-		Difficulty:    out.Difficulty,
-		State:         out.State,
-		Reps:          out.Reps,
-		Lapses:        out.Lapses,
-		ScheduledDays: out.ScheduledDays,
-		LearningSteps: out.LearningSteps,
-		LastReview:    now,
-	}
-}
-
 func outcomesEqual(a, b Outcome) bool {
 	return a.Due.Equal(b.Due) &&
 		a.Due.Location() == time.UTC && b.Due.Location() == time.UTC &&
@@ -131,7 +114,7 @@ func TestPreviewMatchesRecompute(t *testing.T) {
 			if err != nil {
 				t.Fatalf("sequence %d step %d: Preview.For(%v): %v", seq, step, chosen, err)
 			}
-			state = applyOutcome(out, now)
+			state = out.CardStateAt(now)
 		}
 	}
 }
@@ -157,7 +140,7 @@ func TestScheduleIsDeterministic(t *testing.T) {
 		if !outcomesEqual(first, second) {
 			t.Fatalf("step %d: Schedule(%v, %v) not deterministic: %+v != %+v -- fuzz may have been re-enabled", step, state, now, first, second)
 		}
-		state = applyOutcome(first, now)
+		state = first.CardStateAt(now)
 	}
 }
 
@@ -183,7 +166,7 @@ func TestReplayIsDeterministic(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Schedule: %v", err)
 			}
-			state = applyOutcome(out, now)
+			state = out.CardStateAt(now)
 		}
 		return state
 	}

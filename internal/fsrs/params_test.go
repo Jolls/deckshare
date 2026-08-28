@@ -97,3 +97,65 @@ func withWeight(weights []float64, idx int, v float64) []float64 {
 	out[idx] = v
 	return out
 }
+
+// The four tests below characterise go-fsrs itself, not our wrapper. They pin the second thing
+// architecture.md §3 flagged as unverified, so the reason NewParams validates before calling
+// NewFSRS is an executable fact rather than only prose. NewFSRS (fsrs.go) clips every weight into
+// a hard-coded per-index range and then, if Validate() still fails, silently replaces the entire
+// Parameters value with DefaultParam(). Neither path returns an error.
+
+func libParams(w gofsrs.Weights, retention float64) gofsrs.Parameters {
+	return gofsrs.Parameters{
+		RequestRetention: retention,
+		MaximumInterval:  36500,
+		W:                w,
+		EnableShortTerm:  true,
+		LearningSteps:    gofsrs.DefaultLearningSteps(),
+		RelearningSteps:  gofsrs.DefaultRelearningSteps(),
+	}
+}
+
+func TestLibraryClipsOutOfRangeWeightSilently(t *testing.T) {
+	w := gofsrs.DefaultWeights()
+	w[4] = 999 // clipParameters' range for W[4] is {1.0, 10.0} (parameters.go)
+
+	engine := gofsrs.NewFSRS(libParams(w, 0.9))
+	if engine.W[4] != 10.0 {
+		t.Errorf("W[4] = %v, want 10 -- silently clipped, no error returned; if this now errors or preserves the value, revisit enshu#67", engine.W[4])
+	}
+}
+
+func TestLibraryReplacesTheWholeSetOnNonFiniteWeight(t *testing.T) {
+	w := gofsrs.DefaultWeights()
+	w[3] = math.NaN() // clamp(NaN, lo, hi) is NaN, so this survives clipping and Validate still fails
+
+	engine := gofsrs.NewFSRS(libParams(w, 0.75))
+	if engine.W != gofsrs.DefaultWeights() {
+		t.Errorf("W = %v, want DefaultWeights() -- one NaN weight discards the entire fitted set, silently", engine.W)
+	}
+	if engine.RequestRetention != 0.9 {
+		t.Errorf("RequestRetention = %v, want 0.9 -- the fallback replaces the whole Parameters value, so the user's desired_retention goes with the weights", engine.RequestRetention)
+	}
+}
+
+func TestLibraryReplacesRetentionOutOfRange(t *testing.T) {
+	engine := gofsrs.NewFSRS(libParams(gofsrs.DefaultWeights(), 1.5))
+	if engine.RequestRetention != 0.9 {
+		t.Errorf("RequestRetention = %v, want 0.9 -- a hand-edited desired_retention of 1.5 schedules at 0.9 with no error, which is what ErrRetentionRange catches first", engine.RequestRetention)
+	}
+}
+
+// TestOurValidationDoesNotCatchClipping records the gap enshu#67 tracks as a test rather than a
+// paragraph nobody re-reads: a finite but out-of-range weight passes NewParams (which checks
+// count, finiteness and retention -- not per-index ranges) and is then silently clipped by the
+// library. Behaviour unchanged by #125; if a later change makes NewParams reject this, the test
+// fails and is the place to record the new decision.
+func TestOurValidationDoesNotCatchClipping(t *testing.T) {
+	p, err := NewParams(6, withWeight(defaultWeights(), 4, 999), 0.9)
+	if err != nil {
+		t.Fatalf("NewParams: %v, want accepted (enshu#67: no clip detection)", err)
+	}
+	if got := p.engine().W[4]; got != 10.0 {
+		t.Errorf("engine W[4] = %v, want 10 -- accepted by us, clipped by the library", got)
+	}
+}
