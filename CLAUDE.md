@@ -74,10 +74,10 @@ reading those columns correctly hard). Rule of thumb: *where a value lives* is t
    genuinely distinct parts. Bullet/Outline style communication is preferred.
 
 7. **Model Selection:** default Sonnet. Suggest Opus once (don't repeat if user stays on
-   Sonnet) for: schema changes, the FSRS scheduling package or scheduling semantics, `.apkg`
+   Sonnet) for: schema changes, `.apkg`
    reader/writer work, cross-cutting architecture (auth, DB layer, template rendering, the
    batch-preview/grading path), security review (auth/CSRF/session/input validation/HTML
-   sanitisation), refactors spanning the server package, the FSRS package, and HTTP handlers.
+   sanitisation), refactors spanning the server package, and HTTP handlers.
    Not for routine feature work/bugfixes/UI/pattern-following handlers.
 
 ---
