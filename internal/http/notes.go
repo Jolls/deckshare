@@ -182,9 +182,16 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			serverError(w)
 			return
 		}
+		compatible, err := q.ListFieldCompatibleNoteTypesForOwner(r.Context(), db.ListFieldCompatibleNoteTypesForOwnerParams{
+			OwnerID: user.ID, IsCloze: nt.IsCloze, CurrentNoteTypeID: note.NoteTypeID,
+		})
+		if err != nil {
+			serverError(w)
+			return
+		}
 		render(w, pages["note_form"], http.StatusOK, map[string]any{
 			"User": user, "Note": note, "NoteType": nt, "Fields": fields, "FieldValues": fieldValues,
-			"Decks": decks,
+			"Decks": decks, "NoteTypeOptions": compatible,
 		})
 	})))
 
@@ -221,17 +228,96 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		}
 
 		fieldValues := r.PostForm["field[]"]
-		fieldsJSON, checksum, err := validateNoteFields(fieldValues, len(fields))
+
+		var targetNoteTypeID pgtype.UUID
+		if err := targetNoteTypeID.Scan(r.PostForm.Get("note_type_id")); err != nil {
+			badRequest(w)
+			return
+		}
+
+		newNoteTypeID := note.NoteTypeID
+		targetNT := nt
+		targetTemplates := templates
+		wantFieldCount := len(fields)
+
+		if targetNoteTypeID != note.NoteTypeID {
+			// A note-type change is a more destructive, cross-user-impacting action than an
+			// ordinary content edit (it can delete cards and other users' user_card_state on a
+			// shared deck), so it requires can_manage_access in addition to can_edit_content --
+			// checked first, before anything else in this branch (#138 resolved decision).
+			_, err := q.GetNoteForNoteTypeChange(r.Context(), db.GetNoteForNoteTypeChangeParams{
+				UserID: user.ID, NoteID: noteID,
+			})
+			if handleQueryErr(w, err) {
+				return
+			}
+
+			targetNT, err = q.GetNoteTypeForOwner(r.Context(), db.GetNoteTypeForOwnerParams{ID: targetNoteTypeID, OwnerID: user.ID})
+			if handleQueryErr(w, err) {
+				return
+			}
+			targetFields, err := q.ListFieldsForNoteType(r.Context(), targetNoteTypeID)
+			if err != nil {
+				serverError(w)
+				return
+			}
+			if !fieldsCompatible(nt, fields, targetNT, targetFields) {
+				http.Error(w, "note types must have the same fields in the same order to switch between them", http.StatusBadRequest)
+				return
+			}
+			targetTemplates, err = q.ListTemplatesForNoteType(r.Context(), targetNoteTypeID)
+			if err != nil {
+				serverError(w)
+				return
+			}
+			wantFieldCount = len(targetFields)
+			newNoteTypeID = targetNoteTypeID
+		}
+
+		fieldsJSON, checksum, err := validateNoteFields(fieldValues, wantFieldCount)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		desired, err := desiredCards(nt, templates, fieldValues)
+		desired, err := desiredCards(targetNT, targetTemplates, fieldValues)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		tags := parseTags(r.PostForm.Get("tags"))
+
+		if targetNoteTypeID != note.NoteTypeID && r.PostForm.Get("confirm_note_type_change") != "1" {
+			existingOrdinals, err := q.ListCardsForNote(r.Context(), noteID)
+			if err != nil {
+				serverError(w)
+				return
+			}
+			existingSet := make(map[int32]struct{}, len(existingOrdinals))
+			for _, o := range existingOrdinals {
+				existingSet[o] = struct{}{}
+			}
+			desiredSet := make(map[int32]struct{}, len(desired))
+			for _, d := range desired {
+				desiredSet[d.Ordinal] = struct{}{}
+			}
+			var removedCount, addedCount int
+			for o := range existingSet {
+				if _, ok := desiredSet[o]; !ok {
+					removedCount++
+				}
+			}
+			for o := range desiredSet {
+				if _, ok := existingSet[o]; !ok {
+					addedCount++
+				}
+			}
+			render(w, pages["note_form"], http.StatusOK, map[string]any{
+				"User": user, "Note": note, "NoteType": nt, "TargetNoteType": targetNT,
+				"ConfirmNoteTypeChange": true, "RemovedCount": removedCount, "AddedCount": addedCount,
+				"FieldValues": fieldValues, "Tags": r.PostForm.Get("tags"),
+			})
+			return
+		}
 
 		tx, ok := startTx(r.Context(), w, store)
 		if !ok {
@@ -239,7 +325,7 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		}
 		defer func() { _ = tx.Rollback(r.Context()) }()
 
-		err = db.UpdateNoteWithCards(r.Context(), tx, user.ID, noteID, fieldsJSON, tags, checksum, desired)
+		err = db.UpdateNoteWithCards(r.Context(), tx, user.ID, noteID, newNoteTypeID, fieldsJSON, tags, checksum, desired)
 		if err != nil {
 			switch {
 			case errors.Is(err, pgx.ErrNoRows):
@@ -313,6 +399,26 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		}
 		http.Redirect(w, r, "/decks/"+targetDeckID.String(), http.StatusSeeOther)
 	})))
+}
+
+// fieldsCompatible implements the #138 v1 field-compatibility rule for a note-type change: the
+// same is_cloze flag, and the same field names in the same ordinal order (which implies the same
+// count). This is the authoritative, Go-side check -- the GET edit page's dropdown is populated
+// from ListFieldCompatibleNoteTypesForOwner, but the POST handler never trusts that the submitted
+// note_type_id actually came from that list.
+func fieldsCompatible(fromNT db.NoteType, fromFields []db.Field, toNT db.NoteType, toFields []db.Field) bool {
+	if fromNT.IsCloze != toNT.IsCloze {
+		return false
+	}
+	if len(fromFields) != len(toFields) {
+		return false
+	}
+	for i := range fromFields {
+		if fromFields[i].Name != toFields[i].Name {
+			return false
+		}
+	}
+	return true
 }
 
 // desiredCards is the one place that decides what cards a note has (architecture.md §8's card

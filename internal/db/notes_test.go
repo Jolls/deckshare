@@ -30,6 +30,35 @@ func TestNotesOwnerMatchesDeck_RejectsMismatch(t *testing.T) {
 	}
 }
 
+// #138: UpdateNoteWithCards must be able to change a note's note_type_id, not just its
+// fields/tags -- the one call site (internal/http/notes.go's POST /notes/{id}/edit) passes the
+// target note type id for a note-type change and note.NoteTypeID unchanged otherwise.
+func TestUpdateNoteWithCards_ChangesNoteType(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+
+	user := mustUser(t, tx)
+	deck := mustDeck(t, tx, user)
+	mustDeckAccess(t, tx, deck, user, fullAccess())
+	noteTypeA := mustNoteType(t, tx, user)
+	noteTypeB := mustNoteType(t, tx, user)
+	templateB := mustTemplate(t, tx, noteTypeB, 0)
+	note := mustNote(t, tx, user, noteTypeA, deck)
+
+	desired := []DesiredCard{{Ordinal: 0, TemplateID: templateB}}
+	if err := UpdateNoteWithCards(ctx, tx, user, note, noteTypeB, []byte(`["a"]`), []string{}, 0, desired); err != nil {
+		t.Fatalf("UpdateNoteWithCards: %v", err)
+	}
+
+	var gotNoteTypeID pgtype.UUID
+	if err := tx.QueryRow(ctx, `SELECT note_type_id FROM notes WHERE id = $1`, note).Scan(&gotNoteTypeID); err != nil {
+		t.Fatalf("select note: %v", err)
+	}
+	if gotNoteTypeID != noteTypeB {
+		t.Errorf("notes.note_type_id = %v, want %v", gotNoteTypeID, noteTypeB)
+	}
+}
+
 func TestMoveNote_UpdatesOwnerAndCards(t *testing.T) {
 	tx := beginTx(t)
 	ctx := context.Background()

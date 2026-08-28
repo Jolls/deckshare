@@ -118,6 +118,54 @@ func (q *Queries) GetNoteTypeForOwner(ctx context.Context, arg GetNoteTypeForOwn
 	return i, err
 }
 
+const listFieldCompatibleNoteTypesForOwner = `-- name: ListFieldCompatibleNoteTypesForOwner :many
+SELECT nt.id, nt.owner_id, nt.name, nt.css, nt.is_cloze, nt.sort_field_idx, nt.anki_id FROM note_types nt
+WHERE nt.owner_id = $1
+  AND nt.is_cloze = $2
+  AND (SELECT array_agg(f.name ORDER BY f.ordinal) FROM fields f WHERE f.note_type_id = nt.id)
+      = (SELECT array_agg(f2.name ORDER BY f2.ordinal) FROM fields f2
+         WHERE f2.note_type_id = $3)
+ORDER BY nt.name
+`
+
+type ListFieldCompatibleNoteTypesForOwnerParams struct {
+	OwnerID           pgtype.UUID
+	IsCloze           bool
+	CurrentNoteTypeID pgtype.UUID
+}
+
+// Note types owned by owner_id that a note currently on current_note_type_id could switch to
+// without cross-field-set remapping (#138 v1): same is_cloze flag, and the same field names in
+// the same ordinal order. Deliberately includes current_note_type_id itself (harmless no-op
+// selection) so the caller/template doesn't need a special case to pre-select the current value.
+func (q *Queries) ListFieldCompatibleNoteTypesForOwner(ctx context.Context, arg ListFieldCompatibleNoteTypesForOwnerParams) ([]NoteType, error) {
+	rows, err := q.db.Query(ctx, listFieldCompatibleNoteTypesForOwner, arg.OwnerID, arg.IsCloze, arg.CurrentNoteTypeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []NoteType
+	for rows.Next() {
+		var i NoteType
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Name,
+			&i.Css,
+			&i.IsCloze,
+			&i.SortFieldIdx,
+			&i.AnkiID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listNoteTypesForOwner = `-- name: ListNoteTypesForOwner :many
 SELECT nt.id, nt.owner_id, nt.name, nt.css, nt.is_cloze, nt.sort_field_idx, nt.anki_id, (SELECT count(*) FROM notes n WHERE n.note_type_id = nt.id) AS note_count
 FROM note_types nt WHERE nt.owner_id = $1 ORDER BY nt.name

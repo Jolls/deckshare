@@ -130,6 +130,16 @@ and new cloze ordinals (or template set, for non-cloze note types) and only adds
 cards that actually changed, leaving every untouched card's row — and its scheduling state —
 alone.
 
+Changing a note's `note_type_id` (#138) reuses this same diff rather than a bespoke path: the
+desired card set is computed from the *target* note type's templates, and any surviving ordinal
+whose template differs from what its card currently points at has `cards.template_id` repointed
+in place — needed because the study batch query reads `qfmt`/`afmt` from `cards.template_id`, not
+from `notes.note_type_id`, so a stale pointer would render the old note type's template. An
+ordinal that doesn't survive the change (e.g. dropping "Basic (and reversed card)" down to
+"Basic") is hard-deleted the same way a shrunk cloze note's card already is today: `user_card_state`
+cascades away with it, and any `review_log` rows are left in place, orphaned but intact, per the
+no-FK decision below (Deletion policy).
+
 **Deferred:** full-text search over notes. The intended shape is a generated `tsvector`
 column over the concatenated fields, but nothing queries it yet and it is not implemented.
 Add it with the search feature, not before.

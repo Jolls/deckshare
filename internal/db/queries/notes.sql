@@ -38,12 +38,23 @@ JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = sqlc.arg(user_id)
                    AND da.can_view AND da.can_edit_content
 WHERE n.id = sqlc.arg(note_id);
 
+-- Authorises the stronger can_manage_access permission required specifically for a note-type
+-- change (#138) -- ordinary content edits use can_edit_content alone via
+-- GetNoteForContentEdit/LockNoteForContentEdit. Same no-row-means-404 contract as those.
+-- name: GetNoteForNoteTypeChange :one
+SELECT n.*
+FROM notes n
+JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = sqlc.arg(user_id)
+                   AND da.can_view AND da.can_edit_content AND da.can_manage_access
+WHERE n.id = sqlc.arg(note_id);
+
 -- No deck_access join (CLAUDE.md §9): the caller (UpdateNoteWithCards) has already taken
 -- LockNoteForContentEdit on this note, which authorises can_view + can_edit_content and holds the
 -- row lock for the rest of the transaction.
 -- name: UpdateNoteContent :execrows
 UPDATE notes SET fields = sqlc.arg(fields), tags = sqlc.arg(tags),
-                 checksum = sqlc.arg(checksum), modified_at = now()
+                 checksum = sqlc.arg(checksum), note_type_id = sqlc.arg(note_type_id),
+                 modified_at = now()
 WHERE id = sqlc.arg(note_id);
 
 -- Moving a note must move owner_id with it (docs/schema.md, "must not drift"); migration 00015

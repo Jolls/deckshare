@@ -113,6 +113,41 @@ func (q *Queries) GetNoteForContentEdit(ctx context.Context, arg GetNoteForConte
 	return i, err
 }
 
+const getNoteForNoteTypeChange = `-- name: GetNoteForNoteTypeChange :one
+SELECT n.id, n.guid, n.owner_id, n.note_type_id, n.deck_id, n.fields, n.tags, n.checksum, n.created_at, n.modified_at, n.anki_id
+FROM notes n
+JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = $1
+                   AND da.can_view AND da.can_edit_content AND da.can_manage_access
+WHERE n.id = $2
+`
+
+type GetNoteForNoteTypeChangeParams struct {
+	UserID pgtype.UUID
+	NoteID pgtype.UUID
+}
+
+// Authorises the stronger can_manage_access permission required specifically for a note-type
+// change (#138) -- ordinary content edits use can_edit_content alone via
+// GetNoteForContentEdit/LockNoteForContentEdit. Same no-row-means-404 contract as those.
+func (q *Queries) GetNoteForNoteTypeChange(ctx context.Context, arg GetNoteForNoteTypeChangeParams) (Note, error) {
+	row := q.db.QueryRow(ctx, getNoteForNoteTypeChange, arg.UserID, arg.NoteID)
+	var i Note
+	err := row.Scan(
+		&i.ID,
+		&i.Guid,
+		&i.OwnerID,
+		&i.NoteTypeID,
+		&i.DeckID,
+		&i.Fields,
+		&i.Tags,
+		&i.Checksum,
+		&i.CreatedAt,
+		&i.ModifiedAt,
+		&i.AnkiID,
+	)
+	return i, err
+}
+
 const listNoteIDsOfNoteType = `-- name: ListNoteIDsOfNoteType :many
 SELECT id FROM notes WHERE note_type_id = $1
 `
@@ -274,15 +309,17 @@ func (q *Queries) MoveNoteToDeck(ctx context.Context, arg MoveNoteToDeckParams) 
 
 const updateNoteContent = `-- name: UpdateNoteContent :execrows
 UPDATE notes SET fields = $1, tags = $2,
-                 checksum = $3, modified_at = now()
-WHERE id = $4
+                 checksum = $3, note_type_id = $4,
+                 modified_at = now()
+WHERE id = $5
 `
 
 type UpdateNoteContentParams struct {
-	Fields   []byte
-	Tags     []string
-	Checksum int64
-	NoteID   pgtype.UUID
+	Fields     []byte
+	Tags       []string
+	Checksum   int64
+	NoteTypeID pgtype.UUID
+	NoteID     pgtype.UUID
 }
 
 // No deck_access join (CLAUDE.md §9): the caller (UpdateNoteWithCards) has already taken
@@ -293,6 +330,7 @@ func (q *Queries) UpdateNoteContent(ctx context.Context, arg UpdateNoteContentPa
 		arg.Fields,
 		arg.Tags,
 		arg.Checksum,
+		arg.NoteTypeID,
 		arg.NoteID,
 	)
 	if err != nil {

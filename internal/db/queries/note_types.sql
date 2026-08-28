@@ -32,3 +32,16 @@ SELECT count(*) FROM notes WHERE note_type_id = $1;
 -- fields and templates cascade. The handler turns 23503 into 409.
 -- name: DeleteNoteType :execrows
 DELETE FROM note_types WHERE id = sqlc.arg(id) AND owner_id = sqlc.arg(owner_id);
+
+-- Note types owned by owner_id that a note currently on current_note_type_id could switch to
+-- without cross-field-set remapping (#138 v1): same is_cloze flag, and the same field names in
+-- the same ordinal order. Deliberately includes current_note_type_id itself (harmless no-op
+-- selection) so the caller/template doesn't need a special case to pre-select the current value.
+-- name: ListFieldCompatibleNoteTypesForOwner :many
+SELECT nt.* FROM note_types nt
+WHERE nt.owner_id = sqlc.arg(owner_id)
+  AND nt.is_cloze = sqlc.arg(is_cloze)
+  AND (SELECT array_agg(f.name ORDER BY f.ordinal) FROM fields f WHERE f.note_type_id = nt.id)
+      = (SELECT array_agg(f2.name ORDER BY f2.ordinal) FROM fields f2
+         WHERE f2.note_type_id = sqlc.arg(current_note_type_id))
+ORDER BY nt.name;

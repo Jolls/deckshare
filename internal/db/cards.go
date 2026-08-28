@@ -20,9 +20,18 @@ type DesiredCard struct {
 }
 
 // SyncNoteCards reconciles a note's cards to desired by DIFFING ordinals: cards whose ordinal
-// survives are left completely untouched, so their id -- and therefore their user_card_state and
-// review_log history -- survives the edit. Dropping and recreating a note's cards instead is the
-// data-loss trap docs/schema.md names and #51 §0.4 made live.
+// survives are left completely untouched (other than a possible template_id repoint, below), so
+// their id -- and therefore their user_card_state and review_log history -- survives the edit.
+// Dropping and recreating a note's cards instead is the data-loss trap docs/schema.md names and
+// #51 §0.4 made live.
+//
+// A surviving ordinal whose desired template differs from what the card currently points at has
+// its template_id repointed in place (#138): this is what lets a note-type change reuse this same
+// diff instead of a bespoke path. It's a no-op for every other caller -- a same-note-type field
+// edit always desires the same template at a surviving ordinal, since desiredCards derives it
+// from the note's own note type -- and it matters because the study batch query reads qfmt/afmt
+// from cards.template_id, not from notes.note_type_id, so a stale template_id would render the
+// old note type's template while everything else reports the new one.
 //
 // Must be called inside a transaction it does not own; the caller commits. tx must already hold
 // a lock on the note row (e.g. via LockNoteForContentEdit) so the read below is race-free
@@ -39,9 +48,9 @@ func SyncNoteCards(ctx context.Context, tx pgx.Tx, noteID, homeDeckID pgtype.UUI
 		return err
 	}
 
-	existingByOrdinal := make(map[int32]struct{}, len(existing))
+	existingByOrdinal := make(map[int32]ListCardsForNoteForUpdateRow, len(existing))
 	for _, c := range existing {
-		existingByOrdinal[c.Ordinal] = struct{}{}
+		existingByOrdinal[c.Ordinal] = c
 	}
 	desiredByOrdinal := make(map[int32]DesiredCard, len(desired))
 	for _, d := range desired {
@@ -73,6 +82,21 @@ func SyncNoteCards(ctx context.Context, tx pgx.Tx, noteID, homeDeckID pgtype.UUI
 		if _, err := q.DeleteCardsByOrdinals(ctx, DeleteCardsByOrdinalsParams{
 			NoteID:   noteID,
 			Ordinals: destroy,
+		}); err != nil {
+			return err
+		}
+	}
+
+	// Repoint template_id on any surviving ordinal whose desired template differs from its
+	// current one -- the new step a note-type change needs (see doc comment above).
+	for ord, c := range existingByOrdinal {
+		d, ok := desiredByOrdinal[ord]
+		if !ok || d.TemplateID == c.TemplateID {
+			continue
+		}
+		if _, err := q.UpdateCardTemplate(ctx, UpdateCardTemplateParams{
+			ID:         c.ID,
+			TemplateID: d.TemplateID,
 		}); err != nil {
 			return err
 		}
