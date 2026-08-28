@@ -1,6 +1,6 @@
 ---
 name: implement-issues
-description: Use when the user hands you a batch of GitHub issues (or a PR-slate grouping from an epic, e.g. "issue A → [B+C] → D") and wants each one scoped, planned, and implemented sequentially on a single branch, landing in one combined PR to main. Triggers on "evaluate and implement issues #NNN, #NNN", "work through the [epic] slate", "plan then implement these issues", "do the same for issues X and Y". Covers: /evaluate-issue per issue → parallel planning agents → resolve open questions with the user → sequential implementation on one branch left uncommitted (spot-checked with code-review-low per group) → human tests the tip → on approval, commit and open one combined PR to main. Not for a single ad-hoc bug fix (just do it directly) or for planning without implementing (use /evaluate-issue or Plan Mode alone).
+description: Use when the user hands you a batch of GitHub issues (or a PR-slate grouping from an epic, e.g. "issue A → [B+C] → D") and wants each one scoped, planned, and implemented sequentially on a single branch, landing in one combined PR to main. Triggers on "evaluate and implement issues #NNN, #NNN", "work through the [epic] slate", "plan then implement these issues", "do the same for issues X and Y". Covers: /evaluate-issue per issue → parallel planning agents → resolve open questions with the user → sequential Sonnet-high implementation agents (one per group, minimal handback) on one branch left uncommitted (spot-checked with code-review-low per group) → human tests the tip → on approval, commit and open one combined PR to main. Not for a single ad-hoc bug fix (just do it directly) or for planning without implementing (use /evaluate-issue or Plan Mode alone).
 ---
 
 # Implement a batch of issues on one branch, one combined PR
@@ -18,7 +18,9 @@ cumulative tip and approves. Git choreography happens once, at land time.
 1. /evaluate-issue every issue (REQUIRED) → model/level for each planning agent.
 2. Parallel planning agents, one per group → plan files with zero judgment calls.
 3. Resolve every "Open question" with the user; write the decision into the plan.
-4. One branch off main; per group: apply edits + build/test + /code-review low — UNCOMMITTED.
+4. One branch off main; per group: a sequential Sonnet-high implementation agent
+   applies edits + build/test + /code-review low — UNCOMMITTED. Agents report back
+   minimal status only; open questions get relayed to the human immediately.
 5. Human tests the tip (working tree); recommend pre-commit checks; get go-ahead.
 6. Commit (disjoint-guarded), push, one combined PR to main.
 7. /done after merge.
@@ -63,40 +65,67 @@ For each open question across all plans:
   exact change spec, so every plan is fully actionable with zero judgment calls
   left before you touch code.
 
-## 4. Implement sequentially on one branch — uncommitted
+## 4. Implement each group with a dedicated agent — sequential, minimal handback
 
-The session that ran steps 0-3 continues directly — **no sub-agent**; it already
-has the resolved plans and conventions loaded, and implementation is sequential
-so there's nothing to parallelize. This session is typically Sonnet-med; if a
-plan wants a much higher level (e.g. Opus-high for schema/auth work), ask the
-user rather than silently implementing complex work at med effort.
+Token-saving design: the manager (this session) does **not** read plan bodies,
+diffs, or investigation notes for implementation — it only relays plan paths in
+and short status reports out. Most groups' plans are self-contained (step 2
+already forced "no judgment calls left"), so most groups don't need to know
+anything about any other group's plan.
 
-**Unplanned judgment call mid-implementation** — don't guess (effort is fixed
-per session):
-
-- **Just needs the user's call:** surface it via `AskUserQuestion`, as in step 3.
-- **Needs investigation to even frame the options** (tradeoffs, precedent, what
-  breaks): spawn one narrow high-effort Agent scoped to _that question only_,
-  then use its output to build the `AskUserQuestion`.
-
-One branch off main for the whole batch:
+One branch off main for the whole batch, created by the manager:
 
 ```
 git checkout main
 git checkout -b feature/<batch-slug>
 ```
 
-Then per group in apply order:
+Then per group, **in apply order**, spawn one Agent (`subagent_type: claude`,
+`model: sonnet`, high reasoning effort) scoped to that group only:
 
-- Apply that group's exact plan edits.
-- Build/test (`build.bat`, `go test ./...`, etc.). If the group touched SQL,
-  handlers, or integration-covered code, also run the live ArxDev integration
-  tests (per CLAUDE.md pre-commit) and report pass/fail — on stale-seed failure,
-  ask the user to reseed, never do it yourself. DSN command is saved at
-  `arx_go/config/LOCAL-IntTesting.txt` (gitignored); source it, don't rebuild it.
-- Run `/code-review low` on that group's incremental diff **before the next
-  group**; fix what it flags and re-verify.
-- **Do not commit** — leave everything in the working tree.
+- **Default — no cross-group context.** Prompt: the resolved plan file path
+  (the agent reads it off disk — it's already fully resolved, zero judgment
+  calls per step 3) plus instruction to implement it exactly as written, run
+  build/test, run `/code-review low` on the incremental diff and fix what it
+  flags, and leave everything **uncommitted**.
+- **Exception — shared context.** Only include another group's plan/decisions
+  in the prompt when this group's own plan explicitly depends on it (shared
+  files, an interface the earlier group introduced, a resolved decision that
+  constrains this group too). Don't default to bundling context "just in
+  case" — that's the token cost this design exists to avoid. If two groups are
+  coupled tightly enough that splitting them would just make the second agent
+  re-derive what the first one did, implement them as one agent call for both
+  plans rather than forcing an artificial split.
+- **Run agents one at a time, in the foreground** (`run_in_background: false`),
+  waiting for each to finish before launching the next — they share the same
+  working tree and each group applies on top of the previous group's
+  uncommitted edits, so they cannot run in parallel like the planning agents did.
+- Implementation agents must **not** call `AskUserQuestion` themselves. If a
+  plan turns out to have a judgment call it didn't anticipate, the agent stops
+  and returns the question with concrete options instead of guessing or asking
+  the user directly.
+- **Return only:** pass/fail on build/test (and integration tests where run),
+  pass/fail + fixes-applied on `/code-review low`, the list of files touched,
+  and any open question/blocker (with concrete options) — not the diff, not
+  code excerpts, not a narration of what it did. The manager and the human can
+  read the working tree directly if they need more.
+
+Prompt each agent to run the project's standard build/test commands. If the
+group touched schema, handlers, or other integration-covered code, also run
+the project's integration test suite where one exists (per the repo's
+CLAUDE.md pre-commit guidance) — on a stale-fixture/environment failure, the
+agent should report it rather than try to fix the environment itself.
+
+**When an agent returns an open question:** relay it to the user via
+`AskUserQuestion` immediately (same pattern as step 3), write the resolution
+wherever it needs to live (plan file and/or code comment), and only then move
+to the next group — don't let an unresolved judgment call ride into later
+groups.
+
+If a group's plan calls for materially higher effort than routine
+implementation (e.g. Opus-level schema/auth/FSRS work per CLAUDE.md §7), ask
+the user before spawning that group's agent at a higher model/effort — don't
+silently downgrade complex work to fit the Sonnet-high default.
 
 The working tree accumulates the whole batch uncommitted; the "tip" the human
 tests is just the working-tree state.
@@ -108,8 +137,8 @@ Before handing off, give the user a bullet-point **manual test-points list**
 covering the whole batch (not per-group) so they know what to click through
 without re-reading every plan. Base it on the actual diff, not guesswork:
 
-- **Routes/pages touched**, with how to reach them from the UI (nav tab → page,
-  or a direct URL like `http://localhost:4568/parts/123`) — one bullet per route.
+- **Routes/pages/entry points touched**, with how to reach them (nav path, CLI
+  command, direct URL, etc.) — one bullet per entry point.
 - **New/changed UI elements** to interact with: buttons, form fields, modals,
   filters — what to click and what result to expect.
 - **Golden path** per feature: the normal, expected-to-work flow end to end.
@@ -121,8 +150,8 @@ without re-reading every plan. Base it on the actual diff, not guesswork:
   a modified helper used elsewhere).
 - **Data-visible checks**: what to look for in the DB/UI after the action
   (row inserted, field updated, audit record written) if not obvious from the UI alone.
-- If any group required TEST_MODE/ArxDev state, note that here so the human
-  doesn't test against the wrong DB.
+- If any group required a special test mode or environment/seed state, note
+  that here so the human doesn't test against the wrong data.
 
 Before any commit, recommend the checks the diff warrants (per CLAUDE.md
 pre-commit): a deeper `/code-review medium|high` over the whole combined diff if
@@ -136,7 +165,7 @@ go-ahead — never before.**
 ## 6. On approval: commit (disjoint-guarded), push, one combined PR
 
 Check whether any file is touched by more than one group (you know each group's
-file list from its plan):
+file list from its implementation agent's return, cross-checked against its plan):
 
 - **All groups file-disjoint (normal):** commit per group, staging just that
   group's files, so each issue gets a clean commit:
