@@ -52,10 +52,14 @@ var allowedCSSPropertySet = func() map[string]bool {
 	return m
 }()
 
+// hexColourPattern is the #RGB / #RRGGBB / #RRGGBBAA grammar, unanchored so sanitise.go's
+// svgPaintRe can embed it in its alternation -- one definition of what a hex colour is.
+const hexColourPattern = `#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3}([0-9A-Fa-f]{2})?)?`
+
 var (
 	forbiddenValueCharsRe = regexp.MustCompile(`[<>\\;{}@"']`)
 	colourFuncRe          = regexp.MustCompile(`(?i)^(rgb|rgba|hsl|hsla)$`)
-	hexColourRe           = regexp.MustCompile(`^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3}([0-9A-Fa-f]{2})?)?$`)
+	hexColourRe           = regexp.MustCompile(`^` + hexColourPattern + `$`)
 	lengthTokenRe         = regexp.MustCompile(`(?i)^-?[0-9]+(\.[0-9]+)?(px|em|rem|%|ex|ch|vw|vh|pt|cm|mm|in)?$`)
 	fontFamilyRe          = regexp.MustCompile(`^[A-Za-z0-9 ,_-]+$`)
 
@@ -370,12 +374,7 @@ func pseudoClassOK(p string) bool {
 }
 
 func elementAllowed(name string) bool {
-	for _, e := range sanitisableElements {
-		if e == name {
-			return true
-		}
-	}
-	for _, e := range svgShapeElements {
+	for _, e := range allAllowedElements {
 		if e == name {
 			return true
 		}

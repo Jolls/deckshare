@@ -51,20 +51,18 @@ func registerImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 			return
 		}
 
-		tx, err := store.Begin(r.Context())
-		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		tx, ok := startTx(r.Context(), w, store)
+		if !ok {
 			return
 		}
 		defer func() { _ = tx.Rollback(r.Context()) }()
 
 		result, err := apkg.Import(r.Context(), tx, user.ID, col, now(), blobs)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
-		if err := tx.Commit(r.Context()); err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if !commitTx(r.Context(), w, tx) {
 			return
 		}
 

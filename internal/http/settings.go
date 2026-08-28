@@ -21,7 +21,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		retention, err := db.New(store).GetGlobalFsrsRetention(r.Context(), user.ID)
 		if err != nil {
 			if !errors.Is(err, pgx.ErrNoRows) {
-				http.Error(w, "internal server error", http.StatusInternalServerError)
+				serverError(w)
 				return
 			}
 			retention = review.DefaultDesiredRetention
@@ -31,8 +31,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 
 	mux.Handle("POST /settings", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, _ := auth.UserFromContext(r.Context())
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+		if !parseForm(w, r) {
 			return
 		}
 		displayName := r.PostForm.Get("display_name")
@@ -61,7 +60,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		if err := a.UpdateProfile(r.Context(), user.ID, displayName, timezone, int16(dayStartHour)); err != nil {
 			status, msg, _, ok := classifyFormError(err, nil)
 			if !ok {
-				http.Error(w, "internal server error", http.StatusInternalServerError)
+				serverError(w)
 				return
 			}
 			render(w, pages["settings"], status, map[string]any{
@@ -79,8 +78,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 
 	mux.Handle("POST /settings/password", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, _ := auth.UserFromContext(r.Context())
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+		if !parseForm(w, r) {
 			return
 		}
 		currentPassword := r.PostForm.Get("current_password")
@@ -104,7 +102,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 				return 0, "", false
 			})
 			if !ok {
-				http.Error(w, "internal server error", http.StatusInternalServerError)
+				serverError(w)
 				return
 			}
 			if retryAfter != "" {
@@ -127,8 +125,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 
 	mux.Handle("POST /settings/fsrs", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, _ := auth.UserFromContext(r.Context())
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+		if !parseForm(w, r) {
 			return
 		}
 		retention, atoiErr := strconv.ParseFloat(r.PostForm.Get("desired_retention"), 64)
@@ -153,7 +150,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		if err := q.UpsertGlobalFsrsRetention(r.Context(), db.UpsertGlobalFsrsRetentionParams{
 			UserID: user.ID, FsrsVersion: int16(params.Version()), DesiredRetention: retention,
 		}); err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 

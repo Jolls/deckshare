@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Jolls/enshu/internal/auth"
@@ -38,24 +37,19 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 		}
 		q := db.New(store)
 		deck, err := q.GetDeckForStudy(r.Context(), db.GetDeckForStudyParams{UserID: user.ID, DeckID: deckID})
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				notFound(w)
-				return
-			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if handleQueryErr(w, err) {
 			return
 		}
 
 		clock := now()
 		batch, err := buildStudyBatch(r.Context(), store, user.ID, deck, review.Cursor{AtStart: true}, initialBatchSize, clock)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		css, err := noteTypeCSS(r.Context(), q, user.ID, deckID)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 
@@ -75,29 +69,24 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 		}
 		var deckID pgtype.UUID
 		if err := deckID.Scan(r.URL.Query().Get("deck")); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+			badRequest(w)
 			return
 		}
 		cur, err := review.DecodeCursor(r.URL.Query().Get("cursor"))
 		if err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+			badRequest(w)
 			return
 		}
 
 		q := db.New(store)
 		deck, err := q.GetDeckForStudy(r.Context(), db.GetDeckForStudyParams{UserID: user.ID, DeckID: deckID})
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				notFound(w)
-				return
-			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if handleQueryErr(w, err) {
 			return
 		}
 		clock := now()
 		batch, err := buildStudyBatch(r.Context(), store, user.ID, deck, cur, refillBatchSize, clock)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		renderFragment(w, fragments["review_cards"], http.StatusOK, "review_cards", toBatchView(batch))
@@ -114,20 +103,18 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 			return
 		}
 
-		tx, err := store.Begin(r.Context())
-		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		tx, ok := startTx(r.Context(), w, store)
+		if !ok {
 			return
 		}
 		defer func() { _ = tx.Rollback(r.Context()) }()
 
 		results, err := review.GradeBatch(r.Context(), tx, user.ID, now(), events)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
-		if err := tx.Commit(r.Context()); err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if !commitTx(r.Context(), w, tx) {
 			return
 		}
 
@@ -214,7 +201,7 @@ var errBadBatch = errors.New("http: malformed review batch")
 func parseBatchRequest(w http.ResponseWriter, r *http.Request) ([]review.Event, bool) {
 	events, err := decodeBatch(r)
 	if err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		badRequest(w)
 		return nil, false
 	}
 	return events, true

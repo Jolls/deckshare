@@ -8,8 +8,8 @@ import (
 	"github.com/microcosm-cc/bluemonday"
 )
 
-// sanitisableElements is the prose-content allowlist -- also (together with svgShapeElements
-// below) the selector allowlist in css.go's elementAllowed (§4.1 / §5.3 of
+// sanitisableElements is the prose-content allowlist -- also (via allAllowedElements below)
+// the selector allowlist in css.go's elementAllowed (§4.1 / §5.3 of
 // docs/plans/55-note-type-rendering-sanitisation.md are the same element set).
 var sanitisableElements = []string{
 	"b", "strong", "i", "em", "u", "s", "strike", "sub", "sup", "small", "mark",
@@ -37,6 +37,13 @@ var sanitisableElements = []string{
 // lists mean the same thing to bluemonday and css.go's elementAllowed checks both.
 var svgShapeElements = []string{"svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon"}
 
+// allAllowedElements is sanitisableElements + svgShapeElements: everywhere the two lists get
+// identical treatment -- bluemonday element registration, the no-attribute default, the
+// style="" attribute, and css.go's elementAllowed selector check. The two lists stay separate
+// above because their attribute grammars have nothing in common; this is the one place that
+// has to see both.
+var allAllowedElements = append(append([]string{}, sanitisableElements...), svgShapeElements...)
+
 var classAttrRe = regexp.MustCompile(`^[A-Za-z0-9 _-]{0,200}$`)
 var langAttrRe = regexp.MustCompile(`^[A-Za-z0-9-]{1,35}$`)
 var numericAttrRe = regexp.MustCompile(`^[0-9]{1,3}$`)
@@ -60,21 +67,20 @@ var svgDasharrayRe = regexp.MustCompile(`^[0-9.,+\-\s%]{1,500}$`)
 // regexp, not the cssValueOK/isColourToken functions style="" reuses (those need
 // MatchingHandler, which only the style-property builder has) -- so this is built once from the
 // same namedColours table css.go already validates style="" colours against, one source of
-// truth even though the two paths can't share the same function call.
+// truth even though the two paths can't share the same function call. The hex half comes from
+// hexColourPattern for the same reason -- one definition of what a hex colour is.
 var svgPaintRe = sync.OnceValue(func() *regexp.Regexp {
 	names := make([]string, 0, len(namedColours))
 	for n := range namedColours {
 		names = append(names, regexp.QuoteMeta(n))
 	}
-	return regexp.MustCompile(`(?i)^(none|` + strings.Join(names, "|") + `|#[0-9A-Fa-f]{3}|#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{8})$`)
+	return regexp.MustCompile(`(?i)^(none|` + strings.Join(names, "|") + `|` + hexColourPattern + `)$`)
 })
 
 var cardPolicy = sync.OnceValue(func() *bluemonday.Policy {
 	p := bluemonday.NewPolicy() // NOT UGCPolicy: start from nothing and add.
-	p.AllowElements(sanitisableElements...)
-	p.AllowNoAttrs().OnElements(sanitisableElements...)
-	p.AllowElements(svgShapeElements...)
-	p.AllowNoAttrs().OnElements(svgShapeElements...)
+	p.AllowElements(allAllowedElements...)
+	p.AllowNoAttrs().OnElements(allAllowedElements...)
 
 	// Raw-text / escapable-raw-text / foreign-content elements are never added to the allowlist
 	// above, so bluemonday strips the element -- but by default keeps its TEXT content, which is
@@ -122,8 +128,7 @@ var cardPolicy = sync.OnceValue(func() *bluemonday.Policy {
 	p.RequireNoFollowOnLinks(true)
 	p.AddTargetBlankToFullyQualifiedLinks(true)
 
-	p.AllowAttrs("style").OnElements(sanitisableElements...)
-	p.AllowAttrs("style").OnElements(svgShapeElements...)
+	p.AllowAttrs("style").OnElements(allAllowedElements...)
 	for _, prop := range allowedCSSProperties {
 		prop := prop
 		p.AllowStyles(prop).MatchingHandler(func(v string) bool {

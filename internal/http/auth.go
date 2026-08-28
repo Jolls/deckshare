@@ -20,7 +20,7 @@ func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*t
 
 	mux.HandleFunc("POST /signup", func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+			badRequest(w)
 			return
 		}
 		email := r.PostForm.Get("email")
@@ -36,7 +36,7 @@ func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*t
 				return 0, "", false
 			})
 			if !ok {
-				http.Error(w, "internal server error", http.StatusInternalServerError)
+				serverError(w)
 				return
 			}
 			if retryAfter != "" {
@@ -60,7 +60,7 @@ func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*t
 
 	mux.HandleFunc("POST /login", func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+			badRequest(w)
 			return
 		}
 		email := r.PostForm.Get("email")
@@ -75,7 +75,7 @@ func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*t
 				return 0, "", false
 			})
 			if !ok {
-				http.Error(w, "internal server error", http.StatusInternalServerError)
+				serverError(w)
 				return
 			}
 			if retryAfter != "" {
@@ -95,7 +95,7 @@ func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*t
 			token = cookie.Value
 		}
 		if err := a.Logout(r.Context(), token); err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		auth.ClearSessionCookie(w)
