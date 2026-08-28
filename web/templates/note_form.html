@@ -1,5 +1,19 @@
 {{define "content"}}
-{{if .PickNoteType}}
+{{if .ConfirmNoteTypeChange}}
+<h1>Confirm note type change</h1>
+<p>Changing this note from "{{.NoteType.Name}}" to "{{.TargetNoteType.Name}}" will permanently
+   remove {{.RemovedCount}} card(s) whose template doesn't exist on the new note type (their
+   review history is kept, but the card and its current scheduling progress are deleted) and add
+   {{.AddedCount}} new card(s) starting fresh.</p>
+<form method="post" action="/notes/{{.Note.ID}}/edit">
+    <input type="hidden" name="note_type_id" value="{{.TargetNoteType.ID}}">
+    <input type="hidden" name="confirm_note_type_change" value="1">
+    {{range .FieldValues}}<input type="hidden" name="field[]" value="{{.}}">{{end}}
+    <input type="hidden" name="tags" value="{{.Tags}}">
+    <button type="submit">Confirm change</button>
+</form>
+<p><a href="/notes/{{.Note.ID}}/edit">Cancel</a></p>
+{{else if .PickNoteType}}
 <h1>Add note to {{.Deck.Name}}</h1>
 {{if .NoteTypes}}
 <form method="get" action="/decks/{{.Deck.ID}}/notes/new">
@@ -34,6 +48,14 @@
     {{end}}
     <label for="tags">Tags</label>
     <input type="text" id="tags" name="tags" value="{{range .Note.Tags}}{{.}} {{end}}">
+    {{if .NoteTypeOptions}}
+    <label for="note_type_id">Note type</label>
+    <select id="note_type_id" name="note_type_id">
+        {{range .NoteTypeOptions}}<option value="{{.ID}}" {{if eq .ID $.NoteType.ID}}selected{{end}}>{{.Name}}</option>{{end}}
+    </select>
+    {{else}}
+    <input type="hidden" name="note_type_id" value="{{.NoteType.ID}}">
+    {{end}}
     <button type="submit">Save</button>
 </form>
 

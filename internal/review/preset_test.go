@@ -75,6 +75,34 @@ func TestRevPerDay(t *testing.T) {
 	}
 }
 
+func TestLeftToStudy(t *testing.T) {
+	cases := []struct {
+		name                              string
+		newCount, learningCount, dueCount int64
+		newRemaining, revRemaining        int32
+		want                              int64
+	}{
+		{"new under remaining", 5, 3, 5, 20, 200, 5 + 3 + 5},
+		{"new over remaining", 25, 3, 5, 20, 200, 20 + 3 + 5},
+		{"new equal to remaining", 20, 3, 5, 20, 200, 20 + 3 + 5},
+		{"due under remaining", 5, 3, 5, 20, 200, 5 + 3 + 5},
+		{"due over remaining", 5, 3, 250, 20, 200, 5 + 3 + 200},
+		{"due equal to remaining", 5, 3, 200, 20, 200, 5 + 3 + 200},
+		{"learning always passed through", 0, 42, 0, 0, 0, 42},
+		{"zero new remaining", 5, 3, 5, 0, 200, 0 + 3 + 5},
+		{"zero rev remaining", 5, 3, 5, 20, 0, 5 + 3 + 0},
+		{"zero everything", 0, 0, 0, 0, 0, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := LeftToStudy(c.newCount, c.learningCount, c.dueCount, c.newRemaining, c.revRemaining); got != c.want {
+				t.Errorf("LeftToStudy(%d, %d, %d, %d, %d) = %d, want %d",
+					c.newCount, c.learningCount, c.dueCount, c.newRemaining, c.revRemaining, got, c.want)
+			}
+		})
+	}
+}
+
 func TestRevRemaining(t *testing.T) {
 	cases := []struct {
 		name          string

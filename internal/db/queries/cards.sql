@@ -25,3 +25,13 @@ ON CONFLICT (note_id, ordinal) DO NOTHING;
 
 -- name: AppendNoteFieldSlot :execrows
 UPDATE notes SET fields = fields || '""'::jsonb, modified_at = now() WHERE note_type_id = $1;
+
+-- name: UpdateCardTemplate :execrows
+UPDATE cards SET template_id = sqlc.arg(template_id) WHERE id = sqlc.arg(id);
+
+-- Non-locking read for a preview (no FOR UPDATE): used only to compute which ordinals a note-type
+-- change would add/remove, before the user has confirmed anything. The actual mutation re-reads
+-- via ListCardsForNoteForUpdate inside SyncNoteCards's transaction, so a stale preview here is
+-- never a correctness problem -- worst case the confirmation copy is one save behind.
+-- name: ListCardsForNote :many
+SELECT ordinal FROM cards WHERE note_id = sqlc.arg(note_id) ORDER BY ordinal;

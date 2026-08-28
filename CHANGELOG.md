@@ -3,6 +3,24 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.36] - 2026-08-28
+
+### Added
+- Added a "Left today" figure to the deck list and deck page, showing how many cards are
+  actually left to study today after daily new/review caps are applied, alongside the existing
+  New/Learning/Due breakdown ([#137](https://github.com/Jolls/enshu/issues/137)).
+- Added the ability to change a note's note type from the note edit page, for note types with
+  the same field names and order (e.g. dropping the reverse card by switching "Basic (and
+  reversed card)" to "Basic"); requires `can_manage_access` on the deck, since the change can
+  delete cards and other users' scheduling progress on a shared deck
+  ([#138](https://github.com/Jolls/enshu/issues/138)).
+
+### Fixed
+- Fixed a new card's `Good` rating repeating in the same study session, which forced users
+  toward `Easy`'s oversized ~8-day interval just to avoid the repeat: the client-side
+  same-session requeue heuristic no longer requeues a card graded `Good`
+  ([#136](https://github.com/Jolls/enshu/issues/136)).
+
 ## [0.1.35] - 2026-08-28
 
 ### Fixed

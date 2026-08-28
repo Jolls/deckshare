@@ -97,6 +97,34 @@ func (q *Queries) DeleteCardsByOrdinals(ctx context.Context, arg DeleteCardsByOr
 	return result.RowsAffected(), nil
 }
 
+const listCardsForNote = `-- name: ListCardsForNote :many
+SELECT ordinal FROM cards WHERE note_id = $1 ORDER BY ordinal
+`
+
+// Non-locking read for a preview (no FOR UPDATE): used only to compute which ordinals a note-type
+// change would add/remove, before the user has confirmed anything. The actual mutation re-reads
+// via ListCardsForNoteForUpdate inside SyncNoteCards's transaction, so a stale preview here is
+// never a correctness problem -- worst case the confirmation copy is one save behind.
+func (q *Queries) ListCardsForNote(ctx context.Context, noteID pgtype.UUID) ([]int32, error) {
+	rows, err := q.db.Query(ctx, listCardsForNote, noteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int32
+	for rows.Next() {
+		var ordinal int32
+		if err := rows.Scan(&ordinal); err != nil {
+			return nil, err
+		}
+		items = append(items, ordinal)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCardsForNoteForUpdate = `-- name: ListCardsForNoteForUpdate :many
 
 SELECT id, ordinal, template_id, deck_id FROM cards WHERE note_id = $1 ORDER BY ordinal FOR UPDATE
@@ -135,4 +163,21 @@ func (q *Queries) ListCardsForNoteForUpdate(ctx context.Context, noteID pgtype.U
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateCardTemplate = `-- name: UpdateCardTemplate :execrows
+UPDATE cards SET template_id = $1 WHERE id = $2
+`
+
+type UpdateCardTemplateParams struct {
+	TemplateID pgtype.UUID
+	ID         pgtype.UUID
+}
+
+func (q *Queries) UpdateCardTemplate(ctx context.Context, arg UpdateCardTemplateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateCardTemplate, arg.TemplateID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

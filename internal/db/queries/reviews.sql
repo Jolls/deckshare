@@ -336,6 +336,36 @@ WHERE rl.user_id = sqlc.arg(user_id)
   AND rl.reviewed_at >= sqlc.arg(study_day_start)::timestamptz
   AND rl.reviewed_at <  sqlc.arg(study_day_end)::timestamptz;
 
+-- Same as CountNewIntroducedToday, grouped by deck, for the /decks list (#137). One query for
+-- every deck the user can view rather than one CountNewIntroducedToday call per row.
+-- name: CountNewIntroducedTodayForUser :many
+SELECT c.deck_id                                     AS deck_id,
+       count(DISTINCT rl.card_id)::bigint            AS introduced_count
+FROM review_log rl
+JOIN cards c       ON c.id = rl.card_id
+JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = sqlc.arg(user_id)
+                   AND da.can_view AND da.can_study
+WHERE rl.user_id = sqlc.arg(user_id)
+  AND rl.state_before = 0
+  AND rl.reviewed_at >= sqlc.arg(study_day_start)::timestamptz
+  AND rl.reviewed_at <  sqlc.arg(study_day_end)::timestamptz
+GROUP BY c.deck_id;
+
+-- Same as CountReviewedToday, grouped by deck, for the /decks list (#137). One query for every
+-- deck the user can view rather than one CountReviewedToday call per row.
+-- name: CountReviewedTodayForUser :many
+SELECT c.deck_id                                     AS deck_id,
+       count(DISTINCT rl.card_id)::bigint            AS reviewed_count
+FROM review_log rl
+JOIN cards c       ON c.id = rl.card_id
+JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = sqlc.arg(user_id)
+                   AND da.can_view AND da.can_study
+WHERE rl.user_id = sqlc.arg(user_id)
+  AND rl.state_before = 2
+  AND rl.reviewed_at >= sqlc.arg(study_day_start)::timestamptz
+  AND rl.reviewed_at <  sqlc.arg(study_day_end)::timestamptz
+GROUP BY c.deck_id;
+
 -- Queue summary (New/Learning/Due) for one deck's study page (#80). Same eligibility filters as
 -- ListDueCardsForStudy -- suspended, buried, due-before-window-end, not already reviewed today --
 -- so the counts agree with what /decks/{id}/review actually serves. Learning folds together

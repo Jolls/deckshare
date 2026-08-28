@@ -21,10 +21,11 @@ func CreateNoteWithCards(ctx context.Context, tx pgx.Tx, arg CreateNoteParams, d
 	return note, nil
 }
 
-// UpdateNoteWithCards locks the note (authorising the caller), updates its content, and syncs
-// its cards to desired. Must be called inside a transaction it does not own; the caller commits.
-// Returns pgx.ErrNoRows if the note is absent, invisible, or the caller lacks can_edit_content.
-func UpdateNoteWithCards(ctx context.Context, tx pgx.Tx, userID, noteID pgtype.UUID, fields []byte, tags []string, checksum int64, desired []DesiredCard) error {
+// UpdateNoteWithCards locks the note (authorising the caller), updates its content -- including
+// its note type, e.g. for a #138 note-type change -- and syncs its cards to desired. Must be
+// called inside a transaction it does not own; the caller commits. Returns pgx.ErrNoRows if the
+// note is absent, invisible, or the caller lacks can_edit_content.
+func UpdateNoteWithCards(ctx context.Context, tx pgx.Tx, userID, noteID, noteTypeID pgtype.UUID, fields []byte, tags []string, checksum int64, desired []DesiredCard) error {
 	q := New(tx)
 	note, err := q.LockNoteForContentEdit(ctx, LockNoteForContentEditParams{
 		UserID: userID,
@@ -34,10 +35,11 @@ func UpdateNoteWithCards(ctx context.Context, tx pgx.Tx, userID, noteID pgtype.U
 		return err
 	}
 	if _, err := q.UpdateNoteContent(ctx, UpdateNoteContentParams{
-		Fields:   fields,
-		Tags:     tags,
-		Checksum: checksum,
-		NoteID:   noteID,
+		Fields:     fields,
+		Tags:       tags,
+		Checksum:   checksum,
+		NoteTypeID: noteTypeID,
+		NoteID:     noteID,
 	}); err != nil {
 		return err
 	}

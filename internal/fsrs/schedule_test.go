@@ -202,6 +202,20 @@ func TestNewCardOutcomes(t *testing.T) {
 	if preview.Easy.State != Review {
 		t.Errorf("Easy.State = %v, want Review", preview.Easy.State)
 	}
+	if preview.Good.State != Learning {
+		t.Errorf("Good.State = %v, want Learning -- go-fsrs's default {1,10}-minute learning "+
+			"steps mean a New card's first Good does not graduate straight to Review; the "+
+			"client-side same-session requeue suppression (#136) assumes this", preview.Good.State)
+	}
+	if d := preview.Good.Due.Sub(now); d < 0 || d >= 24*time.Hour {
+		t.Errorf("Good.Due = %v (%.1f hours after now), want a same-day short-term interval "+
+			"(#136 depends on this being short, not multi-day)", preview.Good.Due, d.Hours())
+	}
+	if preview.Easy.ScheduledDays < 1 {
+		t.Errorf("Easy.ScheduledDays = %d, want >= 1 -- Easy always graduates a New card "+
+			"straight to Review with a multi-day interval, which is why it was the only "+
+			"same-session workaround before #136", preview.Easy.ScheduledDays)
+	}
 
 	for _, r := range Ratings {
 		out, err := preview.For(r)

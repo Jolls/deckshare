@@ -2,7 +2,7 @@
 <h1>{{.Deck.Name}}</h1>
 {{if .Deck.Description}}<p>{{.Deck.Description}}</p>{{end}}
 <p>{{.Counts.NoteCount}} notes, {{.Counts.CardCount}} cards</p>
-<p>New: {{.Queue.New}} · Learning: {{.Queue.Learning}} · Due: {{.Queue.Due}}</p>
+<p>New: {{.Queue.New}} · Learning: {{.Queue.Learning}} · Due: {{.Queue.Due}} · Left today: {{.Queue.Left}}</p>
 <p>
     <a href="/decks/{{.Deck.ID}}/review">Study</a> ·
     <a href="/decks/{{.Deck.ID}}/notes/new">Add note</a> ·
