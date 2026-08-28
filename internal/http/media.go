@@ -1,12 +1,9 @@
 package http
 
 import (
-	"errors"
 	"io"
 	"net/http"
 	"regexp"
-
-	"github.com/jackc/pgx/v5"
 
 	"github.com/Jolls/enshu/internal/auth"
 	"github.com/Jolls/enshu/internal/db"
@@ -34,18 +31,13 @@ func registerMediaRoutes(mux *http.ServeMux, store db.Beginner, blobs *media.Sto
 		user, _ := auth.UserFromContext(r.Context())
 
 		blob, err := db.New(store).GetMediaBlobForUser(r.Context(), db.GetMediaBlobForUserParams{Sha256: sha, UserID: user.ID})
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				notFound(w)
-				return
-			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if handleQueryErr(w, err) {
 			return
 		}
 
 		f, err := blobs.Open(sha)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		defer func() { _ = f.Close() }()

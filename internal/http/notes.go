@@ -33,12 +33,7 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		}
 		q := db.New(store)
 		deck, err := q.GetDeckForContentEdit(r.Context(), db.GetDeckForContentEditParams{UserID: user.ID, DeckID: deckID})
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				notFound(w)
-				return
-			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if handleQueryErr(w, err) {
 			return
 		}
 
@@ -46,7 +41,7 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		if noteTypeIDStr == "" {
 			noteTypes, err := q.ListNoteTypesForOwner(r.Context(), user.ID)
 			if err != nil {
-				http.Error(w, "internal server error", http.StatusInternalServerError)
+				serverError(w)
 				return
 			}
 			render(w, pages["note_form"], http.StatusOK, map[string]any{
@@ -60,17 +55,12 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			return
 		}
 		nt, err := q.GetNoteTypeForOwner(r.Context(), db.GetNoteTypeForOwnerParams{ID: noteTypeID, OwnerID: user.ID})
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				notFound(w)
-				return
-			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if handleQueryErr(w, err) {
 			return
 		}
 		fields, err := q.ListFieldsForNoteType(r.Context(), noteTypeID)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		render(w, pages["note_form"], http.StatusOK, map[string]any{
@@ -85,34 +75,28 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			notFound(w)
 			return
 		}
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+		if !parseForm(w, r) {
 			return
 		}
 		var noteTypeID pgtype.UUID
 		if err := noteTypeID.Scan(r.PostForm.Get("note_type_id")); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+			badRequest(w)
 			return
 		}
 
 		q := db.New(store)
 		nt, err := q.GetNoteTypeForOwner(r.Context(), db.GetNoteTypeForOwnerParams{ID: noteTypeID, OwnerID: user.ID})
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				notFound(w)
-				return
-			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if handleQueryErr(w, err) {
 			return
 		}
 		templates, err := q.ListTemplatesForNoteType(r.Context(), noteTypeID)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		fields, err := q.ListFieldsForNoteType(r.Context(), noteTypeID)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 
@@ -130,13 +114,12 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		tags := parseTags(r.PostForm.Get("tags"))
 		guid, err := randomGuid()
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 
-		tx, err := store.Begin(r.Context())
-		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		tx, ok := startTx(r.Context(), w, store)
+		if !ok {
 			return
 		}
 		defer func() { _ = tx.Rollback(r.Context()) }()
@@ -157,12 +140,11 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			case errors.Is(err, db.ErrNoCards):
 				http.Error(w, "a cloze note must keep at least one cloze marker", http.StatusBadRequest)
 			default:
-				http.Error(w, "internal server error", http.StatusInternalServerError)
+				serverError(w)
 			}
 			return
 		}
-		if err := tx.Commit(r.Context()); err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if !commitTx(r.Context(), w, tx) {
 			return
 		}
 		http.Redirect(w, r, "/decks/"+deckID.String(), http.StatusSeeOther)
@@ -177,32 +159,27 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		}
 		q := db.New(store)
 		note, err := q.GetNoteForContentEdit(r.Context(), db.GetNoteForContentEditParams{UserID: user.ID, NoteID: noteID})
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				notFound(w)
-				return
-			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if handleQueryErr(w, err) {
 			return
 		}
 		nt, err := q.GetNoteType(r.Context(), note.NoteTypeID)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		fields, err := q.ListFieldsForNoteType(r.Context(), note.NoteTypeID)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		var fieldValues []string
 		if err := json.Unmarshal(note.Fields, &fieldValues); err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		decks, err := q.ListDecksForUser(r.Context(), user.ID)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		render(w, pages["note_form"], http.StatusOK, map[string]any{
@@ -218,34 +195,28 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			notFound(w)
 			return
 		}
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+		if !parseForm(w, r) {
 			return
 		}
 
 		q := db.New(store)
 		note, err := q.GetNoteForContentEdit(r.Context(), db.GetNoteForContentEditParams{UserID: user.ID, NoteID: noteID})
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				notFound(w)
-				return
-			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if handleQueryErr(w, err) {
 			return
 		}
 		nt, err := q.GetNoteType(r.Context(), note.NoteTypeID)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		templates, err := q.ListTemplatesForNoteType(r.Context(), note.NoteTypeID)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		fields, err := q.ListFieldsForNoteType(r.Context(), note.NoteTypeID)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 
@@ -262,9 +233,8 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		}
 		tags := parseTags(r.PostForm.Get("tags"))
 
-		tx, err := store.Begin(r.Context())
-		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		tx, ok := startTx(r.Context(), w, store)
+		if !ok {
 			return
 		}
 		defer func() { _ = tx.Rollback(r.Context()) }()
@@ -277,12 +247,11 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			case errors.Is(err, db.ErrNoCards):
 				http.Error(w, "a cloze note must keep at least one cloze marker", http.StatusBadRequest)
 			default:
-				http.Error(w, "internal server error", http.StatusInternalServerError)
+				serverError(w)
 			}
 			return
 		}
-		if err := tx.Commit(r.Context()); err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if !commitTx(r.Context(), w, tx) {
 			return
 		}
 		http.Redirect(w, r, "/decks/"+note.DeckID.String(), http.StatusSeeOther)
@@ -297,19 +266,14 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		}
 		q := db.New(store)
 		note, err := q.GetNoteForContentEdit(r.Context(), db.GetNoteForContentEditParams{UserID: user.ID, NoteID: noteID})
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				notFound(w)
-				return
-			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if handleQueryErr(w, err) {
 			return
 		}
 		deckID := note.DeckID
 
 		n, err := q.DeleteNote(r.Context(), db.DeleteNoteParams{NoteID: noteID, UserID: user.ID})
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		if n == 0 {
@@ -326,33 +290,25 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			notFound(w)
 			return
 		}
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+		if !parseForm(w, r) {
 			return
 		}
 		var targetDeckID pgtype.UUID
 		if err := targetDeckID.Scan(r.PostForm.Get("target_deck_id")); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+			badRequest(w)
 			return
 		}
 
-		tx, err := store.Begin(r.Context())
-		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		tx, ok := startTx(r.Context(), w, store)
+		if !ok {
 			return
 		}
 		defer func() { _ = tx.Rollback(r.Context()) }()
 
-		if err := db.MoveNote(r.Context(), tx, user.ID, noteID, targetDeckID); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				notFound(w)
-				return
-			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if handleQueryErr(w, db.MoveNote(r.Context(), tx, user.ID, noteID, targetDeckID)) {
 			return
 		}
-		if err := tx.Commit(r.Context()); err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if !commitTx(r.Context(), w, tx) {
 			return
 		}
 		http.Redirect(w, r, "/decks/"+targetDeckID.String(), http.StatusSeeOther)

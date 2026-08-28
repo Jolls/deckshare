@@ -2,12 +2,10 @@ package http
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Jolls/enshu/internal/auth"
@@ -36,7 +34,7 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 
 		noteTypes, err := q.ListNoteTypesForOwner(r.Context(), user.ID)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		depth := parseClozeDepth(r.URL.Query().Get("depth"))
@@ -45,7 +43,7 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		if !deckOK {
 			decks, err := q.ListDecksForUser(r.Context(), user.ID)
 			if err != nil {
-				http.Error(w, "internal server error", http.StatusInternalServerError)
+				serverError(w)
 				return
 			}
 			render(w, pages["import_ai"], http.StatusOK, map[string]any{
@@ -56,12 +54,7 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		}
 
 		deck, err := q.GetDeckForContentEdit(r.Context(), db.GetDeckForContentEditParams{UserID: user.ID, DeckID: deckID})
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				notFound(w)
-				return
-			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if handleQueryErr(w, err) {
 			return
 		}
 
@@ -75,12 +68,7 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		}
 
 		nt, fields, err := loadNoteType(r.Context(), q, user.ID, noteTypeID)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				notFound(w)
-				return
-			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if handleQueryErr(w, err) {
 			return
 		}
 
@@ -96,18 +84,17 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		user, _ := auth.UserFromContext(r.Context())
 
 		r.Body = http.MaxBytesReader(w, r.Body, maxAIImportBytes)
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+		if !parseForm(w, r) {
 			return
 		}
 
 		var deckID, noteTypeID pgtype.UUID
 		if err := deckID.Scan(r.PostForm.Get("deck_id")); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+			badRequest(w)
 			return
 		}
 		if err := noteTypeID.Scan(r.PostForm.Get("note_type_id")); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+			badRequest(w)
 			return
 		}
 		pasted := r.PostForm.Get("text")
@@ -115,17 +102,12 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 
 		q := db.New(store)
 		deck, nt, fields, err := loadDeckAndNoteType(r.Context(), q, user.ID, deckID, noteTypeID)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				notFound(w)
-				return
-			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if handleQueryErr(w, err) {
 			return
 		}
 		templates, err := q.ListTemplatesForNoteType(r.Context(), noteTypeID)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 
@@ -175,7 +157,7 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 			}
 			guid, gerr := randomGuid()
 			if gerr != nil {
-				http.Error(w, "internal server error", http.StatusInternalServerError)
+				serverError(w)
 				return
 			}
 			prepared = append(prepared, preparedNote{
@@ -189,9 +171,8 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 			return
 		}
 
-		tx, err := store.Begin(r.Context())
-		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		tx, ok := startTx(r.Context(), w, store)
+		if !ok {
 			return
 		}
 		defer func() { _ = tx.Rollback(r.Context()) }()
@@ -206,12 +187,11 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 				NoteTypeID: noteTypeID,
 				DeckID:     deckID,
 			}, p.desired); err != nil {
-				http.Error(w, "internal server error", http.StatusInternalServerError)
+				serverError(w)
 				return
 			}
 		}
-		if err := tx.Commit(r.Context()); err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if !commitTx(r.Context(), w, tx) {
 			return
 		}
 		http.Redirect(w, r, "/decks/"+deckID.String(), http.StatusSeeOther)

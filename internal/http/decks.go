@@ -2,14 +2,12 @@ package http
 
 import (
 	"context"
-	"errors"
 	"html/template"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Jolls/enshu/internal/auth"
@@ -31,12 +29,12 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		q := db.New(store)
 		decks, err := q.ListDecksForUser(r.Context(), user.ID)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		window, err := studyDayWindow(r.Context(), q, user.ID, now())
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		rows, err := q.CountQueueForUser(r.Context(), db.CountQueueForUserParams{
@@ -45,7 +43,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			StudyDayEnd:   pgtype.Timestamptz{Time: window.End, Valid: true},
 		})
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		counts := make(map[pgtype.UUID]queueCounts, len(rows))
@@ -62,8 +60,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 
 	mux.Handle("POST /decks", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, _ := auth.UserFromContext(r.Context())
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+		if !parseForm(w, r) {
 			return
 		}
 		name := strings.TrimSpace(r.PostForm.Get("name"))
@@ -76,9 +73,8 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			return
 		}
 
-		tx, err := store.Begin(r.Context())
-		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		tx, ok := startTx(r.Context(), w, store)
+		if !ok {
 			return
 		}
 		defer func() { _ = tx.Rollback(r.Context()) }()
@@ -92,11 +88,10 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 				})
 				return
 			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
-		if err := tx.Commit(r.Context()); err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if !commitTx(r.Context(), w, tx) {
 			return
 		}
 		http.Redirect(w, r, "/decks/"+deck.ID.String(), http.StatusSeeOther)
@@ -111,32 +106,27 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		}
 		q := db.New(store)
 		deck, err := q.GetDeckForUser(r.Context(), db.GetDeckForUserParams{UserID: user.ID, DeckID: deckID})
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				notFound(w)
-				return
-			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if handleQueryErr(w, err) {
 			return
 		}
 		counts, err := q.CountDeckContents(r.Context(), db.CountDeckContentsParams{DeckID: deckID, UserID: user.ID})
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		notes, err := q.ListNotesInDeck(r.Context(), db.ListNotesInDeckParams{UserID: user.ID, DeckID: deckID})
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		params, err := review.EffectiveParams(r.Context(), q, user.ID, deckID)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		window, err := studyDayWindow(r.Context(), q, user.ID, now())
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		queueRow, err := q.CountQueueForDeck(r.Context(), db.CountQueueForDeckParams{
@@ -146,7 +136,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			StudyDayEnd:   pgtype.Timestamptz{Time: window.End, Valid: true},
 		})
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		render(w, pages["deck"], http.StatusOK, map[string]any{
@@ -164,12 +154,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			return
 		}
 		deck, err := db.New(store).GetDeckForSettingsEdit(r.Context(), db.GetDeckForSettingsEditParams{UserID: user.ID, DeckID: deckID})
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				notFound(w)
-				return
-			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if handleQueryErr(w, err) {
 			return
 		}
 		render(w, pages["deck_edit"], http.StatusOK, map[string]any{
@@ -186,21 +171,20 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			notFound(w)
 			return
 		}
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+		if !parseForm(w, r) {
 			return
 		}
 		name := strings.TrimSpace(r.PostForm.Get("name"))
 		description := r.PostForm.Get("description")
 		if name == "" || len(name) > 200 {
-			http.Error(w, "bad request", http.StatusBadRequest)
+			badRequest(w)
 			return
 		}
 		newPerDay := pgtype.Int4{} // absent or empty -> leave preset untouched
 		if raw := strings.TrimSpace(r.PostForm.Get("new_per_day")); raw != "" {
 			v, err := strconv.Atoi(raw)
 			if err != nil || v < 0 || int32(v) > review.MaxNewPerDay {
-				http.Error(w, "bad request", http.StatusBadRequest)
+				badRequest(w)
 				return
 			}
 			newPerDay = pgtype.Int4{Int32: int32(v), Valid: true}
@@ -209,7 +193,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		if raw := strings.TrimSpace(r.PostForm.Get("rev_per_day")); raw != "" {
 			v, err := strconv.Atoi(raw)
 			if err != nil || v < 0 || int32(v) > review.MaxRevPerDay {
-				http.Error(w, "bad request", http.StatusBadRequest)
+				badRequest(w)
 				return
 			}
 			revPerDay = pgtype.Int4{Int32: int32(v), Valid: true}
@@ -217,7 +201,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		newMix := pgtype.Text{} // absent or empty -> leave preset untouched
 		if raw := strings.TrimSpace(r.PostForm.Get("new_mix")); raw != "" {
 			if !review.NewMix(raw).Valid() {
-				http.Error(w, "bad request", http.StatusBadRequest)
+				badRequest(w)
 				return
 			}
 			newMix = pgtype.Text{String: raw, Valid: true}
@@ -225,7 +209,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		revOrder := pgtype.Text{} // absent or empty -> leave preset untouched
 		if raw := strings.TrimSpace(r.PostForm.Get("rev_order")); raw != "" {
 			if !review.RevOrder(raw).Valid() {
-				http.Error(w, "bad request", http.StatusBadRequest)
+				badRequest(w)
 				return
 			}
 			revOrder = pgtype.Text{String: raw, Valid: true}
@@ -240,7 +224,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 				http.Error(w, "a deck with that name already exists", http.StatusConflict)
 				return
 			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		if n == 0 {
@@ -257,12 +241,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			notFound(w)
 			return
 		}
-		if err := deleteDeck(r.Context(), store, deckID, user.ID); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				notFound(w)
-				return
-			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if handleQueryErr(w, deleteDeck(r.Context(), store, deckID, user.ID)) {
 			return
 		}
 		http.Redirect(w, r, "/decks", http.StatusSeeOther)
@@ -275,18 +254,17 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			notFound(w)
 			return
 		}
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+		if !parseForm(w, r) {
 			return
 		}
 		retention, atoiErr := strconv.ParseFloat(r.PostForm.Get("desired_retention"), 64)
 		if atoiErr != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+			badRequest(w)
 			return
 		}
 		params, err := fsrs.NewDefaultParams(retention)
 		if err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+			badRequest(w)
 			return
 		}
 
@@ -294,7 +272,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			UserID: user.ID, DeckID: deckID, FsrsVersion: int16(params.Version()), DesiredRetention: retention,
 		})
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		if n == 0 {

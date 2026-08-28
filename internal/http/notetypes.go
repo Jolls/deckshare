@@ -18,7 +18,7 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		user, _ := auth.UserFromContext(r.Context())
 		noteTypes, err := db.New(store).ListNoteTypesForOwner(r.Context(), user.ID)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		render(w, pages["notetypes"], http.StatusOK, map[string]any{"User": user, "NoteTypes": noteTypes})
@@ -31,8 +31,7 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 
 	mux.Handle("POST /note-types", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, _ := auth.UserFromContext(r.Context())
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+		if !parseForm(w, r) {
 			return
 		}
 		name := strings.TrimSpace(r.PostForm.Get("name"))
@@ -66,24 +65,22 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 			templates = append(templates, db.TemplateEdit{Name: n, Qfmt: templateQfmts[i], Afmt: templateAfmts[i]})
 		}
 
-		tx, err := store.Begin(r.Context())
-		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		tx, ok := startTx(r.Context(), w, store)
+		if !ok {
 			return
 		}
 		defer func() { _ = tx.Rollback(r.Context()) }()
 
-		_, err = db.CreateNoteTypeWithFieldsAndTemplates(r.Context(), tx, user.ID, name, css, isCloze, 0, fieldNames, templates)
+		_, err := db.CreateNoteTypeWithFieldsAndTemplates(r.Context(), tx, user.ID, name, css, isCloze, 0, fieldNames, templates)
 		if err != nil {
 			if db.IsUniqueViolation(err, "note_types_owner_id_name_key") {
 				http.Error(w, "you already have a note type with that name", http.StatusConflict)
 				return
 			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
-		if err := tx.Commit(r.Context()); err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if !commitTx(r.Context(), w, tx) {
 			return
 		}
 		http.Redirect(w, r, "/note-types", http.StatusSeeOther)
@@ -98,22 +95,17 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		}
 		q := db.New(store)
 		nt, err := q.GetNoteTypeForOwner(r.Context(), db.GetNoteTypeForOwnerParams{ID: id, OwnerID: user.ID})
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				notFound(w)
-				return
-			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if handleQueryErr(w, err) {
 			return
 		}
 		fields, err := q.ListFieldsForNoteType(r.Context(), id)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		templates, err := q.ListTemplatesForNoteType(r.Context(), id)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		render(w, pages["notetype_form"], http.StatusOK, map[string]any{
@@ -128,21 +120,20 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 			notFound(w)
 			return
 		}
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+		if !parseForm(w, r) {
 			return
 		}
 		name := strings.TrimSpace(r.PostForm.Get("name"))
 		css := r.PostForm.Get("css")
 		if name == "" {
-			http.Error(w, "bad request", http.StatusBadRequest)
+			badRequest(w)
 			return
 		}
 
 		fieldIDs := r.PostForm["field_id[]"]
 		fieldNames := r.PostForm["field_name[]"]
 		if len(fieldIDs) != len(fieldNames) {
-			http.Error(w, "bad request", http.StatusBadRequest)
+			badRequest(w)
 			return
 		}
 		fields := make([]db.FieldEdit, 0, len(fieldNames))
@@ -154,7 +145,7 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 			var fieldID pgtype.UUID
 			if fieldIDs[i] != "" {
 				if err := fieldID.Scan(fieldIDs[i]); err != nil {
-					http.Error(w, "bad request", http.StatusBadRequest)
+					badRequest(w)
 					return
 				}
 			}
@@ -166,7 +157,7 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		templateQfmts := r.PostForm["qfmt[]"]
 		templateAfmts := r.PostForm["afmt[]"]
 		if len(templateIDs) != len(templateNames) || len(templateNames) != len(templateQfmts) || len(templateNames) != len(templateAfmts) {
-			http.Error(w, "bad request", http.StatusBadRequest)
+			badRequest(w)
 			return
 		}
 		templates := make([]db.TemplateEdit, 0, len(templateNames))
@@ -178,21 +169,20 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 			var templateID pgtype.UUID
 			if templateIDs[i] != "" {
 				if err := templateID.Scan(templateIDs[i]); err != nil {
-					http.Error(w, "bad request", http.StatusBadRequest)
+					badRequest(w)
 					return
 				}
 			}
 			templates = append(templates, db.TemplateEdit{ID: templateID, Name: tname, Qfmt: templateQfmts[i], Afmt: templateAfmts[i]})
 		}
 
-		tx, err := store.Begin(r.Context())
-		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		tx, ok := startTx(r.Context(), w, store)
+		if !ok {
 			return
 		}
 		defer func() { _ = tx.Rollback(r.Context()) }()
 
-		err = db.UpdateNoteType(r.Context(), tx, user.ID, id, name, css, 0, fields, templates)
+		err := db.UpdateNoteType(r.Context(), tx, user.ID, id, name, css, 0, fields, templates)
 		if err != nil {
 			switch {
 			case errors.Is(err, pgx.ErrNoRows):
@@ -202,16 +192,15 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 			case errors.Is(err, db.ErrClozeNoteTypeSingleTemplate):
 				http.Error(w, "a cloze note type must have exactly one template", http.StatusBadRequest)
 			case errors.Is(err, db.ErrFieldNotFound), errors.Is(err, db.ErrTemplateNotFound):
-				http.Error(w, "bad request", http.StatusBadRequest)
+				badRequest(w)
 			case db.IsUniqueViolation(err, "note_types_owner_id_name_key"):
 				http.Error(w, "you already have a note type with that name", http.StatusConflict)
 			default:
-				http.Error(w, "internal server error", http.StatusInternalServerError)
+				serverError(w)
 			}
 			return
 		}
-		if err := tx.Commit(r.Context()); err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+		if !commitTx(r.Context(), w, tx) {
 			return
 		}
 		http.Redirect(w, r, "/note-types", http.StatusSeeOther)
@@ -230,7 +219,7 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 				http.Error(w, "delete or re-type its notes first", http.StatusConflict)
 				return
 			}
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			serverError(w)
 			return
 		}
 		if n == 0 {

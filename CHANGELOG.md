@@ -3,6 +3,20 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.34] - 2026-08-27
+
+### Changed
+- Simplified `internal/render`'s SVG-allowlist sanitisation: collapsed four duplicated
+  `sanitisableElements`/`svgShapeElements` registrations behind one `allAllowedElements` var and
+  gave `css.go`'s hex-colour grammar one shared definition instead of two independently-spelled
+  copies — no behavior change ([#127](https://github.com/Jolls/enshu/issues/127)).
+- Simplified the `internal/http` CRUD/import surface plus `auth.go`/`review.go`: added
+  `internal/http/respond.go` with shared `serverError`/`badRequest`/`handleQueryErr`/`parseForm`/
+  `startTx`/`commitTx` helpers, and replaced ~120 duplicated error-handling, form-parsing, and
+  transaction begin/commit sites across `decks.go`, `notes.go`, `notetypes.go`, `settings.go`,
+  `media.go`, `import.go`, `aiimport.go`, `auth.go`, and `review.go` with calls to them — no
+  behavior change ([#128](https://github.com/Jolls/enshu/issues/128)).
+
 ## [0.1.33] - 2026-08-27
 
 ### Changed
