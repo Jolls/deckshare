@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.37] - 2026-08-28
+
+### Fixed
+- Fixed the reviewer's interval labels collapsing Again/Hard/Good/Easy to the same `<1d` text
+  while a card is in a Learning/Relearning step (minute-scale intervals round to 0 scheduled
+  days), most visible right after failing a card with a long-standing interval: labels now fall
+  back to minute/hour granularity using each branch's `due` timestamp when `scheduledDays` is 0.
+
 ## [0.1.36] - 2026-08-28
 
 ### Added
