@@ -14,6 +14,7 @@
   var FLUSH_DEBOUNCE_MS = 2000;
   var REQUEUE_WINDOW_MS = 20 * 60 * 1000;
   var REFILL_THRESHOLD = 10;
+  var RATING_GOOD = 3; // fsrs.Good (internal/fsrs/schedule.go) -- wire-identical rating ordinal
 
   var state = {
     deckId: null,
@@ -217,20 +218,31 @@
     };
     state.pending.push(ev);
 
-    maybeRequeue(card, branch);
+    maybeRequeue(card, branch, rating);
 
     document.body.dispatchEvent(new CustomEvent('card-graded', { detail: ev }));
     scheduleFlush();
     showNext();
   }
 
-  // Cosmetic, never written anywhere (architecture.md §6): requeue a card in-session iff its
-  // graded branch lands it back in Learning/Relearning within 20 minutes, inserted ahead by
-  // max(3, cardsDueBefore) upcoming slots (plan resolved decision 11).
-  function maybeRequeue(card, branch) {
-    if (branch.state !== 1 && branch.state !== 3) return;
+  // Cosmetic, never written anywhere (architecture.md §6): a card requeues in-session iff its
+  // graded branch lands it back in Learning/Relearning within 20 minutes AND the rating that
+  // produced it was Again or Hard. Good never requeues in-session (#136) -- go-fsrs's default
+  // {1,10}-minute learning steps mean a New card's first Good otherwise satisfies the
+  // Learning-state/20-minute test too, forcing users toward Easy (an oversized ~8-day interval)
+  // just to avoid an immediate repeat. Easy already never requeues (its branch state is always
+  // Review), so this only changes Good's behaviour. This is a deliberate divergence from Anki's
+  // own same-session learning queue for Good specifically -- docs/architecture.md §20.
+  function shouldRequeue(rating, branchState, dueMs, nowMs) {
+    if (branchState !== 1 && branchState !== 3) return false;
+    if (rating === RATING_GOOD) return false;
+    if (isNaN(dueMs) || dueMs - nowMs > REQUEUE_WINDOW_MS) return false;
+    return true;
+  }
+
+  function maybeRequeue(card, branch, rating) {
     var dueMs = Date.parse(branch.due);
-    if (isNaN(dueMs) || dueMs - Date.now() > REQUEUE_WINDOW_MS) return;
+    if (!shouldRequeue(rating, branch.state, dueMs, Date.now())) return;
 
     var cardsDueBefore = 0;
     for (var i = 0; i < state.queue.length; i++) {

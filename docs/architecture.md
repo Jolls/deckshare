@@ -331,7 +331,9 @@ machine, not FSRS — even in real Anki. Deciding whether a card resurfaces late
 session needs only the card's already-known state plus the step config, so the client runs a
 lightweight local heuristic for that. It is cosmetic, not authoritative: worst case it's wrong
 by one card's position in a session the user is still sitting in, and nothing about it is ever
-written to `review_log` or `user_card_state`.
+written to `review_log` or `user_card_state`. A Good (or Easy) rating never requeues in-session,
+though — a card the user marks as known always waits for the next study session (#136), even
+when go-fsrs's short-term learning steps would otherwise land it back within the window.
 
 ### Fetching cards
 
@@ -860,3 +862,12 @@ cascades while `notes.deck_id` restricts, and deck deletion runs as an ordered t
 same shape Anki's `revlog.cid` has, which is what lets a studied deck be deletable without any
 `DELETE` path over training data (CLAUDE.md §2.5). Full policy: docs/schema.md, Deletion policy;
 reasoning: `docs/plans/51-deletion-policy.md`.
+
+**Good never requeues in-session.** Anki resurfaces a card within the same session whenever a
+learning/relearning step's delay is short enough, regardless of rating. Enshu's client-side
+heuristic (`web/static/review.js`'s `maybeRequeue`, cosmetic only, never written to
+`user_card_state`/`review_log`) additionally never requeues on a `Good` rating, so a card the
+user says they know is always deferred to the next study session rather than cycling back
+minutes later ([#136](https://github.com/Jolls/enshu/issues/136)). This does not trace to the
+content/progress seam (§2.1) — it is a UX choice, not a multiuser-forced one — which is why it
+needs this row per the §20 test.
