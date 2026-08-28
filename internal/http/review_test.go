@@ -50,7 +50,9 @@ func setupOneCard(t *testing.T, tx pgx.Tx, handler http.Handler, cookie *http.Co
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("create note status = %d: %s", w.Code, w.Body.String())
 	}
-	if err := tx.QueryRow(context.Background(), `SELECT id FROM cards LIMIT 1`).Scan(&cardID); err != nil {
+	if err := tx.QueryRow(context.Background(),
+		`SELECT id FROM cards WHERE deck_id = $1 ORDER BY id DESC LIMIT 1`, deckID,
+	).Scan(&cardID); err != nil {
 		t.Fatalf("lookup card: %v", err)
 	}
 	return deckID, cardID
@@ -258,7 +260,7 @@ func TestReviewBatch_Idempotency(t *testing.T) {
 		tx := beginTx(t)
 		handler, a := newTestHandler(t, tx, auth.Config{}, func() time.Time { return clock })
 		cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
-		_, cardA := setupOneCard(t, tx, handler, cookie)
+		deckA, cardA := setupOneCard(t, tx, handler, cookie)
 
 		id1, id2 := newTestEventID(), newTestEventID()
 		t1, t2 := clock, clock.Add(1*time.Minute)
@@ -271,7 +273,7 @@ func TestReviewBatch_Idempotency(t *testing.T) {
 		// A second, independently-seeded card graded via the shuffled order must converge to the
 		// same final state as the first card graded in sorted order. Fresh event ids: review_log.id
 		// is a global PK, so reusing id1/id2 here would hit the idempotency skip instead of grading.
-		_, cardB := setupSecondCard(t, tx, handler, cookie)
+		_, cardB := setupSecondCard(t, tx, handler, cookie, deckA)
 		id1b, id2b := newTestEventID(), newTestEventID()
 		shuffledForB := fmt.Sprintf(`{"events":[{"id":%q,"cardId":%q,"rating":3,"reviewedAt":%q},{"id":%q,"cardId":%q,"rating":3,"reviewedAt":%q}]}`,
 			id2b, cardB, t2.Format(time.RFC3339Nano), id1b, cardB, t1.Format(time.RFC3339Nano))
@@ -328,7 +330,7 @@ func TestReviewBatch_OutOfOrderReplay(t *testing.T) {
 	now := base
 	handler, a := newTestHandler(t, tx, auth.Config{}, func() time.Time { return now })
 	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
-	_, cardID := setupOneCard(t, tx, handler, cookie)
+	deckID, cardID := setupOneCard(t, tx, handler, cookie)
 
 	id1, id2 := newTestEventID(), newTestEventID()
 	t1, t2 := base, base.Add(10*time.Minute)
@@ -368,7 +370,7 @@ func TestReviewBatch_OutOfOrderReplay(t *testing.T) {
 	replayedFinal := getUserCardStateByCardID(t, tx, cardID)
 
 	// Control: a second card graded e1 then e2 in the natural order must converge to the same state.
-	_, controlCard := setupSecondCard(t, tx, handler, cookie)
+	_, controlCard := setupSecondCard(t, tx, handler, cookie, deckID)
 	e1c := fmt.Sprintf(`{"events":[{"id":%q,"cardId":%q,"rating":3,"reviewedAt":%q}]}`, newTestEventID(), controlCard, t1.Format(time.RFC3339Nano))
 	e2c := fmt.Sprintf(`{"events":[{"id":%q,"cardId":%q,"rating":3,"reviewedAt":%q}]}`, newTestEventID(), controlCard, t2.Format(time.RFC3339Nano))
 	doJSON(handler, "POST", "/api/reviews/batch", e1c, cookie, "http://example.com")
@@ -384,13 +386,10 @@ func TestReviewBatch_OutOfOrderReplay(t *testing.T) {
 // setupSecondCard adds a second note (and its card) to a deck the caller already created,
 // reusing the deck's only note type -- for tests that need two independent cards for the same
 // user.
-func setupSecondCard(t *testing.T, tx pgx.Tx, handler http.Handler, cookie *http.Cookie) (deckPath, cardID string) {
+func setupSecondCard(t *testing.T, tx pgx.Tx, handler http.Handler, cookie *http.Cookie, deckID string) (deckPath, cardID string) {
 	t.Helper()
 	ctx := context.Background()
-	var deckID, noteTypeID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM decks LIMIT 1`).Scan(&deckID); err != nil {
-		t.Fatalf("lookup deck: %v", err)
-	}
+	var noteTypeID string
 	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}

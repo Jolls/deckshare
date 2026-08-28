@@ -340,11 +340,17 @@ Windows 11, PowerShell primary (Bash tool also available — each takes its own 
 - Line endings: set `.gitattributes` (`* text=auto eol=lf`) at scaffold time so this repo
   never develops the mixed CRLF/LF problem. Do it in the first commit — retrofitting it
   rewrites every file.
-- **Stale local Postgres data breaks DB-backed tests.** The `compose.yaml` `pgdata` volume
-  persists across `run-app` sessions; leftover rows from manual testing make `go test ./...`
-  fail in ways that look like code bugs. Run
-  `bash .claude/skills/run-app/reset-db.sh` to wipe the volume, reapply migrations, and reseed
-  a test user/decks — don't improvise `docker compose down -v` by hand.
+- **DB-backed tests are scoped to their own rows, not the whole table**, and tolerate a
+  seeded/populated database — don't reset before every test run. If a DB-backed test fails and
+  stale data looks like the cause, propose running `bash .claude/skills/run-app/reset-db.sh`
+  rather than running it unprompted. If a new DB-backed test asserts a table-wide `count(*)` or
+  picks a row via unscoped `LIMIT 1`, that's a bug in the test — scope it to the row(s)/user the
+  test itself created (see #134/#119/#108/#141).
+- **A green `go test ./...` is not proof DB-backed tests ran.** With `DATABASE_URL` unset, every
+  DB-backed test calls `t.Skip` and the suite still reports `ok`. Export `DATABASE_URL` (see
+  `.env.example`) before trusting a DB-backed result, and if in doubt run
+  `go test ./... -v | grep -i skip` (PowerShell: `... | Select-String -Pattern skip`) to confirm
+  nothing silently skipped.
 - Go-specific, once the scaffold exists: `go generate` regenerates `sqlc` output — run it and
   commit the result, don't hand-edit generated files. Docker images are multi-arch, so builds
   cross-compile (`GOOS`/`GOARCH`), not just build for the host.

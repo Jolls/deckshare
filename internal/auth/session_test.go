@@ -202,13 +202,14 @@ func TestLogin_UnknownEmail(t *testing.T) {
 	tx := beginTx(t)
 	s := newTestService(t, tx)
 	ctx := context.Background()
+	before := countRows(t, tx, `SELECT count(*) FROM sessions`)
 
 	_, _, err := s.Login(ctx, "1.2.3.4", testEmail(), "any-password-at-all")
 	if !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("Login error = %v, want ErrInvalidCredentials", err)
 	}
-	if n := countRows(t, tx, `SELECT count(*) FROM sessions`); n != 0 {
-		t.Errorf("session row count = %d, want 0", n)
+	if after := countRows(t, tx, `SELECT count(*) FROM sessions`); after != before {
+		t.Errorf("session row count = %d, want unchanged (%d)", after, before)
 	}
 }
 
