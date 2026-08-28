@@ -21,6 +21,7 @@ type queueCounts struct {
 	New      int64
 	Learning int64
 	Due      int64
+	Left     int64
 }
 
 func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]*template.Template, now func() time.Time) {
@@ -31,6 +32,10 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		if err != nil {
 			serverError(w)
 			return
+		}
+		presetByDeck := make(map[pgtype.UUID][]byte, len(decks))
+		for _, d := range decks {
+			presetByDeck[d.ID] = d.Preset
 		}
 		window, err := studyDayWindow(r.Context(), q, user.ID, now())
 		if err != nil {
@@ -46,9 +51,40 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			serverError(w)
 			return
 		}
+		introducedRows, err := q.CountNewIntroducedTodayForUser(r.Context(), db.CountNewIntroducedTodayForUserParams{
+			UserID:        user.ID,
+			StudyDayStart: pgtype.Timestamptz{Time: window.Start, Valid: true},
+			StudyDayEnd:   pgtype.Timestamptz{Time: window.End, Valid: true},
+		})
+		if err != nil {
+			serverError(w)
+			return
+		}
+		introduced := make(map[pgtype.UUID]int64, len(introducedRows))
+		for _, row := range introducedRows {
+			introduced[row.DeckID] = row.IntroducedCount
+		}
+		reviewedRows, err := q.CountReviewedTodayForUser(r.Context(), db.CountReviewedTodayForUserParams{
+			UserID:        user.ID,
+			StudyDayStart: pgtype.Timestamptz{Time: window.Start, Valid: true},
+			StudyDayEnd:   pgtype.Timestamptz{Time: window.End, Valid: true},
+		})
+		if err != nil {
+			serverError(w)
+			return
+		}
+		reviewed := make(map[pgtype.UUID]int64, len(reviewedRows))
+		for _, row := range reviewedRows {
+			reviewed[row.DeckID] = row.ReviewedCount
+		}
 		counts := make(map[pgtype.UUID]queueCounts, len(rows))
 		for _, row := range rows {
-			counts[row.DeckID] = queueCounts{New: row.NewCount, Learning: row.LearningCount, Due: row.DueCount}
+			newRemaining := review.NewRemaining(review.NewPerDay(presetByDeck[row.DeckID]), introduced[row.DeckID])
+			revRemaining := review.RevRemaining(review.RevPerDay(presetByDeck[row.DeckID]), reviewed[row.DeckID])
+			counts[row.DeckID] = queueCounts{
+				New: row.NewCount, Learning: row.LearningCount, Due: row.DueCount,
+				Left: review.LeftToStudy(row.NewCount, row.LearningCount, row.DueCount, newRemaining, revRemaining),
+			}
 		}
 		render(w, pages["decks"], http.StatusOK, map[string]any{"User": user, "Decks": decks, "Counts": counts})
 	})))
@@ -139,10 +175,35 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			serverError(w)
 			return
 		}
+		introducedToday, err := q.CountNewIntroducedToday(r.Context(), db.CountNewIntroducedTodayParams{
+			UserID:        user.ID,
+			DeckID:        deckID,
+			StudyDayStart: pgtype.Timestamptz{Time: window.Start, Valid: true},
+			StudyDayEnd:   pgtype.Timestamptz{Time: window.End, Valid: true},
+		})
+		if err != nil {
+			serverError(w)
+			return
+		}
+		reviewedToday, err := q.CountReviewedToday(r.Context(), db.CountReviewedTodayParams{
+			UserID:        user.ID,
+			DeckID:        deckID,
+			StudyDayStart: pgtype.Timestamptz{Time: window.Start, Valid: true},
+			StudyDayEnd:   pgtype.Timestamptz{Time: window.End, Valid: true},
+		})
+		if err != nil {
+			serverError(w)
+			return
+		}
+		newRemaining := review.NewRemaining(review.NewPerDay(deck.Preset), introducedToday)
+		revRemaining := review.RevRemaining(review.RevPerDay(deck.Preset), reviewedToday)
 		render(w, pages["deck"], http.StatusOK, map[string]any{
 			"User": user, "Deck": deck, "Counts": counts, "Notes": notes,
 			"DesiredRetention": params.DesiredRetention(),
-			"Queue":            queueCounts{New: queueRow.NewCount, Learning: queueRow.LearningCount, Due: queueRow.DueCount},
+			"Queue": queueCounts{
+				New: queueRow.NewCount, Learning: queueRow.LearningCount, Due: queueRow.DueCount,
+				Left: review.LeftToStudy(queueRow.NewCount, queueRow.LearningCount, queueRow.DueCount, newRemaining, revRemaining),
+			},
 		})
 	})))
 

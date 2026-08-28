@@ -84,3 +84,20 @@ func RevRemaining(perDay int32, reviewedToday int64) int32 {
 	}
 	return remaining
 }
+
+// LeftToStudy is how many of a deck's New/Learning/Due cards are actually left to study today
+// (#137): New and Due are capped at today's remaining daily allowance (NewRemaining/RevRemaining
+// above); Learning/relearning cards are never capped by the daily-limit system (same rule
+// BuildBatch and ListDueCardsForStudy enforce -- state 1/3 rows are excluded from both the
+// new-card and review-card cap checks).
+func LeftToStudy(newCount, learningCount, dueCount int64, newRemaining, revRemaining int32) int64 {
+	newLeft := newCount
+	if int64(newRemaining) < newLeft {
+		newLeft = int64(newRemaining)
+	}
+	dueLeft := dueCount
+	if int64(revRemaining) < dueLeft {
+		dueLeft = int64(revRemaining)
+	}
+	return newLeft + learningCount + dueLeft
+}

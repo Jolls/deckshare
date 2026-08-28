@@ -435,6 +435,47 @@ func TestDeckEditRoute_NewMix(t *testing.T) {
 	})
 }
 
+// "Left today" (#137) reflects the daily new-card cap, not just the raw New queue count: a deck
+// with more New cards than its new.perDay allowance shows a smaller Left figure than New on both
+// the deck page and the /decks list.
+func TestDeckQueueCounts_LeftRespectsNewPerDayCap(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	email := testEmail()
+	cookie := loginCookie(t, tx, a, email, "correct-horse-battery")
+
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	var noteTypeID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+	addNotes(t, handler, cookie, deckPath, noteTypeID, 3) // 3 New cards, cap will be set to 1
+
+	w := doRequest(handler, "POST", deckPath+"/edit", "name=D&description=&new_per_day=1", cookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("POST edit status = %d, want 303: %s", w.Code, w.Body.String())
+	}
+
+	w = doRequest(handler, "GET", deckPath, "", cookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET %s status = %d", deckPath, w.Code)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "New: 3") || !strings.Contains(body, "Left today: 1") {
+		t.Errorf("deck page should show New: 3 and Left today: 1 (capped by new_per_day=1):\n%s", body)
+	}
+
+	w = doRequest(handler, "GET", "/decks", "", cookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /decks status = %d", w.Code)
+	}
+	body := w.Body.String()
+	rowRe := regexp.MustCompile(`<td>3</td>\s*<td>3</td>\s*<td>0</td>\s*<td>0</td>\s*<td>1</td>`)
+	if !rowRe.MatchString(body) {
+		t.Errorf("/decks body missing expected Cards/New/Learning/Due/Left row (Left capped to 1):\n%s", body)
+	}
+}
+
 func TestDeckRoutes_DuplicateName_409(t *testing.T) {
 	tx := beginTx(t)
 	handler, a := newTestHandler(t, tx, auth.Config{})

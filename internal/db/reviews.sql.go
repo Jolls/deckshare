@@ -49,6 +49,53 @@ func (q *Queries) CountNewIntroducedToday(ctx context.Context, arg CountNewIntro
 	return introduced_count, err
 }
 
+const countNewIntroducedTodayForUser = `-- name: CountNewIntroducedTodayForUser :many
+SELECT c.deck_id                                     AS deck_id,
+       count(DISTINCT rl.card_id)::bigint            AS introduced_count
+FROM review_log rl
+JOIN cards c       ON c.id = rl.card_id
+JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $1
+                   AND da.can_view AND da.can_study
+WHERE rl.user_id = $1
+  AND rl.state_before = 0
+  AND rl.reviewed_at >= $2::timestamptz
+  AND rl.reviewed_at <  $3::timestamptz
+GROUP BY c.deck_id
+`
+
+type CountNewIntroducedTodayForUserParams struct {
+	UserID        pgtype.UUID
+	StudyDayStart pgtype.Timestamptz
+	StudyDayEnd   pgtype.Timestamptz
+}
+
+type CountNewIntroducedTodayForUserRow struct {
+	DeckID          pgtype.UUID
+	IntroducedCount int64
+}
+
+// Same as CountNewIntroducedToday, grouped by deck, for the /decks list (#137). One query for
+// every deck the user can view rather than one CountNewIntroducedToday call per row.
+func (q *Queries) CountNewIntroducedTodayForUser(ctx context.Context, arg CountNewIntroducedTodayForUserParams) ([]CountNewIntroducedTodayForUserRow, error) {
+	rows, err := q.db.Query(ctx, countNewIntroducedTodayForUser, arg.UserID, arg.StudyDayStart, arg.StudyDayEnd)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountNewIntroducedTodayForUserRow
+	for rows.Next() {
+		var i CountNewIntroducedTodayForUserRow
+		if err := rows.Scan(&i.DeckID, &i.IntroducedCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countQueueForDeck = `-- name: CountQueueForDeck :one
 SELECT count(*) FILTER (WHERE ucs.user_id IS NULL)   AS new_count,
        count(*) FILTER (WHERE ucs.state IN (1, 3))   AS learning_count,
@@ -184,6 +231,53 @@ func (q *Queries) CountReviewedToday(ctx context.Context, arg CountReviewedToday
 	var reviewed_count int64
 	err := row.Scan(&reviewed_count)
 	return reviewed_count, err
+}
+
+const countReviewedTodayForUser = `-- name: CountReviewedTodayForUser :many
+SELECT c.deck_id                                     AS deck_id,
+       count(DISTINCT rl.card_id)::bigint            AS reviewed_count
+FROM review_log rl
+JOIN cards c       ON c.id = rl.card_id
+JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $1
+                   AND da.can_view AND da.can_study
+WHERE rl.user_id = $1
+  AND rl.state_before = 2
+  AND rl.reviewed_at >= $2::timestamptz
+  AND rl.reviewed_at <  $3::timestamptz
+GROUP BY c.deck_id
+`
+
+type CountReviewedTodayForUserParams struct {
+	UserID        pgtype.UUID
+	StudyDayStart pgtype.Timestamptz
+	StudyDayEnd   pgtype.Timestamptz
+}
+
+type CountReviewedTodayForUserRow struct {
+	DeckID        pgtype.UUID
+	ReviewedCount int64
+}
+
+// Same as CountReviewedToday, grouped by deck, for the /decks list (#137). One query for every
+// deck the user can view rather than one CountReviewedToday call per row.
+func (q *Queries) CountReviewedTodayForUser(ctx context.Context, arg CountReviewedTodayForUserParams) ([]CountReviewedTodayForUserRow, error) {
+	rows, err := q.db.Query(ctx, countReviewedTodayForUser, arg.UserID, arg.StudyDayStart, arg.StudyDayEnd)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountReviewedTodayForUserRow
+	for rows.Next() {
+		var i CountReviewedTodayForUserRow
+		if err := rows.Scan(&i.DeckID, &i.ReviewedCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getDeckForStudy = `-- name: GetDeckForStudy :one
