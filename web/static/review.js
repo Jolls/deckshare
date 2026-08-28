@@ -146,18 +146,30 @@
   }
 
   function updateIntervalLabels(card) {
+    var now = Date.now();
     for (var r = 1; r <= 4; r++) {
       var el = document.querySelector('[data-interval-for="' + r + '"]');
-      if (el) el.textContent = formatInterval(card.branches[r].scheduledDays);
+      if (el) el.textContent = formatInterval(card.branches[r], now);
     }
   }
 
-  function formatInterval(days) {
-    if (!(days > 0)) return '<1d';
-    if (days === 1) return '1d';
-    if (days < 30) return days + 'd';
-    if (days < 365) return Math.round(days / 30) + 'mo';
-    return (days / 365).toFixed(1) + 'y';
+  // scheduledDays is 0 for every Learning/Relearning-step branch (their steps are minute-scale --
+  // see the go-fsrs default {1,10}-minute learning steps noted below), which used to collapse
+  // Again/Hard/Good/Easy to the same "<1d" label right when a lapsed card's branches differ most.
+  // Falls back to due (already on every branch) for minute/hour granularity in that case.
+  function formatInterval(branch, now) {
+    var days = branch.scheduledDays;
+    if (days > 0) {
+      if (days === 1) return '1d';
+      if (days < 30) return days + 'd';
+      if (days < 365) return Math.round(days / 30) + 'mo';
+      return (days / 365).toFixed(1) + 'y';
+    }
+    var dueMs = Date.parse(branch.due);
+    var minutes = isNaN(dueMs) ? 0 : Math.round((dueMs - now) / 60000);
+    if (minutes < 1) return '<1m';
+    if (minutes < 60) return minutes + 'm';
+    return Math.round(minutes / 60) + 'h';
   }
 
   function reveal() {
