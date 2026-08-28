@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/Jolls/enshu/internal/auth"
@@ -28,6 +29,7 @@ func TestNoteRoutes_GoldenPath(t *testing.T) {
 	ctx := context.Background()
 
 	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
 	var noteTypeID string
 	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
@@ -44,7 +46,7 @@ func TestNoteRoutes_GoldenPath(t *testing.T) {
 	}
 
 	var noteID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM notes LIMIT 1`).Scan(&noteID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM notes WHERE deck_id = $1 ORDER BY id DESC LIMIT 1`, deckID).Scan(&noteID); err != nil {
 		t.Fatalf("lookup note: %v", err)
 	}
 	if countRows(t, tx, `SELECT count(*) FROM cards WHERE note_id = $1`, noteID) != 1 {
@@ -83,6 +85,7 @@ func TestNoteRoutes_ClozeGeneratesCardsByOrdinal(t *testing.T) {
 
 	w := doRequest(handler, "POST", "/decks", "name=D", cookie, "http://example.com")
 	deckPath := w.Header().Get("Location")
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
 
 	ntBody := url.Values{}
 	ntBody.Set("name", "Cloze2")
@@ -110,7 +113,7 @@ func TestNoteRoutes_ClozeGeneratesCardsByOrdinal(t *testing.T) {
 	}
 
 	var noteID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM notes LIMIT 1`).Scan(&noteID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM notes WHERE deck_id = $1 ORDER BY id DESC LIMIT 1`, deckID).Scan(&noteID); err != nil {
 		t.Fatalf("lookup note: %v", err)
 	}
 	if countRows(t, tx, `SELECT count(*) FROM cards WHERE note_id = $1`, noteID) != 2 {
@@ -127,6 +130,7 @@ func TestNoteRoutes_FieldCountMismatch_400(t *testing.T) {
 	ctx := context.Background()
 
 	deckPath := setupDeckAndNoteType(t, handler, cookie) // note type "Basic2" has 2 fields
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
 	var noteTypeID string
 	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
@@ -139,7 +143,7 @@ func TestNoteRoutes_FieldCountMismatch_400(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
 	}
-	if countRows(t, tx, `SELECT count(*) FROM notes`) != 0 {
+	if countRows(t, tx, `SELECT count(*) FROM notes WHERE deck_id = $1`, deckID) != 0 {
 		t.Error("no note should have been created")
 	}
 }
@@ -225,10 +229,8 @@ func TestNoteRoutes_ViewOnlyCollaborator_CannotAddNote(t *testing.T) {
 	ctx := context.Background()
 
 	deckPath := setupDeckAndNoteType(t, handler, ownerCookie)
-	var deckID, viewerID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM decks LIMIT 1`).Scan(&deckID); err != nil {
-		t.Fatalf("lookup deck: %v", err)
-	}
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	var viewerID string
 	if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, viewerEmail).Scan(&viewerID); err != nil {
 		t.Fatalf("lookup viewer: %v", err)
 	}
@@ -250,6 +252,7 @@ func TestNoteRoutes_AccessControl(t *testing.T) {
 	ctx := context.Background()
 
 	deckPath := setupDeckAndNoteType(t, handler, ownerCookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
 	var noteTypeID string
 	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
@@ -260,7 +263,7 @@ func TestNoteRoutes_AccessControl(t *testing.T) {
 	noteBody.Add("field[]", "A")
 	doRequest(handler, "POST", deckPath+"/notes", noteBody.Encode(), ownerCookie, "http://example.com")
 	var noteID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM notes LIMIT 1`).Scan(&noteID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM notes WHERE deck_id = $1 ORDER BY id DESC LIMIT 1`, deckID).Scan(&noteID); err != nil {
 		t.Fatalf("lookup note: %v", err)
 	}
 

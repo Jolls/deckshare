@@ -3,6 +3,26 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.35] - 2026-08-28
+
+### Fixed
+- Fixed DB-backed tests in `internal/auth` and `internal/http` that failed against a seeded
+  local Postgres database: scoped table-wide `count(*)` assertions and unscoped `LIMIT 1` row
+  lookups (in `setupOneCard`/`setupSecondCard` and AI-import/note test helpers) to the rows each
+  test itself created, instead of assuming the database starts empty
+  ([#134](https://github.com/Jolls/enshu/issues/134),
+  [#119](https://github.com/Jolls/enshu/issues/119),
+  [#108](https://github.com/Jolls/enshu/issues/108)).
+- Fixed six `internal/http` review-batch/access-control tests spuriously returning `forbidden`
+  for the test's own deck owner — root cause was the same unscoped card lookup as #108, not a
+  bug in `GradeBatch` or `ListStudyableCards`
+  ([#141](https://github.com/Jolls/enshu/issues/141)).
+
+### Changed
+- Documented in `CLAUDE.md` §16 that DB-backed tests now tolerate a seeded database and don't
+  need `reset-db.sh` run before every test session — propose a reset only when a failure looks
+  stale-data-related, and don't run it unprompted.
+
 ## [0.1.34] - 2026-08-27
 
 ### Changed

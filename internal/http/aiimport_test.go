@@ -16,11 +16,9 @@ func TestAIImportRoutes_GoldenPath(t *testing.T) {
 	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
 	ctx := context.Background()
 
-	setupDeckAndNoteType(t, handler, cookie)
-	var deckID, noteTypeID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM decks LIMIT 1`).Scan(&deckID); err != nil {
-		t.Fatalf("lookup deck: %v", err)
-	}
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	var noteTypeID string
 	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
@@ -59,10 +57,10 @@ func TestAIImportRoutes_GoldenPath(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("POST /import/ai status = %d, want 303: %s", w.Code, w.Body.String())
 	}
-	if countRows(t, tx, `SELECT count(*) FROM notes`) != 2 {
+	if countRows(t, tx, `SELECT count(*) FROM notes WHERE deck_id = $1`, deckID) != 2 {
 		t.Error("two notes should have been created")
 	}
-	if countRows(t, tx, `SELECT count(*) FROM cards`) != 2 {
+	if countRows(t, tx, `SELECT count(*) FROM cards WHERE deck_id = $1`, deckID) != 2 {
 		t.Error("two cards should have been created (one template each)")
 	}
 }
@@ -73,11 +71,9 @@ func TestAIImportRoutes_BadLine_AllOrNothing(t *testing.T) {
 	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
 	ctx := context.Background()
 
-	setupDeckAndNoteType(t, handler, cookie)
-	var deckID, noteTypeID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM decks LIMIT 1`).Scan(&deckID); err != nil {
-		t.Fatalf("lookup deck: %v", err)
-	}
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	var noteTypeID string
 	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
@@ -90,7 +86,7 @@ func TestAIImportRoutes_BadLine_AllOrNothing(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
 	}
-	if countRows(t, tx, `SELECT count(*) FROM notes`) != 0 {
+	if countRows(t, tx, `SELECT count(*) FROM notes WHERE deck_id = $1`, deckID) != 0 {
 		t.Error("no note should have been created when any line fails")
 	}
 }
@@ -101,11 +97,9 @@ func TestAIImportRoutes_FieldCountMismatch_400(t *testing.T) {
 	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
 	ctx := context.Background()
 
-	setupDeckAndNoteType(t, handler, cookie) // "Basic2" has 2 fields
-	var deckID, noteTypeID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM decks LIMIT 1`).Scan(&deckID); err != nil {
-		t.Fatalf("lookup deck: %v", err)
-	}
+	deckPath := setupDeckAndNoteType(t, handler, cookie) // "Basic2" has 2 fields
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	var noteTypeID string
 	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
@@ -118,7 +112,7 @@ func TestAIImportRoutes_FieldCountMismatch_400(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400: %s", w.Code, w.Body.String())
 	}
-	if countRows(t, tx, `SELECT count(*) FROM notes`) != 0 {
+	if countRows(t, tx, `SELECT count(*) FROM notes WHERE deck_id = $1`, deckID) != 0 {
 		t.Error("no note should have been created")
 	}
 }
@@ -129,11 +123,8 @@ func TestAIImportRoutes_ClozeWithoutMarkers_400(t *testing.T) {
 	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
 	ctx := context.Background()
 
-	doRequest(handler, "POST", "/decks", "name=D", cookie, "http://example.com")
-	var deckID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM decks LIMIT 1`).Scan(&deckID); err != nil {
-		t.Fatalf("lookup deck: %v", err)
-	}
+	w := doRequest(handler, "POST", "/decks", "name=D", cookie, "http://example.com")
+	deckID := strings.TrimPrefix(w.Header().Get("Location"), "/decks/")
 
 	ntBody := url.Values{}
 	ntBody.Set("name", "Cloze2")
@@ -143,7 +134,7 @@ func TestAIImportRoutes_ClozeWithoutMarkers_400(t *testing.T) {
 	ntBody.Add("template_name[]", "Cloze")
 	ntBody.Add("qfmt[]", "{{cloze:Text}}")
 	ntBody.Add("afmt[]", "{{cloze:Text}}")
-	w := doRequest(handler, "POST", "/note-types", ntBody.Encode(), cookie, "http://example.com")
+	w = doRequest(handler, "POST", "/note-types", ntBody.Encode(), cookie, "http://example.com")
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("create cloze note type status = %d: %s", w.Code, w.Body.String())
 	}
@@ -169,11 +160,9 @@ func TestAIImportRoutes_AccessControl(t *testing.T) {
 	strangerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
 	ctx := context.Background()
 
-	setupDeckAndNoteType(t, handler, ownerCookie)
-	var deckID, noteTypeID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM decks LIMIT 1`).Scan(&deckID); err != nil {
-		t.Fatalf("lookup deck: %v", err)
-	}
+	deckPath := setupDeckAndNoteType(t, handler, ownerCookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	var noteTypeID string
 	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
@@ -197,7 +186,7 @@ func TestAIImportRoutes_AccessControl(t *testing.T) {
 			}
 		})
 	}
-	if countRows(t, tx, `SELECT count(*) FROM notes`) != 0 {
+	if countRows(t, tx, `SELECT count(*) FROM notes WHERE deck_id = $1`, deckID) != 0 {
 		t.Error("stranger's request must not have created a note")
 	}
 }

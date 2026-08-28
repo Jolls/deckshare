@@ -235,7 +235,8 @@ func TestRoutes_ExpiredSession(t *testing.T) {
 func TestLogout_ValidSessionDeletesRow(t *testing.T) {
 	tx := beginTx(t)
 	handler, a := newTestHandler(t, tx, auth.Config{})
-	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	email := testEmail()
+	cookie := loginCookie(t, tx, a, email, "correct-horse-battery")
 
 	w := doRequest(handler, "POST", "/logout", "", cookie, "http://example.com")
 	if w.Code != 303 {
@@ -244,7 +245,11 @@ func TestLogout_ValidSessionDeletesRow(t *testing.T) {
 	if loc := w.Header().Get("Location"); loc != "/login" {
 		t.Errorf("Location = %q, want /login", loc)
 	}
-	if n := countRows(t, tx, `SELECT count(*) FROM sessions`); n != 0 {
+	var userID string
+	if err := tx.QueryRow(context.Background(), `SELECT id FROM users WHERE email = $1`, email).Scan(&userID); err != nil {
+		t.Fatalf("lookup user: %v", err)
+	}
+	if n := countRows(t, tx, `SELECT count(*) FROM sessions WHERE user_id = $1`, userID); n != 0 {
 		t.Errorf("session row count = %d, want 0", n)
 	}
 }
