@@ -3,6 +3,15 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.38] - 2026-08-28
+
+### Changed
+- Rewrote the run-app skill's `run.sh`/`reset-db.sh` bash scripts as a single Go program
+  (`scripts/run-app`, `start`/`stop`/`status`/`reset-db`) per CLAUDE.md §9's shell-scripting
+  rule; the port-3000 check now parses `netstat -ano` directly instead of through a
+  grep/awk pipeline, which was the flakiest part of the old script on Windows/git-bash
+  ([#109](https://github.com/Jolls/enshu/issues/109)).
+
 ## [0.1.37] - 2026-08-28
 
 ### Fixed
