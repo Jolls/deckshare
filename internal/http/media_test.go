@@ -35,6 +35,13 @@ func newMediaTestHandler(t *testing.T, tx pgx.Tx, store *media.Store) (http.Hand
 // the blob's sha256 hex digest.
 func seedMediaRef(t *testing.T, ctx context.Context, tx pgx.Tx, store *media.Store, ownerID string, data []byte) string {
 	t.Helper()
+	return seedMediaRefMime(t, ctx, tx, store, ownerID, data, "image/jpeg", "cat.jpg")
+}
+
+// seedMediaRefMime writes data into store and links it to a fresh deck owned by ownerID under the
+// given stored MIME type and filename, returning the blob's sha256 hex digest.
+func seedMediaRefMime(t *testing.T, ctx context.Context, tx pgx.Tx, store *media.Store, ownerID string, data []byte, mimeType, filename string) string {
+	t.Helper()
 	sum := sha256.Sum256(data)
 	sha := hex.EncodeToString(sum[:])
 	if err := store.Put(sha, data); err != nil {
@@ -48,10 +55,10 @@ func seedMediaRef(t *testing.T, ctx context.Context, tx pgx.Tx, store *media.Sto
 	if _, err := tx.Exec(ctx, `INSERT INTO deck_access (deck_id, user_id, can_view) VALUES ($1, $2, true)`, deckID, ownerID); err != nil {
 		t.Fatalf("grant access: %v", err)
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO media_blobs (sha256, size_bytes, mime) VALUES ($1, $2, 'image/jpeg')`, sha, len(data)); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO media_blobs (sha256, size_bytes, mime) VALUES ($1, $2, $3)`, sha, len(data), mimeType); err != nil {
 		t.Fatalf("insert media_blobs: %v", err)
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO media_refs (deck_id, filename, sha256) VALUES ($1, 'cat.jpg', $2)`, deckID, sha); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO media_refs (deck_id, filename, sha256) VALUES ($1, $2, $3)`, deckID, filename, sha); err != nil {
 		t.Fatalf("insert media_refs: %v", err)
 	}
 	return sha
@@ -159,5 +166,73 @@ func TestMediaRoute_RejectsMalformedHash(t *testing.T) {
 		if w.Code != http.StatusNotFound {
 			t.Errorf("GET /media/%s status = %d, want 404", sha, w.Code)
 		}
+	}
+}
+
+// A media blob stored with a script-capable MIME type (SVG and HTML chief among them, since both
+// are derivable from a filename extension by detectMediaMime) must never be served with that
+// Content-Type -- the vulnerability this issue fixes. The fix relabels, not withholds: the bytes
+// still come back unchanged, just as application/octet-stream.
+func TestMediaRoute_ForcesUnsafeMimeToOctetStream(t *testing.T) {
+	for _, mimeType := range []string{"image/svg+xml", "text/html", "text/plain", "application/javascript"} {
+		t.Run(mimeType, func(t *testing.T) {
+			tx := beginTx(t)
+			ctx := context.Background()
+			store := media.New(t.TempDir())
+			handler, a := newMediaTestHandler(t, tx, store)
+
+			ownerEmail := testEmail()
+			ownerCookie := loginCookie(t, tx, a, ownerEmail, "correct-horse-battery")
+			ownerID := userID(t, ctx, tx, ownerEmail)
+
+			data := []byte("<script>alert(1)</script>")
+			sha := seedMediaRefMime(t, ctx, tx, store, ownerID, data, mimeType, "x.dat")
+
+			w := doRequest(handler, "GET", "/media/"+sha, "", ownerCookie, "")
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+			}
+			if ct := w.Header().Get("Content-Type"); ct != "application/octet-stream" {
+				t.Errorf("Content-Type = %q, want application/octet-stream", ct)
+			}
+			if w.Body.String() != string(data) {
+				t.Errorf("body = %q, want %q", w.Body.String(), data)
+			}
+		})
+	}
+}
+
+// The allowlist must not be drawn so narrow that it silently breaks legitimate card images and
+// audio -- these must pass through with their stored Content-Type unchanged.
+func TestMediaRoute_AllowsSafeMimeTypes(t *testing.T) {
+	for _, mimeType := range []string{
+		"image/png", "image/gif", "image/webp", "audio/mpeg",
+		// The two values below are what mime.TypeByExtension(".ico")'s builtin table and
+		// http.DetectContentType's WAV/Ogg sniffing fallback actually produce -- not just
+		// the extension-derived forms already covered above. See detectMediaMime
+		// (internal/apkg/dbwrite.go).
+		"image/vnd.microsoft.icon", "audio/wave", "application/ogg",
+	} {
+		t.Run(mimeType, func(t *testing.T) {
+			tx := beginTx(t)
+			ctx := context.Background()
+			store := media.New(t.TempDir())
+			handler, a := newMediaTestHandler(t, tx, store)
+
+			ownerEmail := testEmail()
+			ownerCookie := loginCookie(t, tx, a, ownerEmail, "correct-horse-battery")
+			ownerID := userID(t, ctx, tx, ownerEmail)
+
+			data := []byte("fake media bytes")
+			sha := seedMediaRefMime(t, ctx, tx, store, ownerID, data, mimeType, "x.dat")
+
+			w := doRequest(handler, "GET", "/media/"+sha, "", ownerCookie, "")
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+			}
+			if ct := w.Header().Get("Content-Type"); ct != mimeType {
+				t.Errorf("Content-Type = %q, want %q", ct, mimeType)
+			}
+		})
 	}
 }

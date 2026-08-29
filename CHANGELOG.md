@@ -3,6 +3,16 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.1] - 2026-08-29
+
+### Security
+- `GET /media/{sha256}` now forces `Content-Type` to `application/octet-stream` for any stored
+  MIME type outside a small allowlist of image/audio/video types a card can legitimately
+  reference inline, instead of passing a media blob's filename-extension-derived MIME straight
+  through. Closes the gap where an imported `.svg`/`.html` media file was served as
+  same-origin active content, with only CSP's `script-src` (no other layer) stopping embedded
+  script from running under a shared deck ([#133](https://github.com/Jolls/enshu/issues/133)).
+
 ## [0.2.0] - 2026-08-28
 
 ### Fixed

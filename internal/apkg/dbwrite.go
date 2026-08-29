@@ -120,7 +120,9 @@ func Import(ctx context.Context, tx pgx.Tx, ownerID pgtype.UUID, col *IrCollecti
 // sniffing has no signature for SVG (XML with no fixed magic bytes) and misidentifies it as
 // text/plain, which browsers refuse to render in an <img>. mime.TypeByExtension covers SVG and
 // every other extension Anki media commonly uses; sniffing is the fallback for an unknown or
-// missing extension.
+// missing extension. This is not the safety boundary for what gets served back to a browser --
+// that judgement is made fresh on every response by mediaContentType (internal/http/media.go),
+// which decides whether the stored value here is safe to hand out as Content-Type verbatim.
 func detectMediaMime(filename string, data []byte) string {
 	if t := mime.TypeByExtension(filepath.Ext(filename)); t != "" {
 		return t
