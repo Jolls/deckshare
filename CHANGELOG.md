@@ -3,6 +3,17 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.4] - 2026-08-29
+
+### Fixed
+- Study-queue eligibility (`ListDueCardsForStudy`, `ListReviewCardsForStudy`, `CountQueueForDeck`,
+  `CountQueueForUser`) now filters `due <= now` instead of `due < study_day_end`, which pulled in
+  everything due up to ~24h ahead depending on the time of day. That 24h look-ahead is what let a
+  card graded Hard with a short FSRS learning step (e.g. ~6min) requeue itself indefinitely within
+  a single session, then report "all cards tested" on the next session once the day-window had
+  moved past it. See [#154](https://github.com/Jolls/enshu/issues/154), filed for a future
+  opt-in, per-user/deck look-ahead setting now that the default is zero.
+
 ## [0.2.3] - 2026-08-29
 
 ### Added

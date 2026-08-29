@@ -49,17 +49,24 @@ func gradeCards(t *testing.T, tx pgx.Tx, userID pgtype.UUID, reviewedAt time.Tim
 	}
 }
 
-// insertDueCard gives cardID a review-state user_card_state row due inside window and last
-// reviewed the day before, so it is eligible today under every filter except the new-card cap
-// (which does not apply to it -- it already has a user_card_state row). Stability/difficulty are
-// non-zero: fsrs.PreviewAll rejects a non-New card below its minimum (schedule.go), which a
-// zero-value review-state row would otherwise trip.
+// dueCardOffset is how far before every test's now (window.Start.Add(time.Hour)) insertDueCard
+// et al. place a card's due -- eligibility is due <= now with no look-ahead, so due must land at
+// or before now, not merely "inside the study day" the way it could when the query still allowed
+// due < study_day_end. 30 minutes leaves headroom under insertDueCards' per-card staggering
+// (up to a few dozen cards, one minute apart) without crossing now.
+const dueCardOffset = 30 * time.Minute
+
+// insertDueCard gives cardID a review-state user_card_state row already due (at or before this
+// test file's now) and last reviewed the day before, so it is eligible today under every filter
+// except the new-card cap (which does not apply to it -- it already has a user_card_state row).
+// Stability/difficulty are non-zero: fsrs.PreviewAll rejects a non-New card below its minimum
+// (schedule.go), which a zero-value review-state row would otherwise trip.
 func insertDueCard(t *testing.T, tx pgx.Tx, userID, cardID pgtype.UUID, window StudyDay) {
 	t.Helper()
 	if _, err := tx.Exec(context.Background(),
 		`INSERT INTO user_card_state (user_id, card_id, due, state, reps, stability, difficulty, last_review)
 		 VALUES ($1, $2, $3, 2, 1, 2.5, 5.0, $4)`,
-		userID, cardID, window.Start.Add(2*time.Hour), window.Start.Add(-24*time.Hour),
+		userID, cardID, window.Start.Add(dueCardOffset), window.Start.Add(-24*time.Hour),
 	); err != nil {
 		t.Fatalf("insert due card: %v", err)
 	}
@@ -73,7 +80,7 @@ func insertDueCards(t *testing.T, tx pgx.Tx, userID pgtype.UUID, cardIDs []pgtyp
 		if _, err := tx.Exec(context.Background(),
 			`INSERT INTO user_card_state (user_id, card_id, due, state, reps, stability, difficulty, last_review)
 			 VALUES ($1, $2, $3, 2, 1, 2.5, 5.0, $4)`,
-			userID, cardID, window.Start.Add(2*time.Hour+time.Duration(i)*time.Minute), window.Start.Add(-24*time.Hour),
+			userID, cardID, window.Start.Add(dueCardOffset+time.Duration(i)*time.Minute), window.Start.Add(-24*time.Hour),
 		); err != nil {
 			t.Fatalf("insert due card %d: %v", i, err)
 		}
@@ -88,7 +95,7 @@ func insertDueCardWithSchedule(t *testing.T, tx pgx.Tx, userID, cardID pgtype.UU
 	if _, err := tx.Exec(context.Background(),
 		`INSERT INTO user_card_state (user_id, card_id, due, state, reps, stability, difficulty, last_review, scheduled_days)
 		 VALUES ($1, $2, $3, 2, 1, 2.5, 5.0, $4, $5)`,
-		userID, cardID, window.Start.Add(2*time.Hour), window.Start.Add(-24*time.Hour), scheduledDays,
+		userID, cardID, window.Start.Add(dueCardOffset), window.Start.Add(-24*time.Hour), scheduledDays,
 	); err != nil {
 		t.Fatalf("insert due card with schedule: %v", err)
 	}
