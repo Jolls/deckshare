@@ -255,13 +255,31 @@ func decodeBatch(r *http.Request) ([]review.Event, error) {
 // of html/template and encoding concerns. --
 
 type branchView struct {
-	Due           string
-	State         int
-	ScheduledDays int32
+	Due           string `json:"due"`
+	State         int    `json:"state"`
+	ScheduledDays int32  `json:"scheduledDays"`
 }
 
 func toBranchView(o fsrs.Outcome) branchView {
 	return branchView{Due: o.Due.UTC().Format(time.RFC3339Nano), State: int(o.State), ScheduledDays: o.ScheduledDays}
+}
+
+// previewView is fsrs.Preview on the wire -- the same three fields per branch that the hidden
+// card node carries as data-* attributes, so the client parses one branch shape, not two.
+type previewView struct {
+	Again branchView `json:"again"`
+	Hard  branchView `json:"hard"`
+	Good  branchView `json:"good"`
+	Easy  branchView `json:"easy"`
+}
+
+func toPreviewView(p fsrs.Preview) previewView {
+	return previewView{
+		Again: toBranchView(p.Again),
+		Hard:  toBranchView(p.Hard),
+		Good:  toBranchView(p.Good),
+		Easy:  toBranchView(p.Easy),
+	}
 }
 
 type cardView struct {
@@ -303,10 +321,11 @@ func toBatchView(b review.Batch) batchView {
 }
 
 type resultView struct {
-	ID     string `json:"id"`
-	CardID string `json:"cardId"`
-	Status string `json:"status"`
-	After  any    `json:"after,omitempty"`
+	ID      string       `json:"id"`
+	CardID  string       `json:"cardId"`
+	Status  string       `json:"status"`
+	After   any          `json:"after,omitempty"`
+	Preview *previewView `json:"preview,omitempty"`
 }
 
 func toResultViews(results []review.Result) []resultView {
@@ -315,6 +334,10 @@ func toResultViews(results []review.Result) []resultView {
 		v := resultView{ID: r.ID.String(), CardID: r.CardID.String(), Status: string(r.Status)}
 		if r.After != nil {
 			v.After = r.After
+		}
+		if r.Preview != nil {
+			pv := toPreviewView(*r.Preview)
+			v.Preview = &pv
 		}
 		views[i] = v
 	}

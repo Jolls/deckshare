@@ -76,7 +76,8 @@ func userCardStateRowToFSRS(row db.UserCardState) fsrs.CardState {
 	return cs
 }
 
-func currentStateDTO(ctx context.Context, q *db.Queries, userID, cardID pgtype.UUID) (*CardStateDTO, error) {
+// currentState reads the stored scheduling state for (user, card); nil when the card has no row.
+func currentState(ctx context.Context, q *db.Queries, userID, cardID pgtype.UUID) (*fsrs.CardState, error) {
 	row, err := q.GetUserCardState(ctx, db.GetUserCardStateParams{UserID: userID, CardID: cardID})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -84,8 +85,8 @@ func currentStateDTO(ctx context.Context, q *db.Queries, userID, cardID pgtype.U
 		}
 		return nil, err
 	}
-	dto := cardStateToDTO(userCardStateRowToFSRS(row))
-	return &dto, nil
+	cs := userCardStateRowToFSRS(row)
+	return &cs, nil
 }
 
 func durationMsArg(d *int32) pgtype.Int4 {
@@ -124,12 +125,12 @@ func appendReviewLogRow(ctx context.Context, q *db.Queries, p fsrs.Params, userI
 
 // duplicateOf answers a retry: the id is already in review_log, so nothing further is written and
 // the stored state is reported as it stands.
-func duplicateOf(ctx context.Context, q *db.Queries, userID, cardID pgtype.UUID) (*CardStateDTO, Status, error) {
-	dto, err := currentStateDTO(ctx, q, userID, cardID)
+func duplicateOf(ctx context.Context, q *db.Queries, userID, cardID pgtype.UUID) (*fsrs.CardState, Status, error) {
+	after, err := currentState(ctx, q, userID, cardID)
 	if err != nil {
 		return nil, "", err
 	}
-	return dto, StatusDuplicate, nil
+	return after, StatusDuplicate, nil
 }
 
 // beforeInLogOrder reports whether (aAt, aID) sorts before (bAt, bID) under review_log's own
@@ -166,6 +167,30 @@ func orderedResults(order []pgtype.UUID, results map[pgtype.UUID]Result) []Resul
 		out[i] = results[id]
 	}
 	return out
+}
+
+// resultFor assembles one event's Result: the stored state as a DTO, plus the four branches that
+// state produces at now. The preview is what lets the client relabel a card its learning-steps
+// heuristic requeued (#142) -- the branches shipped with the card at batch-fetch time describe its
+// pre-grade state. now, not ev.ReviewedAt: the labels describe intervals from the moment the user
+// is looking at them, which is the same convention batch-fetch's preview uses.
+func resultFor(p fsrs.Params, ev Event, status Status, after *fsrs.CardState, now time.Time) Result {
+	res := Result{ID: ev.ID, CardID: ev.CardID, Status: status}
+	if after == nil {
+		return res
+	}
+	dto := cardStateToDTO(*after)
+	res.After = &dto
+
+	preview, err := fsrs.PreviewAll(p, *after, now)
+	if err != nil {
+		// Deliberately not fatal to the batch. A preview is an interval label; the grades already
+		// applied in this transaction are review_log rows, which are unrecoverable if rolled back
+		// (§2.5). The client simply keeps the branches it already has.
+		return res
+	}
+	res.Preview = &preview
+	return res
 }
 
 // GradeBatch is the whole of POST /api/reviews/batch's server side (architecture.md §6), except
@@ -256,17 +281,22 @@ func GradeBatch(ctx context.Context, tx pgx.Tx, userID pgtype.UUID, now time.Tim
 		dup[id] = true
 	}
 
+	paramsCache := NewParamsCache()
 	fresh := make([]Event, 0, len(toGrade))
 	for _, ev := range toGrade {
 		if !dup[ev.ID] {
 			fresh = append(fresh, ev)
 			continue
 		}
-		dto, status, err := duplicateOf(ctx, q, userID, ev.CardID)
+		p, err := paramsCache.Get(ctx, q, userID, deckOf[ev.CardID])
 		if err != nil {
 			return nil, err
 		}
-		results[ev.ID] = Result{ID: ev.ID, CardID: ev.CardID, Status: status, After: dto}
+		after, status, err := duplicateOf(ctx, q, userID, ev.CardID)
+		if err != nil {
+			return nil, err
+		}
+		results[ev.ID] = resultFor(p, ev, status, after, now)
 	}
 	if len(fresh) == 0 {
 		return orderedResults(order, results), nil
@@ -277,7 +307,6 @@ func GradeBatch(ctx context.Context, tx pgx.Tx, userID pgtype.UUID, now time.Tim
 		return beforeInLogOrder(fresh[i].ReviewedAt, fresh[i].ID, fresh[j].ReviewedAt, fresh[j].ID)
 	})
 
-	paramsCache := NewParamsCache()
 	for _, ev := range fresh {
 		p, err := paramsCache.Get(ctx, q, userID, deckOf[ev.CardID])
 		if err != nil {
@@ -288,7 +317,7 @@ func GradeBatch(ctx context.Context, tx pgx.Tx, userID pgtype.UUID, now time.Tim
 		if err != nil {
 			return nil, err
 		}
-		results[ev.ID] = Result{ID: ev.ID, CardID: ev.CardID, Status: status, After: after}
+		results[ev.ID] = resultFor(p, ev, status, after, now)
 	}
 
 	return orderedResults(order, results), nil
@@ -296,7 +325,7 @@ func GradeBatch(ctx context.Context, tx pgx.Tx, userID pgtype.UUID, now time.Tim
 
 // gradeEvent grades one event, under its lock already held. See plan §0.5 for the exact
 // in-order/out-of-order sequence this implements.
-func gradeEvent(ctx context.Context, q *db.Queries, p fsrs.Params, userID pgtype.UUID, ev Event) (*CardStateDTO, Status, error) {
+func gradeEvent(ctx context.Context, q *db.Queries, p fsrs.Params, userID pgtype.UUID, ev Event) (*fsrs.CardState, Status, error) {
 	row, err := q.GetUserCardState(ctx, db.GetUserCardStateParams{UserID: userID, CardID: ev.CardID})
 	var before fsrs.CardState
 	switch {
@@ -314,7 +343,7 @@ func gradeEvent(ctx context.Context, q *db.Queries, p fsrs.Params, userID pgtype
 	return gradeOutOfOrder(ctx, q, p, userID, ev)
 }
 
-func gradeInOrder(ctx context.Context, q *db.Queries, p fsrs.Params, userID pgtype.UUID, ev Event, before fsrs.CardState) (*CardStateDTO, Status, error) {
+func gradeInOrder(ctx context.Context, q *db.Queries, p fsrs.Params, userID pgtype.UUID, ev Event, before fsrs.CardState) (*fsrs.CardState, Status, error) {
 	elapsedDaysBefore := fsrs.ElapsedDays(before, ev.ReviewedAt)
 	outcome, err := fsrs.Schedule(p, before, ev.Rating, ev.ReviewedAt)
 	if err != nil {
@@ -358,14 +387,14 @@ func gradeInOrder(ctx context.Context, q *db.Queries, p fsrs.Params, userID pgty
 	// review_log row and leaves user_card_state untouched. That is deliberate: review_log stays
 	// the complete truth (§2.5) and a replay reconciles. The DTO returned is the stored state,
 	// not `outcome`.
-	dto, err := currentStateDTO(ctx, q, userID, ev.CardID)
+	after, err := currentState(ctx, q, userID, ev.CardID)
 	if err != nil {
 		return nil, "", err
 	}
-	return dto, StatusApplied, nil
+	return after, StatusApplied, nil
 }
 
-func gradeOutOfOrder(ctx context.Context, q *db.Queries, p fsrs.Params, userID pgtype.UUID, ev Event) (*CardStateDTO, Status, error) {
+func gradeOutOfOrder(ctx context.Context, q *db.Queries, p fsrs.Params, userID pgtype.UUID, ev Event) (*fsrs.CardState, Status, error) {
 	existingRows, err := q.ListReviewLogForCard(ctx, db.ListReviewLogForCardParams{UserID: userID, CardID: ev.CardID})
 	if err != nil {
 		return nil, "", err
@@ -396,6 +425,5 @@ func gradeOutOfOrder(ctx context.Context, q *db.Queries, p fsrs.Params, userID p
 		return nil, "", err
 	}
 
-	dto := cardStateToDTO(final)
-	return &dto, StatusApplied, nil
+	return &final, StatusApplied, nil
 }

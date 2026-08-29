@@ -3,6 +3,15 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.0] - 2026-08-28
+
+### Fixed
+- Fixed a card requeued within a study session showing the interval labels computed for its
+  state *before* it was graded: `POST /api/reviews/batch` now returns a `preview` object per
+  result — the four rating outcomes recomputed server-side from the state the grade actually
+  stored — and the reviewer swaps those into the requeued card's slot
+  ([#142](https://github.com/Jolls/enshu/issues/142)).
+
 ## [0.1.38] - 2026-08-28
 
 ### Changed
