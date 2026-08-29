@@ -42,8 +42,9 @@ type Batch struct {
 // queueRow is the common shape BuildBatch's two source shapes -- ListDueCardsForStudyRow (the
 // single-query path) and ListReviewCardsForStudyRow/ListNewCardsForStudyRow (the mixed-mode
 // path, #116) -- get normalised into before rendering, so renderQueueRows has exactly one row
-// shape to work with regardless of which query produced it. SortKey is only meaningful for
-// review-ish rows (used to build the next single-query or review sub-cursor); zero on a new row.
+// shape to work with regardless of which query produced it. SortKey carries whichever cursor key
+// the row's source query ranks by -- raw_key/sort_key for a due or review row, the new-card
+// gather-order position for a new row (#82) -- used to build the next cursor.
 type queueRow struct {
 	CardID        pgtype.UUID
 	CardOrdinal   int32
@@ -97,7 +98,7 @@ func queueRowFromNew(r db.ListNewCardsForStudyRow) queueRow {
 		Lapses: r.Lapses, ScheduledDays: r.ScheduledDays, LearningSteps: r.LearningSteps,
 		NoteFields: r.NoteFields, NoteTags: r.NoteTags,
 		NoteTypeID: r.NoteTypeID, NoteTypeName: r.NoteTypeName, IsCloze: r.IsCloze,
-		TemplateName: r.TemplateName, Qfmt: r.Qfmt, Afmt: r.Afmt,
+		TemplateName: r.TemplateName, Qfmt: r.Qfmt, Afmt: r.Afmt, SortKey: r.SortKey,
 	}
 }
 
@@ -262,6 +263,7 @@ func buildMixedBatch(ctx context.Context, q *db.Queries, p fsrs.Params, userID, 
 		UserID:       userID,
 		DeckID:       deckID,
 		NewRemaining: newRemaining,
+		CursorKey:    cur.newKeyArg(),
 		CursorCardID: cur.newCardIDArg(),
 		BatchSize:    limit,
 	})
@@ -311,9 +313,10 @@ func buildMixedBatch(ctx context.Context, q *db.Queries, p fsrs.Params, userID, 
 			next.RevAtStart, next.RevKey, next.RevCardID = carryRevCursor(cur)
 		}
 		if newTaken > 0 {
-			next.NewCardID = newRows[newTaken-1].CardID
+			last := newRows[newTaken-1]
+			next.NewKey, next.NewCardID = last.SortKey, last.CardID
 		} else {
-			next.NewAtStart, next.NewCardID = carryNewCursor(cur)
+			next.NewAtStart, next.NewKey, next.NewCardID = carryNewCursor(cur)
 		}
 		batch.Cursor = EncodeCursor(next)
 	}
@@ -323,7 +326,7 @@ func buildMixedBatch(ctx context.Context, q *db.Queries, p fsrs.Params, userID, 
 // carryRevCursor and carryNewCursor forward cur's sub-cursor position unchanged, for the source
 // that contributed zero picks in this fetch (buildMixedBatch). cur.AtStart -- the zero Cursor,
 // before any Mixed field was ever set -- means "fresh" for both sub-cursors, same as
-// Cursor.revKeyArg/newCardIDArg treat it.
+// Cursor.revKeyArg/newKeyArg/newCardIDArg treat it.
 func carryRevCursor(cur Cursor) (atStart bool, key float64, id pgtype.UUID) {
 	if cur.AtStart {
 		return true, 0, pgtype.UUID{}
@@ -331,11 +334,11 @@ func carryRevCursor(cur Cursor) (atStart bool, key float64, id pgtype.UUID) {
 	return cur.RevAtStart, cur.RevKey, cur.RevCardID
 }
 
-func carryNewCursor(cur Cursor) (atStart bool, id pgtype.UUID) {
+func carryNewCursor(cur Cursor) (atStart bool, key float64, id pgtype.UUID) {
 	if cur.AtStart {
-		return true, pgtype.UUID{}
+		return true, 0, pgtype.UUID{}
 	}
-	return cur.NewAtStart, cur.NewCardID
+	return cur.NewAtStart, cur.NewKey, cur.NewCardID
 }
 
 // renderQueueRows turns fetched rows into rendered, sanitised, FSRS-previewed Cards -- shared by

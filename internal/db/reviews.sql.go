@@ -400,7 +400,14 @@ WITH scored AS (
            COALESCE(ucs.suspended, false)               AS suspended,
            ucs.buried_until                            AS buried_until,
            CASE
-               WHEN ucs.user_id IS NULL THEN 0::double precision
+               -- New-card gather order (#82): Anki's persisted new-card queue position when the
+               -- import carried one, else the sentinel below -- pushes position-less cards (never
+               -- imported, manually created) after every real position, falling back to the
+               -- card_id tie-break among themselves (unchanged behavior for that subset). The
+               -- 2147483647 (int32 max) sentinel is repeated, not shared -- sqlc has no macro
+               -- mechanism across query bodies -- at 3 other sites in this file (search for it);
+               -- change all 4 together or the new-card sort order and its own cap boundary desync.
+               WHEN ucs.user_id IS NULL THEN COALESCE(c.import_due_position, 2147483647)::double precision
                WHEN $2::text = 'random' THEN
                    ('x' || md5(c.id::text || $3::text))
                    ::bit(52)::bigint::double precision
@@ -453,6 +460,17 @@ LEFT JOIN LATERAL (
     OFFSET GREATEST($9::int - 1, 0)
     LIMIT 1
 ) rev_cutoff ON true
+LEFT JOIN LATERAL (
+    SELECT COALESCE(c2.import_due_position, 2147483647)::double precision AS cutoff_key,
+           c2.id AS cutoff_id
+    FROM cards c2
+    LEFT JOIN user_card_state u2
+           ON u2.user_id = $4 AND u2.card_id = c2.id
+    WHERE c2.deck_id = $5 AND u2.user_id IS NULL
+    ORDER BY cutoff_key, c2.id
+    OFFSET GREATEST($10::int - 1, 0)
+    LIMIT 1
+) new_cutoff ON true
 WHERE NOT scored.suspended
   AND (scored.buried_until IS NULL OR scored.buried_until <= ($6::timestamptz)::date)
   -- look_ahead_minutes (#154, decks.preset "due.lookAheadMinutes", default 0) widens the due
@@ -462,28 +480,17 @@ WHERE NOT scored.suspended
   AND (scored.unseen OR scored.due <= $7::timestamptz + make_interval(mins => $8::int))
   AND (scored.last_review IS NULL OR scored.last_review < $6::timestamptz)
   -- The per-deck daily new-card cap (#101). new_remaining is the deck's configured limit minus what
-  -- has already been introduced today; the caller computes it. The subselect is uncorrelated, so
-  -- Postgres runs it once per fetch as an InitPlan: it is the id of the last never-seen card still
-  -- inside the allowance, in the same id-ascending order this query serves new cards in.
-  -- Capping by POSITION, not by how many rows this fetch returns, is what makes the cap hold
-  -- across refills: a card introduced earlier today has a user_card_state row and has left this
-  -- set, so the ranking restarts at 1, while a card already served this session but not yet graded
-  -- is still in it and still occupies its rank. COALESCE covers "fewer never-seen cards than the
-  -- allowance" -- all of them pass. GREATEST keeps OFFSET non-negative: the InitPlan is evaluated
-  -- even when the new_remaining > 0 guard is false. Suspended/buried are not re-checked here
-  -- because a card with no user_card_state row can be neither.
+  -- has already been introduced today; the caller computes it. Capping by POSITION (raw_key/id),
+  -- not by how many rows this fetch returns, is what makes the cap hold across refills: a card
+  -- introduced earlier today has a user_card_state row and has left this set, so the ranking
+  -- restarts at 1, while a card already served this session but not yet graded is still in it and
+  -- still occupies its rank. cutoff_key NULL means fewer never-seen cards exist than the
+  -- allowance -- all of them pass. Suspended/buried are not re-checked here because a card with no
+  -- user_card_state row can be neither.
   AND (NOT scored.unseen
        OR ($10::int > 0
-           AND scored.card_id <= COALESCE((
-                 SELECT c2.id
-                 FROM cards c2
-                 LEFT JOIN user_card_state u2
-                        ON u2.user_id = $4 AND u2.card_id = c2.id
-                 WHERE c2.deck_id = $5 AND u2.user_id IS NULL
-                 ORDER BY c2.id
-                 OFFSET GREATEST($10::int - 1, 0)
-                 LIMIT 1
-               ), 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid)))
+           AND (new_cutoff.cutoff_key IS NULL
+                OR (scored.raw_key, scored.card_id) <= (new_cutoff.cutoff_key, new_cutoff.cutoff_id))))
   -- The per-deck daily review cap (#115), independent of the new-card cap above. rev_remaining is
   -- the deck's configured limit minus what's already been reviewed today; the caller computes it.
   -- Row comparison against rev_cutoff (the (raw_key,id) at the allowance boundary, computed above)
@@ -549,11 +556,12 @@ type ListDueCardsForStudyRow struct {
 // everything else ('afterReviews' -- the original default -- or 'beforeReviews'; 'mixed' bypasses
 // this query entirely, see ListReviewCardsForStudy/ListNewCardsForStudy below).
 //
-// `scored` computes each row's raw_key once: 0 for a never-seen row (never-seen cards are always
-// ordered by id -- new-card gather order is out of scope, #117 -- so their raw_key only has to be
-// a value, not a meaningful one), otherwise the rev_order-selected expression. Recomputing it a
-// second time per row (once for the CASE, once for a plain column reference) would risk the two
-// copies drifting; a CTE lets the outer query reference it as an ordinary column instead.
+// `scored` computes each row's raw_key once: a never-seen row sorts by its persisted Anki
+// new-card queue position when the import carried one, else after every real position (#82; the
+// rest of Anki's gather-mode config -- random/other-field ordering, deck-tree limits -- stays out
+// of scope, #117), otherwise the rev_order-selected expression. Recomputing it a second time per
+// row (once for the CASE, once for a plain column reference) would risk the two copies drifting;
+// a CTE lets the outer query reference it as an ordinary column instead.
 //
 // The outer query also computes group_bit -- 0/1 depending on new_mix -- so the two groups
 // (never-seen vs. everything else) always sort as a whole ahead of/behind each other. group_bit
@@ -566,6 +574,11 @@ type ListDueCardsForStudyRow struct {
 // Postgres evaluates once per fetch, same InitPlan shape as the new-card cutoff below; a LEFT
 // JOIN so a deck with fewer review-state cards than the allowance still returns a row
 // (cutoff_key NULL).
+// The new-card cutoff for the per-deck daily new-card cap (#101): the (position, id) of the card
+// ranked last within the deck's remaining new-card allowance, in the same (import_due_position,
+// id) gather order raw_key uses for never-seen rows (#82) -- so the cap boundary agrees with the
+// order it's capping, same InitPlan/LEFT JOIN shape as rev_cutoff above. Sentinel: keep in sync
+// with the scored CTE's raw_key CASE above (see its doc comment).
 func (q *Queries) ListDueCardsForStudy(ctx context.Context, arg ListDueCardsForStudyParams) ([]ListDueCardsForStudyRow, error) {
 	rows, err := q.db.Query(ctx, listDueCardsForStudy,
 		arg.NewMix,
@@ -625,8 +638,31 @@ func (q *Queries) ListDueCardsForStudy(ctx context.Context, arg ListDueCardsForS
 }
 
 const listNewCardsForStudy = `-- name: ListNewCardsForStudy :many
-SELECT c.id                                        AS card_id,
-       c.ordinal                                   AS card_ordinal,
+WITH scored AS (
+    -- Sentinel: keep 2147483647 in sync with the other 3 occurrences in this file (search for
+    -- it) -- see ListDueCardsForStudy's raw_key CASE doc comment (#82).
+    SELECT c.id                                                            AS card_id,
+           c.ordinal                                                       AS card_ordinal,
+           COALESCE(c.import_due_position, 2147483647)::double precision   AS sort_key,
+           n.fields                                                       AS note_fields,
+           n.tags                                                         AS note_tags,
+           nt.id                                                          AS note_type_id,
+           nt.name                                                        AS note_type_name,
+           nt.is_cloze                                                    AS is_cloze,
+           t.name                                                         AS template_name,
+           t.qfmt                                                         AS qfmt,
+           t.afmt                                                         AS afmt
+    FROM cards c
+    JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $1
+                       AND da.can_view AND da.can_study
+    JOIN notes n       ON n.id = c.note_id
+    JOIN note_types nt ON nt.id = n.note_type_id
+    JOIN templates t   ON t.id = c.template_id
+    LEFT JOIN user_card_state ucs ON ucs.user_id = $1 AND ucs.card_id = c.id
+    WHERE c.deck_id = $2
+      AND ucs.user_id IS NULL
+)
+SELECT scored.card_id, scored.card_ordinal,
        now()::timestamptz                          AS due,
        0::double precision                          AS stability,
        0::double precision                          AS difficulty,
@@ -635,43 +671,34 @@ SELECT c.id                                        AS card_id,
        0::int                                       AS lapses,
        0::int                                       AS scheduled_days,
        0::smallint                                  AS learning_steps,
-       n.fields                                    AS note_fields,
-       n.tags                                      AS note_tags,
-       nt.id                                       AS note_type_id,
-       nt.name                                     AS note_type_name,
-       nt.is_cloze                                 AS is_cloze,
-       t.name                                      AS template_name,
-       t.qfmt                                      AS qfmt,
-       t.afmt                                      AS afmt
-FROM cards c
-JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $1
-                   AND da.can_view AND da.can_study
-JOIN notes n       ON n.id = c.note_id
-JOIN note_types nt ON nt.id = n.note_type_id
-JOIN templates t   ON t.id = c.template_id
-LEFT JOIN user_card_state ucs ON ucs.user_id = $1 AND ucs.card_id = c.id
-WHERE c.deck_id = $2
-  AND ucs.user_id IS NULL
-  AND $3::int > 0
-  AND c.id <= COALESCE((
-        SELECT c2.id
-        FROM cards c2
-        LEFT JOIN user_card_state u2
-               ON u2.user_id = $1 AND u2.card_id = c2.id
-        WHERE c2.deck_id = $2 AND u2.user_id IS NULL
-        ORDER BY c2.id
-        OFFSET GREATEST($3::int - 1, 0)
-        LIMIT 1
-      ), 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid)
-  AND c.id > $4::uuid
-ORDER BY c.id
-LIMIT $5
+       scored.note_fields, scored.note_tags, scored.note_type_id, scored.note_type_name,
+       scored.is_cloze, scored.template_name, scored.qfmt, scored.afmt,
+       scored.sort_key
+FROM scored
+LEFT JOIN LATERAL (
+    SELECT COALESCE(c2.import_due_position, 2147483647)::double precision AS cutoff_key,
+           c2.id AS cutoff_id
+    FROM cards c2
+    LEFT JOIN user_card_state u2
+           ON u2.user_id = $1 AND u2.card_id = c2.id
+    WHERE c2.deck_id = $2 AND u2.user_id IS NULL
+    ORDER BY cutoff_key, c2.id
+    OFFSET GREATEST($3::int - 1, 0)
+    LIMIT 1
+) new_cutoff ON true
+WHERE $3::int > 0
+  AND (new_cutoff.cutoff_key IS NULL
+       OR (scored.sort_key, scored.card_id) <= (new_cutoff.cutoff_key, new_cutoff.cutoff_id))
+  AND (scored.sort_key, scored.card_id) > ($4::double precision, $5::uuid)
+ORDER BY scored.sort_key, scored.card_id
+LIMIT $6
 `
 
 type ListNewCardsForStudyParams struct {
 	UserID       pgtype.UUID
 	DeckID       pgtype.UUID
 	NewRemaining int32
+	CursorKey    float64
 	CursorCardID pgtype.UUID
 	BatchSize    int32
 }
@@ -695,16 +722,23 @@ type ListNewCardsForStudyRow struct {
 	TemplateName  string
 	Qfmt          string
 	Afmt          string
+	SortKey       float64
 }
 
 // The never-seen half of mixed new/review interleaving (#116): identical to ListDueCardsForStudy's
-// never-seen branch, ordered by id (new-card gather order is out of scope, #117), keyset over
-// card_id alone. BuildBatch interleaves the two result sets in Go.
+// never-seen branch, ordered by (import_due_position, id) -- Anki's persisted new-card queue
+// position when the import carried one, else every position-less card after every real one,
+// falling back to id (#82; full gather-mode config -- random/other-field ordering -- stays out of
+// scope, #117). Keyset over the same (position, id) pair. BuildBatch interleaves the two result
+// sets in Go.
+// Same InitPlan shape and (position, id) ranking as ListDueCardsForStudy's new_cutoff -- see its
+// doc comment (#82, #101).
 func (q *Queries) ListNewCardsForStudy(ctx context.Context, arg ListNewCardsForStudyParams) ([]ListNewCardsForStudyRow, error) {
 	rows, err := q.db.Query(ctx, listNewCardsForStudy,
 		arg.UserID,
 		arg.DeckID,
 		arg.NewRemaining,
+		arg.CursorKey,
 		arg.CursorCardID,
 		arg.BatchSize,
 	)
@@ -734,6 +768,7 @@ func (q *Queries) ListNewCardsForStudy(ctx context.Context, arg ListNewCardsForS
 			&i.TemplateName,
 			&i.Qfmt,
 			&i.Afmt,
+			&i.SortKey,
 		); err != nil {
 			return nil, err
 		}

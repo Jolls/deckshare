@@ -436,19 +436,21 @@ func (q *Queries) UpdateImportedNote(ctx context.Context, arg UpdateImportedNote
 }
 
 const upsertImportedCard = `-- name: UpsertImportedCard :one
-INSERT INTO cards (note_id, template_id, ordinal, deck_id, anki_id)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO cards (note_id, template_id, ordinal, deck_id, anki_id, import_due_position)
+VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (note_id, ordinal) DO UPDATE
-SET deck_id = EXCLUDED.deck_id, template_id = EXCLUDED.template_id, anki_id = EXCLUDED.anki_id
-RETURNING id, note_id, template_id, ordinal, deck_id, anki_id
+SET deck_id = EXCLUDED.deck_id, template_id = EXCLUDED.template_id, anki_id = EXCLUDED.anki_id,
+    import_due_position = EXCLUDED.import_due_position
+RETURNING id, note_id, template_id, ordinal, deck_id, anki_id, import_due_position
 `
 
 type UpsertImportedCardParams struct {
-	NoteID     pgtype.UUID
-	TemplateID pgtype.UUID
-	Ordinal    int32
-	DeckID     pgtype.UUID
-	AnkiID     pgtype.Int8
+	NoteID            pgtype.UUID
+	TemplateID        pgtype.UUID
+	Ordinal           int32
+	DeckID            pgtype.UUID
+	AnkiID            pgtype.Int8
+	ImportDuePosition pgtype.Int4
 }
 
 // cards.deck_id comes from the CARD's own home deck, never flattened to the note's deck
@@ -461,6 +463,7 @@ func (q *Queries) UpsertImportedCard(ctx context.Context, arg UpsertImportedCard
 		arg.Ordinal,
 		arg.DeckID,
 		arg.AnkiID,
+		arg.ImportDuePosition,
 	)
 	var i Card
 	err := row.Scan(
@@ -470,6 +473,7 @@ func (q *Queries) UpsertImportedCard(ctx context.Context, arg UpsertImportedCard
 		&i.Ordinal,
 		&i.DeckID,
 		&i.AnkiID,
+		&i.ImportDuePosition,
 	)
 	return i, err
 }

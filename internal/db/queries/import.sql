@@ -62,10 +62,11 @@ WHERE n.id = sqlc.arg(note_id) AND da.deck_id = n.deck_id AND da.user_id = sqlc.
 -- (architecture.md §20). ON CONFLICT keeps the existing card id, and with it its
 -- user_card_state and review_log history (docs/schema.md's card-regeneration trap).
 -- name: UpsertImportedCard :one
-INSERT INTO cards (note_id, template_id, ordinal, deck_id, anki_id)
-VALUES ($1, $2, $3, $4, sqlc.narg(anki_id))
+INSERT INTO cards (note_id, template_id, ordinal, deck_id, anki_id, import_due_position)
+VALUES ($1, $2, $3, $4, sqlc.narg(anki_id), sqlc.narg(import_due_position))
 ON CONFLICT (note_id, ordinal) DO UPDATE
-SET deck_id = EXCLUDED.deck_id, template_id = EXCLUDED.template_id, anki_id = EXCLUDED.anki_id
+SET deck_id = EXCLUDED.deck_id, template_id = EXCLUDED.template_id, anki_id = EXCLUDED.anki_id,
+    import_due_position = EXCLUDED.import_due_position
 RETURNING *;
 
 -- Imported history. id is omitted so the column DEFAULT uuidv7() supplies it -- an imported row

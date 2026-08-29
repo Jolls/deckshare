@@ -12,7 +12,7 @@ import (
 )
 
 const listCardsByOwner = `-- name: ListCardsByOwner :many
-SELECT c.id, c.note_id, c.template_id, c.ordinal, c.deck_id, c.anki_id FROM cards c
+SELECT c.id, c.note_id, c.template_id, c.ordinal, c.deck_id, c.anki_id, c.import_due_position FROM cards c
 JOIN notes n ON n.id = c.note_id
 WHERE n.owner_id = $1
 ORDER BY c.id
@@ -34,6 +34,7 @@ func (q *Queries) ListCardsByOwner(ctx context.Context, ownerID pgtype.UUID) ([]
 			&i.Ordinal,
 			&i.DeckID,
 			&i.AnkiID,
+			&i.ImportDuePosition,
 		); err != nil {
 			return nil, err
 		}

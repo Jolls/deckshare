@@ -147,6 +147,17 @@ func seedCards(t *testing.T, tx pgx.Tx, f fixture, n int) []pgtype.UUID {
 	return ids
 }
 
+// setImportDuePosition stands in for what apkg import writes (internal/apkg/dbwrite.go) -- a
+// direct update since batch_test.go's fixtures are hand-seeded, not imported (#82).
+func setImportDuePosition(t *testing.T, tx pgx.Tx, cardID pgtype.UUID, position int32) {
+	t.Helper()
+	if _, err := tx.Exec(context.Background(),
+		`UPDATE cards SET import_due_position = $2 WHERE id = $1`, cardID, position,
+	); err != nil {
+		t.Fatalf("set import_due_position: %v", err)
+	}
+}
+
 func getUserCardState(t *testing.T, tx pgx.Tx, userID, cardID pgtype.UUID) db.UserCardState {
 	t.Helper()
 	row, err := db.New(tx).GetUserCardState(context.Background(), db.GetUserCardStateParams{UserID: userID, CardID: cardID})

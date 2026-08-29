@@ -75,8 +75,8 @@ var ErrMalformedCursor = errors.New("review: malformed cursor")
 //
 // Mixed mode (new.mix = "mixed"): Mixed is true and the position is the pair of independent
 // sub-cursors over ListReviewCardsForStudy (RevAtStart/RevKey/RevCardID -- no group bit, this
-// query only ever serves one group) and ListNewCardsForStudy (NewAtStart/NewCardID, ordered by
-// id alone).
+// query only ever serves one group) and ListNewCardsForStudy (NewAtStart/NewKey/NewCardID,
+// ordered by (import_due_position, id), #82).
 type Cursor struct {
 	AtStart  bool
 	GroupBit int32
@@ -88,6 +88,7 @@ type Cursor struct {
 	RevKey     float64
 	RevCardID  pgtype.UUID
 	NewAtStart bool
+	NewKey     float64
 	NewCardID  pgtype.UUID
 }
 
@@ -99,7 +100,7 @@ func EncodeCursor(c Cursor) string {
 	}
 	var raw string
 	if c.Mixed {
-		raw = "m:" + encodeSubCursor(c.RevAtStart, c.RevKey, c.RevCardID) + "|" + encodeIDCursor(c.NewAtStart, c.NewCardID)
+		raw = "m:" + encodeSubCursor(c.RevAtStart, c.RevKey, c.RevCardID) + "|" + encodeSubCursor(c.NewAtStart, c.NewKey, c.NewCardID)
 	} else {
 		raw = strconv.Itoa(int(c.GroupBit)) + ":" + strconv.FormatUint(math.Float64bits(c.Key), 10) + ":" + c.CardID.String()
 	}
@@ -115,13 +116,6 @@ func encodeSubCursor(atStart bool, key float64, cardID pgtype.UUID) string {
 		return "-"
 	}
 	return strconv.FormatUint(math.Float64bits(key), 10) + ":" + cardID.String()
-}
-
-func encodeIDCursor(atStart bool, cardID pgtype.UUID) string {
-	if atStart {
-		return "-"
-	}
-	return cardID.String()
 }
 
 // DecodeCursor parses a string produced by EncodeCursor. "" decodes to the start-of-queue Cursor.
@@ -144,14 +138,14 @@ func DecodeCursor(s string) (Cursor, error) {
 		if err != nil {
 			return Cursor{}, err
 		}
-		newAtStart, newID, err := decodeIDCursor(newPart)
+		newAtStart, newKey, newID, err := decodeSubCursor(newPart)
 		if err != nil {
 			return Cursor{}, err
 		}
 		return Cursor{
 			Mixed:      true,
 			RevAtStart: revAtStart, RevKey: revKey, RevCardID: revID,
-			NewAtStart: newAtStart, NewCardID: newID,
+			NewAtStart: newAtStart, NewKey: newKey, NewCardID: newID,
 		}, nil
 	}
 
@@ -191,17 +185,6 @@ func decodeSubCursor(s string) (atStart bool, key float64, cardID pgtype.UUID, e
 	return false, math.Float64frombits(bits), id, nil
 }
 
-func decodeIDCursor(s string) (atStart bool, cardID pgtype.UUID, err error) {
-	if s == "-" {
-		return true, pgtype.UUID{}, nil
-	}
-	var id pgtype.UUID
-	if err := id.Scan(s); err != nil {
-		return false, pgtype.UUID{}, fmt.Errorf("%w: %v", ErrMalformedCursor, err)
-	}
-	return false, id, nil
-}
-
 // groupBitArg, keyArg, and cardIDArg convert c into the query parameters the single-query path
 // (ListDueCardsForStudy) compares the keyset against. AtStart uses group_bit -1 (below both real
 // values 0/1) so the group_bit comparison alone puts it before every real row; Key still uses
@@ -228,10 +211,11 @@ func (c Cursor) cardIDArg() pgtype.UUID {
 	return c.CardID
 }
 
-// revKeyArg, revCardIDArg, and newCardIDArg are keyArg/cardIDArg's mixed-mode counterparts, for
-// the two independent ListReviewCardsForStudy/ListNewCardsForStudy sub-cursors. c.AtStart (the
-// zero Cursor, produced by Cursor{AtStart: true} without setting Mixed/RevAtStart/NewAtStart)
-// means "fresh" for both sub-cursors too, not just RevAtStart/NewAtStart individually.
+// revKeyArg, revCardIDArg, newKeyArg, and newCardIDArg are keyArg/cardIDArg's mixed-mode
+// counterparts, for the two independent ListReviewCardsForStudy/ListNewCardsForStudy sub-cursors.
+// c.AtStart (the zero Cursor, produced by Cursor{AtStart: true} without setting
+// Mixed/RevAtStart/NewAtStart) means "fresh" for both sub-cursors too, not just
+// RevAtStart/NewAtStart individually.
 func (c Cursor) revKeyArg() float64 {
 	if c.AtStart || c.RevAtStart {
 		return math.Inf(-1)
@@ -244,6 +228,17 @@ func (c Cursor) revCardIDArg() pgtype.UUID {
 		return pgtype.UUID{Valid: true}
 	}
 	return c.RevCardID
+}
+
+// newKeyArg uses -Inf, not 0, as the AtStart sentinel: ListNewCardsForStudy's sort_key is
+// COALESCE(import_due_position, 2147483647), and a held/buried new card's Anki due position can
+// resolve negative (internal/apkg/ir.go's resolveDue), so only -Inf is guaranteed to sort before
+// every real position.
+func (c Cursor) newKeyArg() float64 {
+	if c.AtStart || c.NewAtStart {
+		return math.Inf(-1)
+	}
+	return c.NewKey
 }
 
 func (c Cursor) newCardIDArg() pgtype.UUID {

@@ -128,8 +128,16 @@ func Export(ctx context.Context, tx pgx.Tx, ownerID pgtype.UUID, now time.Time) 
 		cardAnkiID[c.ID] = id
 		position++
 
+		// A card imported with an Anki queue position (#82) exports with that same position,
+		// round-tripping the order the user actually saw rather than re-deriving one from export
+		// row order. Manually created cards (import_due_position NULL) keep the row-order fallback.
+		cardPosition := position
+		if c.ImportDuePosition.Valid {
+			cardPosition = c.ImportDuePosition.Int32
+		}
+
 		state, hasState := stateByCard[c.ID]
-		sched := deriveCardScheduling(state, hasState, now, position)
+		sched := deriveCardScheduling(state, hasState, now, cardPosition)
 		if sched.Type == ankiTypeReview && sched.Due.Kind == DueAt {
 			reviewDueAts = append(reviewDueAts, sched.Due.At)
 		}
@@ -188,6 +196,10 @@ type cardScheduling struct {
 //
 // A card with no row at all is the common case dbwrite.go's seedCardStates leaves behind: new,
 // unsuspended, unflagged, never reviewed.
+//
+// position is the new-card queue position to write into a never-seen card's Due: the caller
+// resolves it to cards.import_due_position when the card carries one (#82), else an export-order
+// counter.
 func deriveCardScheduling(state db.UserCardState, hasState bool, now time.Time, position int32) cardScheduling {
 	if !hasState {
 		return cardScheduling{Queue: ankiQueueNew, Type: ankiTypeNew, Due: IrDue{Kind: DuePosition, Position: position}}
