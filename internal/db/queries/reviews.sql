@@ -123,7 +123,7 @@ LEFT JOIN LATERAL (
     WHERE c2.deck_id = sqlc.arg(deck_id) AND u2.state = 2
       AND NOT u2.suspended
       AND (u2.buried_until IS NULL OR u2.buried_until <= (sqlc.arg(study_day_start)::timestamptz)::date)
-      AND u2.due < sqlc.arg(study_day_end)::timestamptz
+      AND u2.due <= sqlc.arg(now)::timestamptz
       AND (u2.last_review IS NULL OR u2.last_review < sqlc.arg(study_day_start)::timestamptz)
     ORDER BY cutoff_key, c2.id
     OFFSET GREATEST(sqlc.arg(rev_remaining)::int - 1, 0)
@@ -131,7 +131,7 @@ LEFT JOIN LATERAL (
 ) rev_cutoff ON true
 WHERE NOT scored.suspended
   AND (scored.buried_until IS NULL OR scored.buried_until <= (sqlc.arg(study_day_start)::timestamptz)::date)
-  AND (scored.unseen OR scored.due < sqlc.arg(study_day_end)::timestamptz)
+  AND (scored.unseen OR scored.due <= sqlc.arg(now)::timestamptz)
   AND (scored.last_review IS NULL OR scored.last_review < sqlc.arg(study_day_start)::timestamptz)
   -- The per-deck daily new-card cap (#101). new_remaining is the deck's configured limit minus what
   -- has already been introduced today; the caller computes it. The subselect is uncorrelated, so
@@ -237,7 +237,7 @@ LEFT JOIN LATERAL (
     WHERE c2.deck_id = sqlc.arg(deck_id) AND u2.state = 2
       AND NOT u2.suspended
       AND (u2.buried_until IS NULL OR u2.buried_until <= (sqlc.arg(study_day_start)::timestamptz)::date)
-      AND u2.due < sqlc.arg(study_day_end)::timestamptz
+      AND u2.due <= sqlc.arg(now)::timestamptz
       AND (u2.last_review IS NULL OR u2.last_review < sqlc.arg(study_day_start)::timestamptz)
     ORDER BY cutoff_key, c2.id
     OFFSET GREATEST(sqlc.arg(rev_remaining)::int - 1, 0)
@@ -245,7 +245,7 @@ LEFT JOIN LATERAL (
 ) rev_cutoff ON true
 WHERE NOT scored.suspended
   AND (scored.buried_until IS NULL OR scored.buried_until <= (sqlc.arg(study_day_start)::timestamptz)::date)
-  AND scored.due < sqlc.arg(study_day_end)::timestamptz
+  AND scored.due <= sqlc.arg(now)::timestamptz
   AND (scored.last_review IS NULL OR scored.last_review < sqlc.arg(study_day_start)::timestamptz)
   AND (scored.state IS DISTINCT FROM 2
        OR (sqlc.arg(rev_remaining)::int > 0
@@ -367,7 +367,7 @@ WHERE rl.user_id = sqlc.arg(user_id)
 GROUP BY c.deck_id;
 
 -- Queue summary (New/Learning/Due) for one deck's study page (#80). Same eligibility filters as
--- ListDueCardsForStudy -- suspended, buried, due-before-window-end, not already reviewed today --
+-- ListDueCardsForStudy -- suspended, buried, due now or earlier, not already reviewed today --
 -- so the counts agree with what /decks/{id}/review actually serves. Learning folds together
 -- state 1 (learning) and 3 (relearning); Due is state 2 (review).
 -- name: CountQueueForDeck :one
@@ -381,7 +381,7 @@ LEFT JOIN user_card_state ucs ON ucs.user_id = sqlc.arg(user_id) AND ucs.card_id
 WHERE c.deck_id = sqlc.arg(deck_id)
   AND NOT COALESCE(ucs.suspended, false)
   AND (ucs.buried_until IS NULL OR ucs.buried_until <= (sqlc.arg(study_day_start)::timestamptz)::date)
-  AND (ucs.due IS NULL OR ucs.due < sqlc.arg(study_day_end)::timestamptz)
+  AND (ucs.due IS NULL OR ucs.due <= sqlc.arg(now)::timestamptz)
   AND (ucs.last_review IS NULL OR ucs.last_review < sqlc.arg(study_day_start)::timestamptz);
 
 -- Same queue summary, grouped by deck, for the /decks list (#80). One query for every deck the
@@ -397,7 +397,7 @@ JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = sqlc.arg(user_id)
 LEFT JOIN user_card_state ucs ON ucs.user_id = sqlc.arg(user_id) AND ucs.card_id = c.id
 WHERE NOT COALESCE(ucs.suspended, false)
   AND (ucs.buried_until IS NULL OR ucs.buried_until <= (sqlc.arg(study_day_start)::timestamptz)::date)
-  AND (ucs.due IS NULL OR ucs.due < sqlc.arg(study_day_end)::timestamptz)
+  AND (ucs.due IS NULL OR ucs.due <= sqlc.arg(now)::timestamptz)
   AND (ucs.last_review IS NULL OR ucs.last_review < sqlc.arg(study_day_start)::timestamptz)
 GROUP BY c.deck_id;
 

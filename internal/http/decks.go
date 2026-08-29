@@ -37,7 +37,8 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		for _, d := range decks {
 			presetByDeck[d.ID] = d.Preset
 		}
-		window, err := studyDayWindow(r.Context(), q, user.ID, now())
+		n := now()
+		window, err := studyDayWindow(r.Context(), q, user.ID, n)
 		if err != nil {
 			serverError(w)
 			return
@@ -45,7 +46,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		rows, err := q.CountQueueForUser(r.Context(), db.CountQueueForUserParams{
 			UserID:        user.ID,
 			StudyDayStart: pgtype.Timestamptz{Time: window.Start, Valid: true},
-			StudyDayEnd:   pgtype.Timestamptz{Time: window.End, Valid: true},
+			Now:           pgtype.Timestamptz{Time: n, Valid: true},
 		})
 		if err != nil {
 			serverError(w)
@@ -160,7 +161,8 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			serverError(w)
 			return
 		}
-		window, err := studyDayWindow(r.Context(), q, user.ID, now())
+		n := now()
+		window, err := studyDayWindow(r.Context(), q, user.ID, n)
 		if err != nil {
 			serverError(w)
 			return
@@ -169,7 +171,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			UserID:        user.ID,
 			DeckID:        deckID,
 			StudyDayStart: pgtype.Timestamptz{Time: window.Start, Valid: true},
-			StudyDayEnd:   pgtype.Timestamptz{Time: window.End, Valid: true},
+			Now:           pgtype.Timestamptz{Time: n, Valid: true},
 		})
 		if err != nil {
 			serverError(w)
