@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Jolls/enshu/internal/db"
+	"github.com/Jolls/enshu/internal/fsrs"
 )
 
 func TestImport_FilesCardDeckFromCardsOwnDeck(t *testing.T) {
@@ -558,5 +559,175 @@ func TestImport_FilteredDeckNotCreated(t *testing.T) {
 	}
 	if card.DeckID != home.ID {
 		t.Errorf("filtered-deck card's deck_id = %v, want its home deck %v", card.DeckID, home.ID)
+	}
+}
+
+// setCardData mutates spec.Cards in place, setting the raw cards.data JSON on the card with the
+// given AnkiID. t.Fatal's if no such card exists -- a typo'd AnkiID should fail loudly, not
+// silently leave the card's data at its default.
+func setCardData(t *testing.T, spec *synthSpec, ankiID int64, data string) {
+	t.Helper()
+	for i := range spec.Cards {
+		if spec.Cards[i].AnkiID == ankiID {
+			spec.Cards[i].Data = data
+			return
+		}
+	}
+	t.Fatalf("setCardData: no card with AnkiID %d in spec", ankiID)
+}
+
+// TestImport_SeedsDesiredRetentionFromCardData covers the issue #81 fix's zero-review path: a
+// card with no revlog rows goes through seedCardStates, not importReviews/ReplayCard, but the
+// deck's desired retention must still be seeded from its imported cards.data.dr rather than
+// falling back to review.DefaultDesiredRetention (0.9).
+func TestImport_SeedsDesiredRetentionFromCardData(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	ownerID := seedUser(t, tx)
+	q := db.New(tx)
+
+	spec := defaultSynthSpec(t)
+	// Card 204 (Did 1 / "Default", no revlog rows) -- mark suspended so seedCardStates also
+	// writes it a user_card_state row, and give it FSRS state including desired retention.
+	for i := range spec.Cards {
+		if spec.Cards[i].AnkiID == 204 {
+			spec.Cards[i].Queue = ankiQueueSuspended
+		}
+	}
+	setCardData(t, &spec, 204, `{"s":30,"d":6,"dr":0.85}`)
+
+	pkg := buildSchema11Package(t, spec)
+	col := readBytes(t, pkg)
+	if _, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t)); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	deck, err := q.GetDeckByOwnerAndName(ctx, db.GetDeckByOwnerAndNameParams{OwnerID: ownerID, Name: "Default"})
+	if err != nil {
+		t.Fatalf("GetDeckByOwnerAndName(Default): %v", err)
+	}
+	got, err := q.GetDeckFsrsRetention(ctx, db.GetDeckFsrsRetentionParams{UserID: ownerID, DeckID: deck.ID})
+	if err != nil {
+		t.Fatalf("GetDeckFsrsRetention: %v", err)
+	}
+	if got != 0.85 {
+		t.Errorf("Default deck desired_retention = %v, want 0.85 (the imported dr, not the 0.9 default)", got)
+	}
+}
+
+// TestImport_SeedsDesiredRetentionFromReplayedCard covers the path the issue's own proposed fix
+// (wiring DesiredRetention only into SeedImportedUserCardState) would have missed: card 201 has
+// revlog rows, so it goes through importReviews/ReplayCard, never seedCardStates. The deck's
+// retention must still be seeded, and it must happen before ReplayCard runs so the replay itself
+// resolves the imported retention rather than the default.
+func TestImport_SeedsDesiredRetentionFromReplayedCard(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	ownerID := seedUser(t, tx)
+	q := db.New(tx)
+
+	spec := defaultSynthSpec(t)
+	setCardData(t, &spec, 201, `{"s":30,"d":6,"dr":0.85}`)
+
+	pkg := buildSchema11Package(t, spec)
+	col := readBytes(t, pkg)
+	result, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.CardStatesReplayed != 1 {
+		t.Fatalf("CardStatesReplayed = %d, want 1 (sanity check: card 201 must go through the replay path)", result.CardStatesReplayed)
+	}
+
+	deck, err := q.GetDeckByOwnerAndName(ctx, db.GetDeckByOwnerAndNameParams{OwnerID: ownerID, Name: "Default"})
+	if err != nil {
+		t.Fatalf("GetDeckByOwnerAndName(Default): %v", err)
+	}
+	got, err := q.GetDeckFsrsRetention(ctx, db.GetDeckFsrsRetentionParams{UserID: ownerID, DeckID: deck.ID})
+	if err != nil {
+		t.Fatalf("GetDeckFsrsRetention: %v", err)
+	}
+	if got != 0.85 {
+		t.Errorf("Default deck desired_retention = %v, want 0.85 (seeding must run before importReviews replays card 201)", got)
+	}
+}
+
+// TestImport_ReimportDoesNotOverwriteChangedRetention asserts SeedDeckFsrsRetention's ON CONFLICT
+// DO NOTHING actually protects a retention the user has since changed via /settings: a re-import
+// of the same package must not clobber it back to the package's original value.
+func TestImport_ReimportDoesNotOverwriteChangedRetention(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	ownerID := seedUser(t, tx)
+	q := db.New(tx)
+
+	spec := defaultSynthSpec(t)
+	setCardData(t, &spec, 204, `{"s":30,"d":6,"dr":0.85}`)
+	pkg := buildSchema11Package(t, spec)
+	col := readBytes(t, pkg)
+
+	if _, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t)); err != nil {
+		t.Fatalf("Import (first): %v", err)
+	}
+
+	deck, err := q.GetDeckByOwnerAndName(ctx, db.GetDeckByOwnerAndNameParams{OwnerID: ownerID, Name: "Default"})
+	if err != nil {
+		t.Fatalf("GetDeckByOwnerAndName(Default): %v", err)
+	}
+
+	params, err := fsrs.NewDefaultParams(0.95)
+	if err != nil {
+		t.Fatalf("NewDefaultParams: %v", err)
+	}
+	if _, err := q.UpsertDeckFsrsRetention(ctx, db.UpsertDeckFsrsRetentionParams{
+		UserID: ownerID, DeckID: deck.ID, FsrsVersion: int16(params.Version()), DesiredRetention: 0.95,
+	}); err != nil {
+		t.Fatalf("UpsertDeckFsrsRetention (simulating a /settings change): %v", err)
+	}
+
+	if _, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t)); err != nil {
+		t.Fatalf("Import (re-import): %v", err)
+	}
+
+	got, err := q.GetDeckFsrsRetention(ctx, db.GetDeckFsrsRetentionParams{UserID: ownerID, DeckID: deck.ID})
+	if err != nil {
+		t.Fatalf("GetDeckFsrsRetention: %v", err)
+	}
+	if got != 0.95 {
+		t.Errorf("Default deck desired_retention = %v, want 0.95 (re-import must not overwrite a user-changed retention)", got)
+	}
+}
+
+// TestImport_DesiredRetentionMajorityWinsWithinDeck covers a deck whose cards.data.dr values
+// disagree, the case a mid-collection retention change in Anki produces: the majority value
+// across the deck's cards should win, not the first or last one seen.
+func TestImport_DesiredRetentionMajorityWinsWithinDeck(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	ownerID := seedUser(t, tx)
+	q := db.New(tx)
+
+	spec := defaultSynthSpec(t)
+	// Cards 201, 204, 205 all file under Did 1 ("Default"). Two vote 0.85, one votes 0.80.
+	setCardData(t, &spec, 201, `{"s":30,"d":6,"dr":0.85}`)
+	setCardData(t, &spec, 204, `{"s":30,"d":6,"dr":0.85}`)
+	setCardData(t, &spec, 205, `{"s":30,"d":6,"dr":0.80}`)
+
+	pkg := buildSchema11Package(t, spec)
+	col := readBytes(t, pkg)
+	if _, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t)); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	deck, err := q.GetDeckByOwnerAndName(ctx, db.GetDeckByOwnerAndNameParams{OwnerID: ownerID, Name: "Default"})
+	if err != nil {
+		t.Fatalf("GetDeckByOwnerAndName(Default): %v", err)
+	}
+	got, err := q.GetDeckFsrsRetention(ctx, db.GetDeckFsrsRetentionParams{UserID: ownerID, DeckID: deck.ID})
+	if err != nil {
+		t.Fatalf("GetDeckFsrsRetention: %v", err)
+	}
+	if got != 0.85 {
+		t.Errorf("Default deck desired_retention = %v, want 0.85 (the majority value, 2 votes vs 1)", got)
 	}
 }

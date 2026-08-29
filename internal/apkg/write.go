@@ -223,9 +223,12 @@ func encodeTags(tags []string) string {
 	return " " + strings.Join(tags, " ") + " "
 }
 
-// encodeCardData is the inverse of readCards' ankiCardData decode. Position and desired
-// retention are never populated: dbwrite.go's seedCardStates never reads IrFSRSState.Position or
-// .DesiredRetention either, so there is nothing to round-trip there.
+// encodeCardData is the inverse of readCards' ankiCardData decode. Position is never populated --
+// nothing in dbwrite.go persists IrFSRSState.Position, so there is nothing to round-trip there.
+// Desired retention is also never populated here even though dbwrite.go's seedDeckRetention (#81)
+// now reads it: that seeds one representative value per deck into user_fsrs_params, not a
+// per-card value, and encodeCardData only has one card's IrFSRSState to work from -- see
+// apkg-format.md's "Known export losses" for why the per-card value doesn't round-trip.
 func encodeCardData(fsrs *IrFSRSState) (string, error) {
 	if fsrs == nil {
 		return "{}", nil

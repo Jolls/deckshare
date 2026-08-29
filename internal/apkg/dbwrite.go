@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Jolls/enshu/internal/db"
+	"github.com/Jolls/enshu/internal/fsrs"
 	"github.com/Jolls/enshu/internal/media"
 	"github.com/Jolls/enshu/internal/review"
 )
@@ -71,6 +72,10 @@ func Import(ctx context.Context, tx pgx.Tx, ownerID pgtype.UUID, col *IrCollecti
 
 	cards, err := importCards(ctx, q, col, noteByAnkiID, noteTypeByAnkiID, deckByAnkiID, &result)
 	if err != nil {
+		return ImportResult{}, err
+	}
+
+	if err := seedDeckRetention(ctx, q, ownerID, col.Cards, cards, &result); err != nil {
 		return ImportResult{}, err
 	}
 
@@ -520,6 +525,79 @@ func durationMsParam(ms int32) pgtype.Int4 {
 		return pgtype.Int4{}
 	}
 	return pgtype.Int4{Int32: ms, Valid: true}
+}
+
+// seedDeckRetention derives one representative desired retention per deck from the cards being
+// imported and seeds it into user_fsrs_params, so review.EffectiveParams resolves the source
+// collection's retention target for every card in the deck -- not just the zero-review cards
+// seedCardStates writes directly, but also cards replayed through importReviews. A deck's
+// cards.data.dr can differ card to card (Anki restamps it whenever the deck's retention setting
+// changes), so the majority value wins, ties broken by first-seen order for determinism.
+// SeedDeckFsrsRetention does nothing on conflict, so a re-import never clobbers a retention the
+// user has since changed via /settings. Must run before importReviews, since ReplayCard resolves
+// retention through EffectiveParams as it goes.
+func seedDeckRetention(ctx context.Context, q *db.Queries, ownerID pgtype.UUID, irCards []IrCard, cards importedCards, result *ImportResult) error {
+	// A deck's cards.data.dr rarely carries more than a handful of distinct values (one, almost
+	// always -- a handful only after a mid-collection retention change), so a linear scan-and-
+	// increment per card is simpler than a map and just as cheap at that cardinality.
+	type retentionTally struct {
+		value float64
+		count int
+	}
+	var deckOrder []pgtype.UUID
+	tallies := make(map[pgtype.UUID][]retentionTally)
+
+	for _, c := range irCards {
+		if c.FSRS == nil || c.FSRS.DesiredRetention == 0 {
+			continue
+		}
+		deckID, ok := cards.DeckByAnkiID[c.AnkiID]
+		if !ok {
+			continue
+		}
+		t, ok := tallies[deckID]
+		if !ok {
+			deckOrder = append(deckOrder, deckID)
+		}
+		found := false
+		for i := range t {
+			if t[i].value == c.FSRS.DesiredRetention {
+				t[i].count++
+				found = true
+				break
+			}
+		}
+		if !found {
+			t = append(t, retentionTally{value: c.FSRS.DesiredRetention, count: 1})
+		}
+		tallies[deckID] = t
+	}
+
+	for _, deckID := range deckOrder {
+		bestTally := tallies[deckID][0]
+		for _, cand := range tallies[deckID][1:] {
+			if cand.count > bestTally.count {
+				bestTally = cand
+			}
+		}
+		best := bestTally.value
+
+		params, err := fsrs.NewDefaultParams(best)
+		if err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("deck (id %s): imported desired retention %v is out of range; kept the existing default", deckID.String(), best))
+			continue
+		}
+
+		if err := q.SeedDeckFsrsRetention(ctx, db.SeedDeckFsrsRetentionParams{
+			UserID:           ownerID,
+			DeckID:           deckID,
+			FsrsVersion:      int16(params.Version()),
+			DesiredRetention: best,
+		}); err != nil {
+			return fmt.Errorf("apkg: seeding desired retention for deck (id %s): %w", deckID.String(), err)
+		}
+	}
+	return nil
 }
 
 // seedCardStates writes user_card_state for a card that carries scheduling state but has zero

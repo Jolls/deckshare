@@ -329,16 +329,29 @@ fix, and none is planned:
 - **`revlog.factor` and `revlog.lastIvl`** (`IrReview.Factor`, `IrReview.LastIntervalSeconds`) are
   read from an imported `.apkg`'s `revlog` table but never persisted anywhere in Enshu's schema, so
   a re-exported collection always writes `0` for both on every review row.
-- **FSRS `Position` and `DesiredRetention`** (`IrFSRSState.Position`, `.DesiredRetention`) are
-  likewise read on import and not persisted, so export always writes their zero value.
+- **FSRS `Position`** (`IrFSRSState.Position`) is likewise read on import and not persisted, so
+  export always writes its zero value.
 - **`col.crt`** (the collection's creation timestamp) is not stored by Enshu at all — a deck has no
   single "collection" it belongs to the way an Anki collection does — so `Export` synthesises a
   value via `deriveCrt` rather than round-tripping an original one.
 
-None of these affect scheduling correctness or `.apkg` readability: every field above is either
-purely informational (SM-2 legacy data Enshu doesn't schedule from — see the `primaryDeckAnkiId`/
-`factor` discussion elsewhere in this doc) or a value Anki's own importer recomputes/tolerates a
-default for.
+`revlog.factor`/`.lastIvl`, `Position`, and `col.crt` are purely informational (SM-2 legacy data
+Enshu doesn't schedule from, or a value Anki's own importer recomputes/tolerates a default for) —
+none of them affect scheduling correctness.
+
+**FSRS `DesiredRetention`** (`IrFSRSState.DesiredRetention`) is *not* in that bucket: it used to be
+read on import and discarded (#81), which meant every imported card was scheduled against
+Enshu's `DefaultDesiredRetention` (0.9) instead of whatever retention Anki was actually scheduling
+toward — a direct, silent scheduling-correctness bug, not an informational loss. It is now consumed
+at import time (`internal/apkg/dbwrite.go`'s `seedDeckRetention`, called from `Import` before
+`importReviews`): the majority `dr` value across a deck's cards is seeded into that deck's
+`user_fsrs_params` row, first-import-only (a later re-import never overwrites a retention the user
+has since changed via `/settings`). What still doesn't round-trip is the *per-card* value — Anki
+stamps `cards.data.dr` per card and it can drift within a deck if the user changes the retention
+setting mid-collection, but Enshu schedules per-(user, deck) (invariant §2.3), so only one
+representative value survives import, and `encodeCardData` never writes a `dr` key back out on
+export at all (like `Position`, above). That residual is a minor export-fidelity loss, not a
+scheduling-correctness one.
 
 ---
 

@@ -37,3 +37,12 @@ FROM deck_access da
 WHERE da.deck_id = sqlc.arg(deck_id) AND da.user_id = sqlc.arg(user_id) AND da.can_view AND da.can_study
 ON CONFLICT (user_id, deck_id)
 DO UPDATE SET fsrs_version = EXCLUDED.fsrs_version, desired_retention = EXCLUDED.desired_retention;
+
+-- Seeds a deck's desired retention from an apkg import, first-import-only: DO NOTHING on
+-- conflict so a re-import never clobbers a retention the user has since changed themselves.
+-- name: SeedDeckFsrsRetention :exec
+INSERT INTO user_fsrs_params (user_id, deck_id, fsrs_version, params, desired_retention)
+SELECT sqlc.arg(user_id), sqlc.arg(deck_id), sqlc.arg(fsrs_version), '[]'::jsonb, sqlc.arg(desired_retention)
+FROM deck_access da
+WHERE da.deck_id = sqlc.arg(deck_id) AND da.user_id = sqlc.arg(user_id) AND da.can_view AND da.can_study
+ON CONFLICT (user_id, deck_id) DO NOTHING;
