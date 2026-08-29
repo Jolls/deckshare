@@ -513,6 +513,9 @@ through `go-fsrs` to rebuild `user_card_state`. It is what the live path above c
 at a time, what batch-fetch calls to build the four-branch preview, and what import backfill,
 parameter refits, and post-incident repair call in bulk. Never delete it as "unused."
 
+Visual companion: [review-flow.md](review-flow.md) walks login through the grading loop as a
+diagram and step tables, split by user/client/server responsibility.
+
 ---
 
 ## 7. `.apkg` / `.colpkg` mapping
