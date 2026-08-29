@@ -3,8 +3,8 @@
 // tracking, and revealing/advancing. It dispatches a refill-needed DOM event that htmx listens
 // for on #review-refill; the grade batch POST is sent directly with fetch() (not through htmx --
 // see flush()'s comment for why). Grading never awaits anything and never computes an FSRS
-// value -- it looks up a precomputed branch already present on the hidden card node
-// (CLAUDE.md §2.6, §2.7).
+// value -- it looks up a precomputed branch already present on the hidden card node, or, for a
+// card this session requeued, the fresh one the grade response brought back (CLAUDE.md §2.6, §2.7).
 (function () {
   'use strict';
 
@@ -273,6 +273,9 @@
         if (remaining <= 0) { insertAt = j; break; }
       }
     }
+    // card.branches is the pre-grade preview -- the best value available at this instant.
+    // onBatchSettled replaces it with the server's post-grade preview when this grade's POST
+    // comes back, which is normally several cards before this slot is shown (#142).
     state.queue.splice(insertAt, 0, {
       cardId: card.cardId, el: card.el, branches: card.branches, done: false, repeat: true,
     });
@@ -378,6 +381,7 @@
       try { results = JSON.parse(text).results || []; } catch (e) { /* malformed body: nothing to reconcile */ }
       for (var i = 0; i < results.length; i++) {
         var r = results[i];
+        applyFreshPreview(r.cardId, r.preview);
         if (r.status === 'rejected' || r.status === 'forbidden') {
           console.error('enshu: event ' + r.id + ' ' + r.status + ', dropped permanently');
           showDeliveryError('A grade could not be saved (' + r.status + '). Check your device clock or deck access.');
@@ -409,6 +413,35 @@
     var delaySec = BACKOFF_SECONDS[Math.min(state.backoffIndex, BACKOFF_SECONDS.length - 1)];
     state.backoffIndex++;
     setTimeout(flush, delaySec * 1000);
+  }
+
+  // The branches on a hidden card node were precomputed for its state *before* this session's
+  // first grade (§2.6), so a card the learning-steps heuristic requeued would show its pre-grade
+  // intervals on its second appearance (#142). The grade response carries the four branches the
+  // server recomputed from the state it actually stored; swap them into every slot still holding
+  // that card, and repaint the labels if it is the one on screen. Cosmetic, exactly like the
+  // branches it replaces -- nothing here is ever sent back.
+  function applyFreshPreview(cardId, preview) {
+    var fresh = previewBranches(preview);
+    if (!fresh) return;
+    for (var i = 0; i < state.queue.length; i++) {
+      var slot = state.queue[i];
+      if (slot.cardId !== cardId || slot.done) continue;
+      slot.branches = fresh;
+      if (i === state.current) updateIntervalLabels(slot);
+    }
+  }
+
+  // All four branches or none: a partial swap would leave grade() with a missing branch, which it
+  // answers by silently ignoring the keypress.
+  function previewBranches(p) {
+    if (!p || !p.again || !p.hard || !p.good || !p.easy) return null;
+    return { 1: wireBranch(p.again), 2: wireBranch(p.hard), 3: wireBranch(p.good), 4: wireBranch(p.easy) };
+  }
+
+  // The JSON counterpart of branch(): same three fields, already typed, no parseInt.
+  function wireBranch(b) {
+    return { due: b.due, state: b.state, scheduledDays: b.scheduledDays };
   }
 
   function showDeliveryError(msg) {

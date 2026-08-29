@@ -118,7 +118,7 @@ duplicate the pseudocode.
 deck's `rev.order`/`new.mix` preset — `(group_bit, sort_key, cardId)` for the single-query
 modes, a pair of independent sub-cursors for `mixed` (§6, `internal/review/types.go`'s `Cursor`);
 server excludes cards already reviewed this study day (§6). **401 JSON**, not the usual `RequireUser` redirect, on no session — an XHR hitting a login-page redirect would silently lose the request |
-| POST | `/api/reviews/batch` | `can_view` + `can_study` | Grade. `{events:[{id,cardId,rating,reviewedAt,durationMs}]}` — exactly these fields, idempotent, returns `{results:[{id,cardId,status,after}]}` per event (`status` ∈ `applied\|duplicate\|forbidden\|rejected`, always HTTP 200 once authenticated — a single bad event must not wedge the rest of the batch). Same 401-JSON auth posture as `/api/reviews/next`. See §6 for the full authorise/recompute/store sequence and the concurrency mechanisms |
+| POST | `/api/reviews/batch` | `can_view` + `can_study` | Grade. `{events:[{id,cardId,rating,reviewedAt,durationMs}]}` — exactly these fields, idempotent, returns `{results:[{id,cardId,status,after,preview}]}` per event (`status` ∈ `applied\|duplicate\|forbidden\|rejected`, always HTTP 200 once authenticated — a single bad event must not wedge the rest of the batch; `preview` = the four rating branches recomputed from `after`, display-only, so a card the client requeued in-session can be relabelled — absent on forbidden/rejected). Same 401-JSON auth posture as `/api/reviews/next`. See §6 for the full authorise/recompute/store sequence and the concurrency mechanisms |
 | GET | `/static/{path...}` | public | Vendored htmx + the reviewer's queue module (`web/static/`, see its README for versions/licences) — no CDN dependency |
 
 ---

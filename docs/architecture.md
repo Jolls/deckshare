@@ -335,6 +335,11 @@ written to `review_log` or `user_card_state`. A Good (or Easy) rating never requ
 though — a card the user marks as known always waits for the next study session (#136), even
 when go-fsrs's short-term learning steps would otherwise land it back within the window.
 
+A requeued card's interval labels are refreshed from the grade response's own four-branch
+preview, since the ones it was shipped with at batch-fetch time describe its pre-grade state
+([#142](https://github.com/Jolls/enshu/issues/142)); the requeue decision itself still runs
+locally and still writes nothing.
+
 ### Fetching cards
 
 **Never fetch per card.** Beyond that, the policy below is the whole of it — the numbers are
@@ -442,7 +447,7 @@ for each event:
     WHERE user_id=$u AND card_id=$c
       AND (last_review IS NULL OR last_review < $reviewedAt)
 
-  -> respond with <after> so the client can reconcile its queue
+  -> respond with <after>, and Repeat(after) so the client can relabel a requeued card
 ```
 
 `rating`, `reviewedAt`, `durationMs` and `cardId` are the only fields the client is entitled
