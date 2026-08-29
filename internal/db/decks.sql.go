@@ -200,13 +200,14 @@ const updateDeck = `-- name: UpdateDeck :execrows
 UPDATE decks d
 SET name = $1,
     description = $2,
-    -- #101/#115/#116: nested-merge, not jsonb_set. jsonb_set('{}', '{new,perDay}', …, true) is a
-    -- no-op when the parent object is missing, which every deck's default '{}' preset is. NULL
+    -- #101/#115/#116/#154: nested-merge, not jsonb_set. jsonb_set('{}', '{new,perDay}', …, true) is
+    -- a no-op when the parent object is missing, which every deck's default '{}' preset is. NULL
     -- leaves the corresponding key untouched so a form that doesn't carry the field can't wipe
-    -- the setting. 'new' and 'rev' are independent top-level keys, both patched off the same
-    -- original d.preset and merged with a single ||  -- Postgres rejects assigning the same
-    -- target column (preset) twice in one SET clause, so this has to be one expression, not two.
-    -- Within each, perDay and mix/order are independently-nullable sub-patches of the same key.
+    -- the setting. 'new', 'rev', and 'due' are independent top-level keys, all patched off the
+    -- same original d.preset and merged with a single ||  -- Postgres rejects assigning the same
+    -- target column (preset) twice in one SET clause, so this has to be one expression, not three.
+    -- Within 'new'/'rev', perDay and mix/order are independently-nullable sub-patches of the same
+    -- key; 'due' has only the one field so far, so it skips that extra layer.
     preset = (CASE WHEN $3::int IS NULL AND $4::text IS NULL THEN d.preset
                    ELSE d.preset || jsonb_build_object('new',
                           COALESCE(d.preset -> 'new', '{}'::jsonb)
@@ -222,22 +223,27 @@ SET name = $1,
                                     ELSE jsonb_build_object('perDay', $5::int) END)
                            || (CASE WHEN $6::text IS NULL THEN '{}'::jsonb
                                     ELSE jsonb_build_object('order', $6::text) END))
+               END)
+           || (CASE WHEN $7::int IS NULL THEN '{}'::jsonb
+                    ELSE jsonb_build_object('due',
+                           jsonb_build_object('lookAheadMinutes', $7::int))
                END),
     modified_at = now()
 FROM deck_access da
-WHERE d.id = $7 AND da.deck_id = d.id AND da.user_id = $8
+WHERE d.id = $8 AND da.deck_id = d.id AND da.user_id = $9
   AND da.can_view AND da.can_edit_settings
 `
 
 type UpdateDeckParams struct {
-	Name        string
-	Description string
-	NewPerDay   pgtype.Int4
-	NewMix      pgtype.Text
-	RevPerDay   pgtype.Int4
-	RevOrder    pgtype.Text
-	DeckID      pgtype.UUID
-	UserID      pgtype.UUID
+	Name                string
+	Description         string
+	NewPerDay           pgtype.Int4
+	NewMix              pgtype.Text
+	RevPerDay           pgtype.Int4
+	RevOrder            pgtype.Text
+	DueLookAheadMinutes pgtype.Int4
+	DeckID              pgtype.UUID
+	UserID              pgtype.UUID
 }
 
 func (q *Queries) UpdateDeck(ctx context.Context, arg UpdateDeckParams) (int64, error) {
@@ -248,6 +254,7 @@ func (q *Queries) UpdateDeck(ctx context.Context, arg UpdateDeckParams) (int64, 
 		arg.NewMix,
 		arg.RevPerDay,
 		arg.RevOrder,
+		arg.DueLookAheadMinutes,
 		arg.DeckID,
 		arg.UserID,
 	)

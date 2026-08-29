@@ -145,9 +145,11 @@ func hashSeedFor(userID pgtype.UUID, window StudyDay) string {
 // deck's preset rev/perDay minus reviews already logged today (#115). Learning/relearning cards
 // are never capped. order and mix are the deck's preset rev/order and new/mix (#116); mix ==
 // NewMixMixed branches to the two-query interleave path, everything else to the single query.
+// lookAheadMinutes is the deck's preset due/lookAheadMinutes (#154): widens the due<=now cutoff
+// by an explicit opt-in amount, zero by default.
 func BuildBatch(ctx context.Context, store db.DBTX, p fsrs.Params, userID, deckID pgtype.UUID,
 	deckName string, window StudyDay, newPerDay, revPerDay int32, order RevOrder, mix NewMix,
-	cur Cursor, limit int32, now time.Time) (Batch, error) {
+	cur Cursor, limit int32, now time.Time, lookAheadMinutes int32) (Batch, error) {
 	q := db.New(store)
 
 	introduced, err := q.CountNewIntroducedToday(ctx, db.CountNewIntroducedTodayParams{
@@ -174,30 +176,31 @@ func BuildBatch(ctx context.Context, store db.DBTX, p fsrs.Params, userID, deckI
 	revRemaining := RevRemaining(revPerDay, reviewed)
 
 	if mix == NewMixMixed {
-		return buildMixedBatch(ctx, q, p, userID, deckID, deckName, window, order, newRemaining, revRemaining, cur, limit, now)
+		return buildMixedBatch(ctx, q, p, userID, deckID, deckName, window, order, newRemaining, revRemaining, cur, limit, now, lookAheadMinutes)
 	}
-	return buildSingleBatch(ctx, q, p, userID, deckID, deckName, window, order, mix, newRemaining, revRemaining, cur, limit, now)
+	return buildSingleBatch(ctx, q, p, userID, deckID, deckName, window, order, mix, newRemaining, revRemaining, cur, limit, now, lookAheadMinutes)
 }
 
 // buildSingleBatch is BuildBatch's path for every new.mix mode except "mixed": one keyset query,
 // one combined (sort_key, card_id) cursor (#116 doc comment on ListDueCardsForStudy).
 func buildSingleBatch(ctx context.Context, q *db.Queries, p fsrs.Params, userID, deckID pgtype.UUID,
 	deckName string, window StudyDay, order RevOrder, mix NewMix, newRemaining, revRemaining int32,
-	cur Cursor, limit int32, now time.Time) (Batch, error) {
+	cur Cursor, limit int32, now time.Time, lookAheadMinutes int32) (Batch, error) {
 	rows, err := q.ListDueCardsForStudy(ctx, db.ListDueCardsForStudyParams{
-		NewMix:         string(mix),
-		RevOrder:       string(order),
-		HashSeed:       hashSeedFor(userID, window),
-		UserID:         userID,
-		DeckID:         deckID,
-		StudyDayStart:  pgtype.Timestamptz{Time: window.Start, Valid: true},
-		Now:            pgtype.Timestamptz{Time: now, Valid: true},
-		RevRemaining:   revRemaining,
-		NewRemaining:   newRemaining,
-		CursorGroupBit: cur.groupBitArg(),
-		CursorKey:      cur.keyArg(),
-		CursorCardID:   cur.cardIDArg(),
-		BatchSize:      limit,
+		NewMix:           string(mix),
+		RevOrder:         string(order),
+		HashSeed:         hashSeedFor(userID, window),
+		UserID:           userID,
+		DeckID:           deckID,
+		StudyDayStart:    pgtype.Timestamptz{Time: window.Start, Valid: true},
+		Now:              pgtype.Timestamptz{Time: now, Valid: true},
+		LookAheadMinutes: lookAheadMinutes,
+		RevRemaining:     revRemaining,
+		NewRemaining:     newRemaining,
+		CursorGroupBit:   cur.groupBitArg(),
+		CursorKey:        cur.keyArg(),
+		CursorCardID:     cur.cardIDArg(),
+		BatchSize:        limit,
 	})
 	if err != nil {
 		return Batch{}, fmt.Errorf("review: list due cards: %w", err)
@@ -235,20 +238,21 @@ func buildSingleBatch(ctx context.Context, q *db.Queries, p fsrs.Params, userID,
 // start, since nothing about it was consumed.
 func buildMixedBatch(ctx context.Context, q *db.Queries, p fsrs.Params, userID, deckID pgtype.UUID,
 	deckName string, window StudyDay, order RevOrder, newRemaining, revRemaining int32,
-	cur Cursor, limit int32, now time.Time) (Batch, error) {
+	cur Cursor, limit int32, now time.Time, lookAheadMinutes int32) (Batch, error) {
 	hashSeed := hashSeedFor(userID, window)
 
 	reviewRows, err := q.ListReviewCardsForStudy(ctx, db.ListReviewCardsForStudyParams{
-		RevOrder:      string(order),
-		HashSeed:      hashSeed,
-		UserID:        userID,
-		DeckID:        deckID,
-		StudyDayStart: pgtype.Timestamptz{Time: window.Start, Valid: true},
-		Now:           pgtype.Timestamptz{Time: now, Valid: true},
-		RevRemaining:  revRemaining,
-		CursorKey:     cur.revKeyArg(),
-		CursorCardID:  cur.revCardIDArg(),
-		BatchSize:     limit,
+		RevOrder:         string(order),
+		HashSeed:         hashSeed,
+		UserID:           userID,
+		DeckID:           deckID,
+		StudyDayStart:    pgtype.Timestamptz{Time: window.Start, Valid: true},
+		Now:              pgtype.Timestamptz{Time: now, Valid: true},
+		LookAheadMinutes: lookAheadMinutes,
+		RevRemaining:     revRemaining,
+		CursorKey:        cur.revKeyArg(),
+		CursorCardID:     cur.revCardIDArg(),
+		BatchSize:        limit,
 	})
 	if err != nil {
 		return Batch{}, fmt.Errorf("review: list review cards: %w", err)

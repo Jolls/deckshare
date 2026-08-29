@@ -30,6 +30,10 @@
         <option value="mixed" {{if eq (print .NewMix) "mixed"}}selected{{end}}>Mixed</option>
     </select>
 
+    <label for="due_look_ahead_minutes">Due look-ahead (minutes)</label>
+    <input type="number" id="due_look_ahead_minutes" name="due_look_ahead_minutes" min="0" max="1440" step="1" value="{{.DueLookAheadMinutes}}" required>
+    <small>0 only shows cards at or after their exact due instant. Pulling in cards due later today lets one sitting clear the whole day's queue, at the cost of occasionally answering a card before it's actually due.</small>
+
     <button type="submit">Save</button>
 </form>
 

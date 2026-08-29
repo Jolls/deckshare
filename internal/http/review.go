@@ -150,7 +150,8 @@ func buildStudyBatch(ctx context.Context, store db.DBTX, userID pgtype.UUID, dec
 	}
 	batch, err := review.BuildBatch(ctx, store, params, userID, deck.ID, deck.Name, window,
 		review.NewPerDay(deck.Preset), review.RevPerDay(deck.Preset),
-		review.ParseRevOrder(deck.Preset), review.ParseNewMix(deck.Preset), cur, limit, clock)
+		review.ParseRevOrder(deck.Preset), review.ParseNewMix(deck.Preset), cur, limit, clock,
+		review.DueLookAheadMinutes(deck.Preset))
 	if err != nil {
 		return review.Batch{}, err
 	}

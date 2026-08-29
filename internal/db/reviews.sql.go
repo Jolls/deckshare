@@ -107,15 +107,16 @@ LEFT JOIN user_card_state ucs ON ucs.user_id = $1 AND ucs.card_id = c.id
 WHERE c.deck_id = $2
   AND NOT COALESCE(ucs.suspended, false)
   AND (ucs.buried_until IS NULL OR ucs.buried_until <= ($3::timestamptz)::date)
-  AND (ucs.due IS NULL OR ucs.due <= $4::timestamptz)
+  AND (ucs.due IS NULL OR ucs.due <= $4::timestamptz + make_interval(mins => $5::int))
   AND (ucs.last_review IS NULL OR ucs.last_review < $3::timestamptz)
 `
 
 type CountQueueForDeckParams struct {
-	UserID        pgtype.UUID
-	DeckID        pgtype.UUID
-	StudyDayStart pgtype.Timestamptz
-	Now           pgtype.Timestamptz
+	UserID           pgtype.UUID
+	DeckID           pgtype.UUID
+	StudyDayStart    pgtype.Timestamptz
+	Now              pgtype.Timestamptz
+	LookAheadMinutes int32
 }
 
 type CountQueueForDeckRow struct {
@@ -134,6 +135,7 @@ func (q *Queries) CountQueueForDeck(ctx context.Context, arg CountQueueForDeckPa
 		arg.DeckID,
 		arg.StudyDayStart,
 		arg.Now,
+		arg.LookAheadMinutes,
 	)
 	var i CountQueueForDeckRow
 	err := row.Scan(&i.NewCount, &i.LearningCount, &i.DueCount)
@@ -141,6 +143,12 @@ func (q *Queries) CountQueueForDeck(ctx context.Context, arg CountQueueForDeckPa
 }
 
 const countQueueForUser = `-- name: CountQueueForUser :many
+WITH la AS (
+    SELECT d.deck_id, l.look_ahead_minutes
+    FROM unnest($4::uuid[]) WITH ORDINALITY AS d(deck_id, ord)
+    JOIN unnest($5::int[]) WITH ORDINALITY AS l(look_ahead_minutes, ord)
+      ON d.ord = l.ord
+)
 SELECT c.deck_id                                     AS deck_id,
        count(*) FILTER (WHERE ucs.user_id IS NULL)   AS new_count,
        count(*) FILTER (WHERE ucs.state IN (1, 3))   AS learning_count,
@@ -148,18 +156,21 @@ SELECT c.deck_id                                     AS deck_id,
 FROM cards c
 JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $1
                    AND da.can_view AND da.can_study
+JOIN la ON la.deck_id = c.deck_id
 LEFT JOIN user_card_state ucs ON ucs.user_id = $1 AND ucs.card_id = c.id
 WHERE NOT COALESCE(ucs.suspended, false)
   AND (ucs.buried_until IS NULL OR ucs.buried_until <= ($2::timestamptz)::date)
-  AND (ucs.due IS NULL OR ucs.due <= $3::timestamptz)
+  AND (ucs.due IS NULL OR ucs.due <= $3::timestamptz + make_interval(mins => la.look_ahead_minutes))
   AND (ucs.last_review IS NULL OR ucs.last_review < $2::timestamptz)
 GROUP BY c.deck_id
 `
 
 type CountQueueForUserParams struct {
-	UserID        pgtype.UUID
-	StudyDayStart pgtype.Timestamptz
-	Now           pgtype.Timestamptz
+	UserID           pgtype.UUID
+	StudyDayStart    pgtype.Timestamptz
+	Now              pgtype.Timestamptz
+	DeckIds          []pgtype.UUID
+	LookAheadMinutes []int32
 }
 
 type CountQueueForUserRow struct {
@@ -171,8 +182,22 @@ type CountQueueForUserRow struct {
 
 // Same queue summary, grouped by deck, for the /decks list (#80). One query for every deck the
 // user can view rather than one CountQueueForDeck call per row.
+//
+// look_ahead_minutes (#154) varies per deck, but this query spans every deck the user can view in
+// one grouped result, so it can't take a single scalar arg the way CountQueueForDeck does. The
+// caller passes two parallel arrays (deck_ids, look_ahead_minutes -- each deck's value already
+// parsed from its own preset in Go, same as everywhere else preset fields are read) and `la`
+// unnests them into one row per deck, joined on deck_id, so each deck's due filter widens by its
+// own configured amount. A deck_id with no matching row in either array (there won't be one, since
+// the caller derives both from the same deck list) would simply drop out of the INNER JOIN.
 func (q *Queries) CountQueueForUser(ctx context.Context, arg CountQueueForUserParams) ([]CountQueueForUserRow, error) {
-	rows, err := q.db.Query(ctx, countQueueForUser, arg.UserID, arg.StudyDayStart, arg.Now)
+	rows, err := q.db.Query(ctx, countQueueForUser,
+		arg.UserID,
+		arg.StudyDayStart,
+		arg.Now,
+		arg.DeckIds,
+		arg.LookAheadMinutes,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -422,15 +447,19 @@ LEFT JOIN LATERAL (
     WHERE c2.deck_id = $5 AND u2.state = 2
       AND NOT u2.suspended
       AND (u2.buried_until IS NULL OR u2.buried_until <= ($6::timestamptz)::date)
-      AND u2.due <= $7::timestamptz
+      AND u2.due <= $7::timestamptz + make_interval(mins => $8::int)
       AND (u2.last_review IS NULL OR u2.last_review < $6::timestamptz)
     ORDER BY cutoff_key, c2.id
-    OFFSET GREATEST($8::int - 1, 0)
+    OFFSET GREATEST($9::int - 1, 0)
     LIMIT 1
 ) rev_cutoff ON true
 WHERE NOT scored.suspended
   AND (scored.buried_until IS NULL OR scored.buried_until <= ($6::timestamptz)::date)
-  AND (scored.unseen OR scored.due <= $7::timestamptz)
+  -- look_ahead_minutes (#154, decks.preset "due.lookAheadMinutes", default 0) widens the due
+  -- cutoff past "now" by an explicit opt-in amount; the rev_cutoff subquery above must widen it
+  -- identically, or the daily review cap's boundary would be computed over a different-sized
+  -- eligible set than this filter admits.
+  AND (scored.unseen OR scored.due <= $7::timestamptz + make_interval(mins => $8::int))
   AND (scored.last_review IS NULL OR scored.last_review < $6::timestamptz)
   -- The per-deck daily new-card cap (#101). new_remaining is the deck's configured limit minus what
   -- has already been introduced today; the caller computes it. The subselect is uncorrelated, so
@@ -444,7 +473,7 @@ WHERE NOT scored.suspended
   -- even when the new_remaining > 0 guard is false. Suspended/buried are not re-checked here
   -- because a card with no user_card_state row can be neither.
   AND (NOT scored.unseen
-       OR ($9::int > 0
+       OR ($10::int > 0
            AND scored.card_id <= COALESCE((
                  SELECT c2.id
                  FROM cards c2
@@ -452,7 +481,7 @@ WHERE NOT scored.suspended
                         ON u2.user_id = $4 AND u2.card_id = c2.id
                  WHERE c2.deck_id = $5 AND u2.user_id IS NULL
                  ORDER BY c2.id
-                 OFFSET GREATEST($9::int - 1, 0)
+                 OFFSET GREATEST($10::int - 1, 0)
                  LIMIT 1
                ), 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid)))
   -- The per-deck daily review cap (#115), independent of the new-card cap above. rev_remaining is
@@ -462,30 +491,31 @@ WHERE NOT scored.suspended
   -- means fewer review-state cards exist than the allowance, so nothing is excluded. Never-seen
   -- and learning/relearning cards (state 0, 1, 3) are unaffected.
   AND (scored.state IS DISTINCT FROM 2
-       OR ($8::int > 0
+       OR ($9::int > 0
            AND (rev_cutoff.cutoff_key IS NULL
                 OR (scored.raw_key, scored.card_id) <= (rev_cutoff.cutoff_key, rev_cutoff.cutoff_id))))
   AND ((CASE WHEN $1::text = 'beforeReviews' THEN (NOT scored.unseen)::int ELSE scored.unseen::int END),
         scored.raw_key, scored.card_id)
-      > ($10::int, $11::double precision, $12::uuid)
+      > ($11::int, $12::double precision, $13::uuid)
 ORDER BY group_bit, sort_key, scored.card_id
-LIMIT $13
+LIMIT $14
 `
 
 type ListDueCardsForStudyParams struct {
-	NewMix         string
-	RevOrder       string
-	HashSeed       string
-	UserID         pgtype.UUID
-	DeckID         pgtype.UUID
-	StudyDayStart  pgtype.Timestamptz
-	Now            pgtype.Timestamptz
-	RevRemaining   int32
-	NewRemaining   int32
-	CursorGroupBit int32
-	CursorKey      float64
-	CursorCardID   pgtype.UUID
-	BatchSize      int32
+	NewMix           string
+	RevOrder         string
+	HashSeed         string
+	UserID           pgtype.UUID
+	DeckID           pgtype.UUID
+	StudyDayStart    pgtype.Timestamptz
+	Now              pgtype.Timestamptz
+	LookAheadMinutes int32
+	RevRemaining     int32
+	NewRemaining     int32
+	CursorGroupBit   int32
+	CursorKey        float64
+	CursorCardID     pgtype.UUID
+	BatchSize        int32
 }
 
 type ListDueCardsForStudyRow struct {
@@ -545,6 +575,7 @@ func (q *Queries) ListDueCardsForStudy(ctx context.Context, arg ListDueCardsForS
 		arg.DeckID,
 		arg.StudyDayStart,
 		arg.Now,
+		arg.LookAheadMinutes,
 		arg.RevRemaining,
 		arg.NewRemaining,
 		arg.CursorGroupBit,
@@ -817,36 +848,39 @@ LEFT JOIN LATERAL (
     WHERE c2.deck_id = $4 AND u2.state = 2
       AND NOT u2.suspended
       AND (u2.buried_until IS NULL OR u2.buried_until <= ($5::timestamptz)::date)
-      AND u2.due <= $6::timestamptz
+      AND u2.due <= $6::timestamptz + make_interval(mins => $7::int)
       AND (u2.last_review IS NULL OR u2.last_review < $5::timestamptz)
     ORDER BY cutoff_key, c2.id
-    OFFSET GREATEST($7::int - 1, 0)
+    OFFSET GREATEST($8::int - 1, 0)
     LIMIT 1
 ) rev_cutoff ON true
 WHERE NOT scored.suspended
   AND (scored.buried_until IS NULL OR scored.buried_until <= ($5::timestamptz)::date)
-  AND scored.due <= $6::timestamptz
+  -- look_ahead_minutes (#154): same widening and same reason as ListDueCardsForStudy's doc comment
+  -- above -- this filter and its rev_cutoff subquery must agree on the cutoff.
+  AND scored.due <= $6::timestamptz + make_interval(mins => $7::int)
   AND (scored.last_review IS NULL OR scored.last_review < $5::timestamptz)
   AND (scored.state IS DISTINCT FROM 2
-       OR ($7::int > 0
+       OR ($8::int > 0
            AND (rev_cutoff.cutoff_key IS NULL
                 OR (scored.raw_key, scored.card_id) <= (rev_cutoff.cutoff_key, rev_cutoff.cutoff_id))))
-  AND (scored.raw_key, scored.card_id) > ($8::double precision, $9::uuid)
+  AND (scored.raw_key, scored.card_id) > ($9::double precision, $10::uuid)
 ORDER BY sort_key, scored.card_id
-LIMIT $10
+LIMIT $11
 `
 
 type ListReviewCardsForStudyParams struct {
-	RevOrder      string
-	HashSeed      string
-	UserID        pgtype.UUID
-	DeckID        pgtype.UUID
-	StudyDayStart pgtype.Timestamptz
-	Now           pgtype.Timestamptz
-	RevRemaining  int32
-	CursorKey     float64
-	CursorCardID  pgtype.UUID
-	BatchSize     int32
+	RevOrder         string
+	HashSeed         string
+	UserID           pgtype.UUID
+	DeckID           pgtype.UUID
+	StudyDayStart    pgtype.Timestamptz
+	Now              pgtype.Timestamptz
+	LookAheadMinutes int32
+	RevRemaining     int32
+	CursorKey        float64
+	CursorCardID     pgtype.UUID
+	BatchSize        int32
 }
 
 type ListReviewCardsForStudyRow struct {
@@ -884,6 +918,7 @@ func (q *Queries) ListReviewCardsForStudy(ctx context.Context, arg ListReviewCar
 		arg.DeckID,
 		arg.StudyDayStart,
 		arg.Now,
+		arg.LookAheadMinutes,
 		arg.RevRemaining,
 		arg.CursorKey,
 		arg.CursorCardID,
