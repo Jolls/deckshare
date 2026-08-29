@@ -3,7 +3,7 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.1.39] - 2026-08-28
+## [0.2.0] - 2026-08-28
 
 ### Fixed
 - Fixed a card requeued within a study session showing the interval labels computed for its
