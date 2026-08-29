@@ -342,7 +342,7 @@ Windows 11, PowerShell primary (Bash tool also available — each takes its own 
   rewrites every file.
 - **DB-backed tests are scoped to their own rows, not the whole table**, and tolerate a
   seeded/populated database — don't reset before every test run. If a DB-backed test fails and
-  stale data looks like the cause, propose running `bash .claude/skills/run-app/reset-db.sh`
+  stale data looks like the cause, propose running `go run ./scripts/run-app reset-db`
   rather than running it unprompted. If a new DB-backed test asserts a table-wide `count(*)` or
   picks a row via unscoped `LIMIT 1`, that's a bug in the test — scope it to the row(s)/user the
   test itself created (see #134/#119/#108/#141).
