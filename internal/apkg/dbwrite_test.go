@@ -113,11 +113,49 @@ func TestImport_ResultReportsDeckCardCounts(t *testing.T) {
 
 func findCardByAnkiID(ctx context.Context, tx pgx.Tx, ankiID int64) (db.Card, error) {
 	var c db.Card
-	row := tx.QueryRow(ctx, `SELECT id, note_id, template_id, ordinal, deck_id, anki_id FROM cards WHERE anki_id = $1`, ankiID)
-	if err := row.Scan(&c.ID, &c.NoteID, &c.TemplateID, &c.Ordinal, &c.DeckID, &c.AnkiID); err != nil {
+	row := tx.QueryRow(ctx, `SELECT id, note_id, template_id, ordinal, deck_id, anki_id, import_due_position FROM cards WHERE anki_id = $1`, ankiID)
+	if err := row.Scan(&c.ID, &c.NoteID, &c.TemplateID, &c.Ordinal, &c.DeckID, &c.AnkiID, &c.ImportDuePosition); err != nil {
 		return db.Card{}, err
 	}
 	return c, nil
+}
+
+// TestImport_PersistsNewCardDuePosition (#82) asserts a new card's Anki queue position survives
+// import into cards.import_due_position, using defaultSynthSpec's own new cards (202->7, 203->1,
+// 204->2, 205->3) -- already out of AnkiID/card-table order, so this also guards against a
+// regression that happens to work only when import order matches Anki's order.
+func TestImport_PersistsNewCardDuePosition(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	ownerID := seedUser(t, tx)
+
+	spec := defaultSynthSpec(t)
+	pkg := buildSchema11Package(t, spec)
+	col := readBytes(t, pkg)
+	if _, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t)); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	wantPosition := map[int64]int32{202: 7, 203: 1, 204: 2, 205: 3}
+	for ankiID, want := range wantPosition {
+		card, err := findCardByAnkiID(ctx, tx, ankiID)
+		if err != nil {
+			t.Fatalf("card %d: %v", ankiID, err)
+		}
+		if !card.ImportDuePosition.Valid || card.ImportDuePosition.Int32 != want {
+			t.Errorf("card %d import_due_position = %+v, want %d", ankiID, card.ImportDuePosition, want)
+		}
+	}
+
+	// Card 201 is a review card (DueAt, not DuePosition) -- must stay NULL, not accidentally pick
+	// up its due-days value as a queue position.
+	card201, err := findCardByAnkiID(ctx, tx, 201)
+	if err != nil {
+		t.Fatalf("card 201: %v", err)
+	}
+	if card201.ImportDuePosition.Valid {
+		t.Errorf("card 201 (review card) import_due_position = %+v, want NULL", card201.ImportDuePosition)
+	}
 }
 
 func TestImport_IdempotentOnOwnerGuid(t *testing.T) {

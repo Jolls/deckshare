@@ -516,6 +516,105 @@ func TestBuildBatch_RevOrderIntervalDesc(t *testing.T) {
 	}
 }
 
+// TestBuildBatch_NewCardOrder_ImportDuePosition (#82): new cards sort by their persisted Anki
+// import_due_position, not creation/card-id order -- seedCards returns ids in insertion order, so
+// scrambling position relative to that order is what would catch a regression to id-only sorting.
+// f.CardID keeps its default NULL position and must sort after every real-position card, the same
+// behavior non-imported cards had before #82.
+func TestBuildBatch_NewCardOrder_ImportDuePosition(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	p := mustDefaultParams(t)
+	f := seedFixture(t, tx)
+	cards := seedCards(t, tx, f, 3)
+	setImportDuePosition(t, tx, cards[0], 30)
+	setImportDuePosition(t, tx, cards[1], 10)
+	setImportDuePosition(t, tx, cards[2], 20)
+	window := testStudyDay(0)
+	now := window.Start.Add(time.Hour)
+
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay,
+		RevOrderDue, NewMixAfterReviews, Cursor{AtStart: true}, 30, now)
+	if err != nil {
+		t.Fatalf("BuildBatch: %v", err)
+	}
+	want := []pgtype.UUID{cards[1], cards[2], cards[0], f.CardID}
+	if len(batch.Cards) != len(want) {
+		t.Fatalf("got %d cards, want %d", len(batch.Cards), len(want))
+	}
+	for i, c := range batch.Cards {
+		if c.CardID != want[i] {
+			t.Errorf("position %d: got card %s, want %s", i, c.CardID.String(), want[i].String())
+		}
+	}
+}
+
+// TestBuildBatch_NewCardCap_ImportDuePosition (#82, #101): the new-card daily-cap boundary ranks
+// by (import_due_position, id), the same order raw_key sorts new rows by, not by id alone --
+// otherwise the cap and the display order could disagree about which cards count as "first".
+func TestBuildBatch_NewCardCap_ImportDuePosition(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	p := mustDefaultParams(t)
+	f := seedFixture(t, tx)
+	cards := seedCards(t, tx, f, 3)
+	// Ascending position order is cards[1](10), cards[2](20), cards[0](30), f.CardID(40) -- a cap
+	// of 2 must admit cards[1] and cards[2], not the two lowest card_ids.
+	setImportDuePosition(t, tx, f.CardID, 40)
+	setImportDuePosition(t, tx, cards[0], 30)
+	setImportDuePosition(t, tx, cards[1], 10)
+	setImportDuePosition(t, tx, cards[2], 20)
+	window := testStudyDay(0)
+	now := window.Start.Add(time.Hour)
+
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, 2, DefaultRevPerDay,
+		RevOrderDue, NewMixAfterReviews, Cursor{AtStart: true}, 30, now)
+	if err != nil {
+		t.Fatalf("BuildBatch: %v", err)
+	}
+	want := []pgtype.UUID{cards[1], cards[2]}
+	if len(batch.Cards) != len(want) {
+		t.Fatalf("got %d cards, want %d: %v", len(batch.Cards), len(want), batch.Cards)
+	}
+	for i, c := range batch.Cards {
+		if c.CardID != want[i] {
+			t.Errorf("position %d: got card %s, want %s", i, c.CardID.String(), want[i].String())
+		}
+	}
+}
+
+// TestBuildBatch_NewMixMixed_NewCardOrder_ImportDuePosition (#82): under new.mix=mixed,
+// ListNewCardsForStudy's own (position, id) ordering, cursor, and cap govern the new-card side of
+// the interleave -- the query most likely to regress silently back to id-only ordering, since it
+// has no shared "scored" CTE with ListDueCardsForStudy.
+func TestBuildBatch_NewMixMixed_NewCardOrder_ImportDuePosition(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	p := mustDefaultParams(t)
+	f := seedFixture(t, tx)
+	cards := seedCards(t, tx, f, 2)
+	setImportDuePosition(t, tx, f.CardID, 20)
+	setImportDuePosition(t, tx, cards[0], 5)
+	setImportDuePosition(t, tx, cards[1], 10)
+	window := testStudyDay(0)
+	now := window.Start.Add(time.Hour)
+
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay,
+		RevOrderDue, NewMixMixed, Cursor{AtStart: true}, 30, now)
+	if err != nil {
+		t.Fatalf("BuildBatch: %v", err)
+	}
+	want := []pgtype.UUID{cards[0], cards[1], f.CardID}
+	if len(batch.Cards) != len(want) {
+		t.Fatalf("got %d cards, want %d: %v", len(batch.Cards), len(want), batch.Cards)
+	}
+	for i, c := range batch.Cards {
+		if c.CardID != want[i] {
+			t.Errorf("position %d: got card %s, want %s", i, c.CardID.String(), want[i].String())
+		}
+	}
+}
+
 // TestBuildBatch_RevOrderRandom_StableWithinDay: rev.order=random reshuffles per study day but
 // two fetches within the same study day (the same hash_seed, #116) return the identical order --
 // the property pagination across refills depends on.

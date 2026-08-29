@@ -192,8 +192,16 @@ func TestExport_RoundTripsThroughReimport(t *testing.T) {
 				t.Fatalf("note %q ordinal %d: no matching card for owner B", n.Guid, ordinal)
 			}
 
-			stateA, errA := q.GetUserCardState(ctx, db.GetUserCardStateParams{UserID: ownerA, CardID: cardA})
-			stateB, errB := q.GetUserCardState(ctx, db.GetUserCardStateParams{UserID: ownerB, CardID: cardB})
+			// #82: a new card's imported queue position must survive export -> reimport, not just
+			// import -> DB. defaultSynthSpec's own new cards (AnkiID 202-205) already exercise
+			// out-of-card-id-order positions.
+			if cardA.ImportDuePosition != cardB.ImportDuePosition {
+				t.Errorf("note %q ordinal %d: import_due_position = %+v, want %+v",
+					n.Guid, ordinal, cardB.ImportDuePosition, cardA.ImportDuePosition)
+			}
+
+			stateA, errA := q.GetUserCardState(ctx, db.GetUserCardStateParams{UserID: ownerA, CardID: cardA.ID})
+			stateB, errB := q.GetUserCardState(ctx, db.GetUserCardStateParams{UserID: ownerB, CardID: cardB.ID})
 			hasA := !errors.Is(errA, pgx.ErrNoRows)
 			hasB := !errors.Is(errB, pgx.ErrNoRows)
 			if hasA != hasB {
@@ -223,11 +231,11 @@ func TestExport_RoundTripsThroughReimport(t *testing.T) {
 					n.Guid, ordinal, stateB.Reps, stateB.Lapses, stateA.Reps, stateA.Lapses)
 			}
 
-			reviewsA, err := q.ListReviewLogForCard(ctx, db.ListReviewLogForCardParams{CardID: cardA, UserID: ownerA})
+			reviewsA, err := q.ListReviewLogForCard(ctx, db.ListReviewLogForCardParams{CardID: cardA.ID, UserID: ownerA})
 			if err != nil {
 				t.Fatalf("owner A review log: %v", err)
 			}
-			reviewsB, err := q.ListReviewLogForCard(ctx, db.ListReviewLogForCardParams{CardID: cardB, UserID: ownerB})
+			reviewsB, err := q.ListReviewLogForCard(ctx, db.ListReviewLogForCardParams{CardID: cardB.ID, UserID: ownerB})
 			if err != nil {
 				t.Fatalf("owner B review log: %v", err)
 			}
@@ -244,21 +252,28 @@ func TestExport_RoundTripsThroughReimport(t *testing.T) {
 	}
 }
 
+// noteCard is what findCardsForNote returns for one card: its id plus its imported new-card
+// queue position (#82), for TestExport_RoundTripsThroughReimport's position round-trip check.
+type noteCard struct {
+	ID                pgtype.UUID
+	ImportDuePosition pgtype.Int4
+}
+
 // findCardsForNote returns a note's cards keyed by ordinal.
-func findCardsForNote(ctx context.Context, tx pgx.Tx, noteID pgtype.UUID) (map[int32]pgtype.UUID, error) {
-	rows, err := tx.Query(ctx, `SELECT id, ordinal FROM cards WHERE note_id = $1`, noteID)
+func findCardsForNote(ctx context.Context, tx pgx.Tx, noteID pgtype.UUID) (map[int32]noteCard, error) {
+	rows, err := tx.Query(ctx, `SELECT id, ordinal, import_due_position FROM cards WHERE note_id = $1`, noteID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[int32]pgtype.UUID{}
+	out := map[int32]noteCard{}
 	for rows.Next() {
-		var id pgtype.UUID
+		var c noteCard
 		var ordinal int32
-		if err := rows.Scan(&id, &ordinal); err != nil {
+		if err := rows.Scan(&c.ID, &ordinal, &c.ImportDuePosition); err != nil {
 			return nil, err
 		}
-		out[ordinal] = id
+		out[ordinal] = c
 	}
 	return out, rows.Err()
 }

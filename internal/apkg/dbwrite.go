@@ -422,12 +422,18 @@ func importCards(ctx context.Context, q *db.Queries, col *IrCollection, noteByAn
 			result.Warnings = append(result.Warnings, fmt.Sprintf("card (anki_id %d): its own deck (anki_id %d) did not resolve; filed under its note's home deck instead", c.AnkiID, c.DeckAnkiID))
 		}
 
+		var importDuePosition pgtype.Int4
+		if c.Due.Kind == DuePosition {
+			importDuePosition = pgtype.Int4{Int32: c.Due.Position, Valid: true}
+		}
+
 		created, err := q.UpsertImportedCard(ctx, db.UpsertImportedCardParams{
-			NoteID:     noteID,
-			TemplateID: templateID,
-			Ordinal:    c.Ordinal,
-			DeckID:     deckID,
-			AnkiID:     pgtype.Int8{Int64: c.AnkiID, Valid: true},
+			NoteID:            noteID,
+			TemplateID:        templateID,
+			Ordinal:           c.Ordinal,
+			DeckID:            deckID,
+			AnkiID:            pgtype.Int8{Int64: c.AnkiID, Valid: true},
+			ImportDuePosition: importDuePosition,
 		})
 		if err != nil {
 			return importedCards{}, fmt.Errorf("apkg: upserting card (anki_id %d): %w", c.AnkiID, err)

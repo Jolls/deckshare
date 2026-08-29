@@ -824,6 +824,7 @@ seemed tidier."
 | Filtered / custom-study decks | Yes | Not built. The importer reads `odid`/`odue` and files cards under their real home deck, so nothing is lost on the way in |
 | Add-ons | Plugin API | No plugin system (§11) |
 | Empty cards on cloze-ordinal removal | Kept as "empty cards" until the user runs Tools → Empty Cards | Deleted immediately by the edit that removed the ordinal, cascading that card's `user_card_state` (§54, `internal/db/cards.go`'s `SyncNoteCards`, docs/schema.md's card-regeneration diff rule). No empty-cards concept exists; building one wasn't required by any Phase 1 step |
+| New-card queue order | Deck-config-driven gather/insertion mode (order added, random, and others, per deck) plus deck-tree limits and learn-ahead, all folding into one cross-deck queue | New cards sort by the imported `due` position when the import carried one (`cards.import_due_position`), else after every real position, falling back to `card_id` (#82). Preserves the order a user actually saw in Anki without requiring `dconf`/deck-config import; full gather-mode configurability, deck-tree limits, and cross-day interleaving stay unbuilt, tracked under #117 |
 
 ### Unforced — resolved
 

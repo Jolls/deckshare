@@ -24,7 +24,7 @@ func (q *Queries) AppendNoteFieldSlot(ctx context.Context, noteTypeID pgtype.UUI
 }
 
 const createCard = `-- name: CreateCard :one
-INSERT INTO cards (note_id, template_id, ordinal, deck_id) VALUES ($1, $2, $3, $4) RETURNING id, note_id, template_id, ordinal, deck_id, anki_id
+INSERT INTO cards (note_id, template_id, ordinal, deck_id) VALUES ($1, $2, $3, $4) RETURNING id, note_id, template_id, ordinal, deck_id, anki_id, import_due_position
 `
 
 type CreateCardParams struct {
@@ -52,6 +52,7 @@ func (q *Queries) CreateCard(ctx context.Context, arg CreateCardParams) (Card, e
 		&i.Ordinal,
 		&i.DeckID,
 		&i.AnkiID,
+		&i.ImportDuePosition,
 	)
 	return i, err
 }

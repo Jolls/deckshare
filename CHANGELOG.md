@@ -3,6 +3,19 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.5] - 2026-08-29
+
+### Fixed
+- `.apkg` import now persists a new card's Anki queue position (`cards.import_due_position`) and
+  uses it to order never-seen cards in the study queue, instead of discarding it and falling back
+  to arbitrary import/creation order. Covers `ListDueCardsForStudy`'s single-query path and
+  `ListNewCardsForStudy`'s mixed new/review interleave path (#116), including their daily new-card
+  cap boundaries. Cards never imported (or imported without a queue position) keep sorting by
+  `card_id`, after every real position, same as before. `.apkg` export now also writes a new
+  card's persisted position back into `due`, instead of re-deriving one from export row order, so
+  the position round-trips through export -> reimport. See
+  [#82](https://github.com/Jolls/enshu/issues/82).
+
 ## [0.2.4] - 2026-08-29
 
 ### Fixed

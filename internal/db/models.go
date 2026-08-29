@@ -9,12 +9,13 @@ import (
 )
 
 type Card struct {
-	ID         pgtype.UUID
-	NoteID     pgtype.UUID
-	TemplateID pgtype.UUID
-	Ordinal    int32
-	DeckID     pgtype.UUID
-	AnkiID     pgtype.Int8
+	ID                pgtype.UUID
+	NoteID            pgtype.UUID
+	TemplateID        pgtype.UUID
+	Ordinal           int32
+	DeckID            pgtype.UUID
+	AnkiID            pgtype.Int8
+	ImportDuePosition pgtype.Int4
 }
 
 type Deck struct {
