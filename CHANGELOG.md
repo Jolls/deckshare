@@ -3,7 +3,7 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.2.1] - 2026-08-29
+## [0.2.2] - 2026-08-29
 
 ### Security
 - `GET /media/{sha256}` now forces `Content-Type` to `application/octet-stream` for any stored
@@ -13,6 +13,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   same-origin active content, with only CSP's `script-src` (no other layer) stopping embedded
   script from running under a shared deck ([#133](https://github.com/Jolls/enshu/issues/133)).
 
+## [0.2.1] - 2026-08-28
+
+### Fixed
+- Fixed `.apkg`/`.colpkg` import discarding the parsed FSRS desired retention, which scheduled
+  every imported card against Enshu's 0.9 default instead of whatever retention Anki was actually
+  targeting: the majority `dr` value across a deck's cards is now seeded into that deck's
+  `user_fsrs_params` row at import time (first-import-only, so a later re-import never overwrites
+  a retention the user has since changed via `/settings`) ([#81](https://github.com/Jolls/enshu/issues/81)).
 ## [0.2.0] - 2026-08-28
 
 ### Fixed
