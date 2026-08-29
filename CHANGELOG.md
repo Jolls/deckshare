@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.7] - 2026-08-29
+
+### Added
+- `docs/review-flow.md`: a diagram and step tables walking a study session (login through the
+  grading loop) split by user/client/server responsibility, linked from
+  [architecture.md §6](docs/architecture.md#6-the-review-loop).
+
 ## [0.2.6] - 2026-08-29
 
 ### Fixed
