@@ -1,8 +1,10 @@
 // Command seed populates a freshly-migrated local database with a test user, two test decks,
 // and a few sample notes/cards in each -- so a manually-tested or reset dev DB has something to
 // review, not just empty decks. Signup already seeds the user's Basic/Cloze note types
-// (internal/auth/notetypes.go); this adds decks and notes on top. Safe to re-run: an
-// already-seeded deck (non-zero card count) is left alone.
+// (internal/auth/notetypes.go); this adds decks and notes on top. It also creates a second test
+// user and a third deck shared between them, so the deck access management page (#83) has a
+// collaborator row to show without granting access by hand. Safe to re-run: an already-seeded
+// deck (non-zero card count) is left alone, and an existing access grant is left alone too.
 package main
 
 import (
@@ -30,8 +32,13 @@ const (
 	testPassword    = "password"
 	testDisplayName = "Test User"
 
-	basicDeckName = "Test Deck A"
-	clozeDeckName = "Test Deck B"
+	collaboratorEmail       = "collaborator@test.com"
+	collaboratorPassword    = "password"
+	collaboratorDisplayName = "Test Collaborator"
+
+	basicDeckName  = "Test Deck A"
+	clozeDeckName  = "Test Deck B"
+	sharedDeckName = "Test Deck C (Shared)"
 )
 
 var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
@@ -60,23 +67,16 @@ func run() error {
 		return fmt.Errorf("init auth: %w", err)
 	}
 
-	user, _, err := authSvc.Signup(ctx, "127.0.0.1", testEmail, testPassword, testDisplayName)
+	user, err := ensureUser(ctx, pool, authSvc, testEmail, testPassword, testDisplayName)
 	if err != nil {
-		if errors.Is(err, auth.ErrEmailTaken) {
-			q := db.New(pool)
-			user, err = q.GetUserByEmail(ctx, testEmail)
-			if err != nil {
-				return fmt.Errorf("look up existing test user: %w", err)
-			}
-			log.Printf("test user already exists: %s", testEmail)
-		} else {
-			return fmt.Errorf("create test user: %w", err)
-		}
-	} else {
-		log.Printf("created test user: %s / %s", testEmail, testPassword)
+		return fmt.Errorf("ensure test user: %w", err)
+	}
+	collaborator, err := ensureUser(ctx, pool, authSvc, collaboratorEmail, collaboratorPassword, collaboratorDisplayName)
+	if err != nil {
+		return fmt.Errorf("ensure collaborator user: %w", err)
 	}
 
-	for _, name := range []string{basicDeckName, clozeDeckName} {
+	for _, name := range []string{basicDeckName, clozeDeckName, sharedDeckName} {
 		if err := ensureDeck(ctx, pool, user.ID, name); err != nil {
 			return fmt.Errorf("ensure deck %q: %w", name, err)
 		}
@@ -127,6 +127,63 @@ func run() error {
 		log.Printf("%s already has cards, skipping note seeding", clozeDeckName)
 	}
 
+	sharedDeck, ok := findDeck(decks, sharedDeckName)
+	if !ok {
+		return fmt.Errorf("deck %q not found after ensureDeck", sharedDeckName)
+	}
+	if sharedDeck.CardCount == 0 {
+		if err := seedSampleNotes(ctx, pool, user.ID, sharedDeck.ID, basicType.ID, "Basic", basicSamples); err != nil {
+			return fmt.Errorf("seed shared deck notes: %w", err)
+		}
+		log.Printf("seeded sample notes in %s", sharedDeckName)
+	} else {
+		log.Printf("%s already has cards, skipping note seeding", sharedDeckName)
+	}
+
+	// Read-only-ish grant: enough to exercise the access page's varied flags (#83) without
+	// also handing the collaborator can_manage_access or can_delete.
+	if err := ensureDeckAccess(ctx, pool, db.GrantDeckAccessParams{
+		DeckID: sharedDeck.ID, CallerUserID: user.ID, TargetUserID: collaborator.ID,
+		CanView: true, CanStudy: true,
+	}); err != nil {
+		return fmt.Errorf("ensure collaborator access to %q: %w", sharedDeckName, err)
+	}
+
+	return nil
+}
+
+// ensureUser signs up the given account, or looks it up if a prior seed run already created it.
+func ensureUser(ctx context.Context, pool *pgxpool.Pool, authSvc *auth.Service, email, password, displayName string) (db.User, error) {
+	user, _, err := authSvc.Signup(ctx, "127.0.0.1", email, password, displayName)
+	if err == nil {
+		log.Printf("created test user: %s / %s", email, password)
+		return user, nil
+	}
+	if !errors.Is(err, auth.ErrEmailTaken) {
+		return db.User{}, fmt.Errorf("create user: %w", err)
+	}
+	user, err = db.New(pool).GetUserByEmail(ctx, email)
+	if err != nil {
+		return db.User{}, fmt.Errorf("look up existing user: %w", err)
+	}
+	log.Printf("test user already exists: %s", email)
+	return user, nil
+}
+
+// ensureDeckAccess grants deck access, tolerating a grant left over from a prior seed run.
+func ensureDeckAccess(ctx context.Context, pool *pgxpool.Pool, arg db.GrantDeckAccessParams) error {
+	rows, err := db.New(pool).GrantDeckAccess(ctx, arg)
+	if err != nil {
+		if db.IsUniqueViolation(err, "deck_access_pkey") {
+			log.Printf("deck access already granted")
+			return nil
+		}
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("caller lacks can_view+can_manage_access on deck %v", arg.DeckID)
+	}
+	log.Printf("granted deck access")
 	return nil
 }
 

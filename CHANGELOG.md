@@ -3,6 +3,21 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.3] - 2026-08-29
+
+### Added
+- Deck access management, the first thing that grants a second user a `deck_access` row: a
+  `GET /decks/{id}/access` page listing a deck's collaborators and their six permission flags,
+  plus `POST /decks/{id}/access` to grant access by email, and
+  `POST /decks/{id}/access/{userId}/edit` / `.../delete` to change or revoke a collaborator's
+  flags. All four require `can_manage_access` and collapse "deck absent / invisible / not
+  permitted" into one 404; the existing last-holder guard surfaces as a 409, so a deck can never
+  be left with nobody able to manage or delete it ([#83](https://github.com/Jolls/enshu/issues/83)).
+- `cmd/seed` (run via `go run ./scripts/run-app reset-db`) now also creates a second test user
+  and a deck shared between the two test users, so the new access management page has a
+  collaborator row to show on a freshly reset dev database
+  ([#83](https://github.com/Jolls/enshu/issues/83)).
+
 ## [0.2.2] - 2026-08-29
 
 ### Security

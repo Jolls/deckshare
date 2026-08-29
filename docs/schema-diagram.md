@@ -409,6 +409,13 @@ A user reaches a deck they don't own through `DECK_ACCESS` and nothing else. The
 it still lives in their own `user_card_state` rows, which key off `card_id` and appear in the
 scheduling diagram rather than this one — sharing content never shares progress.
 
+Access-management operations (`internal/http/access.go`) require `can_view` alongside
+`can_manage_access` — never `can_manage_access` alone — for reading the access page, granting a
+collaborator, and locking the deck for a revoke or flag edit. Otherwise a caller whose `can_view`
+was stripped but who still holds `can_manage_access` would be 404'd off the access page yet could
+still grant, revoke, or edit other collaborators' rows by posting to the mutation routes directly
+([#83](https://github.com/Jolls/enshu/issues/83)).
+
 ---
 
 ## Media & auth

@@ -1,0 +1,62 @@
+{{define "content"}}
+<h1>Manage access — {{.Deck.Name}}</h1>
+{{template "errorMsg" .Error}}
+
+<table>
+    <thead>
+        <tr>
+            <th>Email</th><th>Name</th>
+            <th>View</th><th>Study</th><th>Edit content</th><th>Edit settings</th><th>Manage access</th><th>Delete</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {{range .Collaborators}}
+        <tr>
+            <td>{{.Email}}</td>
+            <td>{{.DisplayName}}</td>
+            <td><input type="checkbox" name="can_view" form="edit-{{.UserID}}" {{if .CanView}}checked{{end}}></td>
+            <td><input type="checkbox" name="can_study" form="edit-{{.UserID}}" {{if .CanStudy}}checked{{end}}></td>
+            <td><input type="checkbox" name="can_edit_content" form="edit-{{.UserID}}" {{if .CanEditContent}}checked{{end}}></td>
+            <td><input type="checkbox" name="can_edit_settings" form="edit-{{.UserID}}" {{if .CanEditSettings}}checked{{end}}></td>
+            <td><input type="checkbox" name="can_manage_access" form="edit-{{.UserID}}" {{if .CanManageAccess}}checked{{end}}></td>
+            <td><input type="checkbox" name="can_delete" form="edit-{{.UserID}}" {{if .CanDelete}}checked{{end}}></td>
+            <td>
+                <button type="submit" form="edit-{{.UserID}}">Save</button>
+                <form method="post" action="/decks/{{$.Deck.ID}}/access/{{.UserID}}/delete" style="display:inline">
+                    <button type="submit">Revoke</button>
+                </form>
+            </td>
+        </tr>
+        {{end}}
+    </tbody>
+</table>
+
+{{/* A <form> cannot wrap a <tr>, so each row's checkboxes and Save button associate with their
+     form by id instead. The forms carry no controls of their own. */}}
+{{range .Collaborators}}
+<form id="edit-{{.UserID}}" method="post" action="/decks/{{$.Deck.ID}}/access/{{.UserID}}/edit" hidden></form>
+{{end}}
+
+<section>
+    <h2>Grant access</h2>
+    <form method="post" action="/decks/{{.Deck.ID}}/access">
+        <label for="email">Email</label>
+        <input type="email" id="email" name="email" required>
+
+        <fieldset>
+            <legend>Permissions</legend>
+            <label><input type="checkbox" name="can_view" checked> View</label>
+            <label><input type="checkbox" name="can_study"> Study</label>
+            <label><input type="checkbox" name="can_edit_content"> Edit content</label>
+            <label><input type="checkbox" name="can_edit_settings"> Edit settings</label>
+            <label><input type="checkbox" name="can_manage_access"> Manage access</label>
+            <label><input type="checkbox" name="can_delete"> Delete</label>
+        </fieldset>
+
+        <button type="submit">Grant access</button>
+    </form>
+</section>
+
+{{template "backToDeck" .Deck}}
+{{end}}

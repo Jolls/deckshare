@@ -60,13 +60,16 @@ DELETE FROM decks WHERE id = sqlc.arg(deck_id);
 
 -- Locks the deck and authorises an access change. Same 404-shaped no-row contract as
 -- LockDeckForDelete; the shared lock is what serialises concurrent revocations, without which
--- two callers can each remove "the second-to-last" holder and strand the deck.
+-- two callers can each remove "the second-to-last" holder and strand the deck. can_view is
+-- required alongside can_manage_access to match GetDeckForAccessManage (deck_access.sql) --
+-- otherwise a can_manage_access-without-can_view caller would be 404'd on the access page and on
+-- grant but could still edit/revoke other collaborators' access via this path (#83 review).
 -- name: LockDeckForAccessChange :one
 SELECT d.id
 FROM decks d
 JOIN deck_access da ON da.deck_id = d.id AND da.user_id = sqlc.arg(user_id)
 WHERE d.id = sqlc.arg(deck_id)
-  AND da.can_manage_access
+  AND da.can_view AND da.can_manage_access
 FOR UPDATE OF d;
 
 -- name: DeleteDeckAccessRow :execrows
