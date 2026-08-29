@@ -12,11 +12,19 @@ const (
 
 	DefaultRevPerDay int32 = 200  // Anki's classic default
 	MaxRevPerDay     int32 = 9999 // Anki's own upper bound
+
+	// DefaultDueLookAheadMinutes 0 matches the due<=now tightening (#154, split off #155): a card
+	// is only ever offered at or after its own due instant, never early. MaxDueLookAheadMinutes
+	// caps it at 24h -- the same span the old study_day_end-based window implicitly allowed before
+	// #155 removed it -- so this setting can restore that old behaviour at most, not exceed it.
+	DefaultDueLookAheadMinutes int32 = 0
+	MaxDueLookAheadMinutes     int32 = 1440
 )
 
-// deckPreset is the whole of decks.preset (#101, #115, #116): per-deck daily caps plus, since
-// #116, review order and new/review interleaving. One struct so every reader (NewPerDay,
-// RevPerDay, ParseRevOrder, ParseNewMix) shares one JSON-unmarshal/degrade-on-error path.
+// deckPreset is the whole of decks.preset (#101, #115, #116, #154): per-deck daily caps plus
+// review order, new/review interleaving, and the due-date look-ahead window. One struct so every
+// reader (NewPerDay, RevPerDay, ParseRevOrder, ParseNewMix, DueLookAheadMinutes) shares one
+// JSON-unmarshal/degrade-on-error path.
 type deckPreset struct {
 	New *struct {
 		PerDay *int32  `json:"perDay"`
@@ -26,6 +34,9 @@ type deckPreset struct {
 		PerDay *int32  `json:"perDay"`
 		Order  *string `json:"order"`
 	} `json:"rev"`
+	Due *struct {
+		LookAheadMinutes *int32 `json:"lookAheadMinutes"`
+	} `json:"due"`
 }
 
 // parseDeckPreset unmarshals preset, ok=false on malformed JSON (all fields degrade to their
@@ -83,6 +94,21 @@ func RevRemaining(perDay int32, reviewedToday int64) int32 {
 		return 0
 	}
 	return remaining
+}
+
+// DueLookAheadMinutes reads decks.preset (#154). Absent, malformed, or out of range ->
+// DefaultDueLookAheadMinutes (0, i.e. due<=now only); a value inside 0..MaxDueLookAheadMinutes is
+// returned as written, 0 included.
+func DueLookAheadMinutes(preset []byte) int32 {
+	p, ok := parseDeckPreset(preset)
+	if !ok || p.Due == nil || p.Due.LookAheadMinutes == nil {
+		return DefaultDueLookAheadMinutes
+	}
+	v := *p.Due.LookAheadMinutes
+	if v < 0 || v > MaxDueLookAheadMinutes {
+		return DefaultDueLookAheadMinutes
+	}
+	return v
 }
 
 // LeftToStudy is how many of a deck's New/Learning/Due cards are actually left to study today

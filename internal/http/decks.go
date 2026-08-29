@@ -34,8 +34,12 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			return
 		}
 		presetByDeck := make(map[pgtype.UUID][]byte, len(decks))
-		for _, d := range decks {
+		deckIDs := make([]pgtype.UUID, len(decks))
+		lookAheadMinutes := make([]int32, len(decks))
+		for i, d := range decks {
 			presetByDeck[d.ID] = d.Preset
+			deckIDs[i] = d.ID
+			lookAheadMinutes[i] = review.DueLookAheadMinutes(d.Preset)
 		}
 		n := now()
 		window, err := studyDayWindow(r.Context(), q, user.ID, n)
@@ -44,9 +48,11 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			return
 		}
 		rows, err := q.CountQueueForUser(r.Context(), db.CountQueueForUserParams{
-			UserID:        user.ID,
-			StudyDayStart: pgtype.Timestamptz{Time: window.Start, Valid: true},
-			Now:           pgtype.Timestamptz{Time: n, Valid: true},
+			UserID:           user.ID,
+			StudyDayStart:    pgtype.Timestamptz{Time: window.Start, Valid: true},
+			Now:              pgtype.Timestamptz{Time: n, Valid: true},
+			DeckIds:          deckIDs,
+			LookAheadMinutes: lookAheadMinutes,
 		})
 		if err != nil {
 			serverError(w)
@@ -168,10 +174,11 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			return
 		}
 		queueRow, err := q.CountQueueForDeck(r.Context(), db.CountQueueForDeckParams{
-			UserID:        user.ID,
-			DeckID:        deckID,
-			StudyDayStart: pgtype.Timestamptz{Time: window.Start, Valid: true},
-			Now:           pgtype.Timestamptz{Time: n, Valid: true},
+			UserID:           user.ID,
+			DeckID:           deckID,
+			StudyDayStart:    pgtype.Timestamptz{Time: window.Start, Valid: true},
+			Now:              pgtype.Timestamptz{Time: n, Valid: true},
+			LookAheadMinutes: review.DueLookAheadMinutes(deck.Preset),
 		})
 		if err != nil {
 			serverError(w)
@@ -224,6 +231,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			"User": user, "Deck": deck,
 			"NewPerDay": review.NewPerDay(deck.Preset), "RevPerDay": review.RevPerDay(deck.Preset),
 			"RevOrder": review.ParseRevOrder(deck.Preset), "NewMix": review.ParseNewMix(deck.Preset),
+			"DueLookAheadMinutes": review.DueLookAheadMinutes(deck.Preset),
 		})
 	})))
 
@@ -277,10 +285,20 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			}
 			revOrder = pgtype.Text{String: raw, Valid: true}
 		}
+		dueLookAheadMinutes := pgtype.Int4{} // absent or empty -> leave preset untouched
+		if raw := strings.TrimSpace(r.PostForm.Get("due_look_ahead_minutes")); raw != "" {
+			v, err := strconv.Atoi(raw)
+			if err != nil || v < 0 || int32(v) > review.MaxDueLookAheadMinutes {
+				badRequest(w)
+				return
+			}
+			dueLookAheadMinutes = pgtype.Int4{Int32: int32(v), Valid: true}
+		}
 
 		n, err := db.New(store).UpdateDeck(r.Context(), db.UpdateDeckParams{
 			Name: name, Description: description, NewPerDay: newPerDay, RevPerDay: revPerDay,
-			NewMix: newMix, RevOrder: revOrder, DeckID: deckID, UserID: user.ID,
+			NewMix: newMix, RevOrder: revOrder, DueLookAheadMinutes: dueLookAheadMinutes,
+			DeckID: deckID, UserID: user.ID,
 		})
 		if err != nil {
 			if db.IsUniqueViolation(err, "decks_owner_id_name_key") {

@@ -345,6 +345,53 @@ func TestDeckEditRoute_RevPerDay(t *testing.T) {
 	})
 }
 
+func TestDeckEditRoute_DueLookAheadMinutes(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	w := doRequest(handler, "POST", "/decks", "name=My Deck", cookie, "http://example.com")
+	deckPath := w.Header().Get("Location")
+
+	w = doRequest(handler, "GET", deckPath+"/edit", "", cookie, "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `value="0"`) {
+		t.Fatalf("new deck should default to due_look_ahead_minutes=0, got status %d:\n%s", w.Code, w.Body.String())
+	}
+
+	w = doRequest(handler, "POST", deckPath+"/edit", "name=My Deck&description=&due_look_ahead_minutes=45", cookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("POST edit status = %d, want 303: %s", w.Code, w.Body.String())
+	}
+	w = doRequest(handler, "GET", deckPath+"/edit", "", cookie, "")
+	if !strings.Contains(w.Body.String(), `value="45"`) {
+		t.Errorf("edit page should reflect due_look_ahead_minutes=45:\n%s", w.Body.String())
+	}
+
+	t.Run("absent field leaves value untouched", func(t *testing.T) {
+		w := doRequest(handler, "POST", deckPath+"/edit", "name=My Deck&description=", cookie, "http://example.com")
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("status = %d, want 303: %s", w.Code, w.Body.String())
+		}
+		w = doRequest(handler, "GET", deckPath+"/edit", "", cookie, "")
+		if !strings.Contains(w.Body.String(), `value="45"`) {
+			t.Errorf("due_look_ahead_minutes should remain 45 when the field is absent:\n%s", w.Body.String())
+		}
+	})
+
+	for _, v := range []string{"abc", "-1", "1441"} {
+		t.Run("rejects due_look_ahead_minutes="+v, func(t *testing.T) {
+			w := doRequest(handler, "POST", deckPath+"/edit", "name=My Deck&description=&due_look_ahead_minutes="+v, cookie, "http://example.com")
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400", w.Code)
+			}
+			w = doRequest(handler, "GET", deckPath+"/edit", "", cookie, "")
+			if !strings.Contains(w.Body.String(), `value="45"`) {
+				t.Errorf("deck should be unchanged after a rejected due_look_ahead_minutes:\n%s", w.Body.String())
+			}
+		})
+	}
+}
+
 func TestDeckEditRoute_RevOrder(t *testing.T) {
 	tx := beginTx(t)
 	handler, a := newTestHandler(t, tx, auth.Config{})

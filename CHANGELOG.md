@@ -3,6 +3,19 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.5] - 2026-08-29
+
+### Added
+- Per-deck `due.lookAheadMinutes` preset setting (default 0, matching the `due<=now` tightening
+  in [#155](https://github.com/Jolls/enshu/issues/155)): an opt-in window, up to 24h, that widens
+  a deck's due-card eligibility past "now" so a single sitting can clear the whole day's queue, at
+  the cost of occasionally answering a card before its exact due instant. Editable from the deck
+  settings page alongside the other queue-shaping knobs (new/perDay, rev/perDay, rev/order,
+  new/mix). Threaded through `ListDueCardsForStudy`, `ListReviewCardsForStudy`,
+  `CountQueueForDeck`, and `CountQueueForUser` (the last of these needed a per-deck array-join
+  rewrite, since it groups counts across every deck a user can view in one query and can't bind a
+  single scalar look-ahead the way the other three do) ([#154](https://github.com/Jolls/enshu/issues/154)).
+
 ## [0.2.4] - 2026-08-29
 
 ### Fixed

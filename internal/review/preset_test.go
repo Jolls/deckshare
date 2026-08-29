@@ -75,6 +75,33 @@ func TestRevPerDay(t *testing.T) {
 	}
 }
 
+func TestDueLookAheadMinutes(t *testing.T) {
+	cases := []struct {
+		name   string
+		preset []byte
+		want   int32
+	}{
+		{"nil", nil, DefaultDueLookAheadMinutes},
+		{"empty object", []byte(`{}`), DefaultDueLookAheadMinutes},
+		{"due present, lookAheadMinutes absent", []byte(`{"due":{}}`), DefaultDueLookAheadMinutes},
+		{"zero", []byte(`{"due":{"lookAheadMinutes":0}}`), 0},
+		{"thirty", []byte(`{"due":{"lookAheadMinutes":30}}`), 30},
+		{"at max", []byte(`{"due":{"lookAheadMinutes":1440}}`), 1440},
+		{"negative", []byte(`{"due":{"lookAheadMinutes":-1}}`), DefaultDueLookAheadMinutes},
+		{"over max", []byte(`{"due":{"lookAheadMinutes":1441}}`), DefaultDueLookAheadMinutes},
+		{"wrong type", []byte(`{"due":{"lookAheadMinutes":"30"}}`), DefaultDueLookAheadMinutes},
+		{"not json", []byte(`not json`), DefaultDueLookAheadMinutes},
+		{"new key present, due absent", []byte(`{"new":{"perDay":5}}`), DefaultDueLookAheadMinutes},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := DueLookAheadMinutes(c.preset); got != c.want {
+				t.Errorf("DueLookAheadMinutes(%s) = %d, want %d", c.preset, got, c.want)
+			}
+		})
+	}
+}
+
 func TestLeftToStudy(t *testing.T) {
 	cases := []struct {
 		name                              string
