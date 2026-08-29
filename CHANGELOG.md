@@ -3,7 +3,7 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.1.39] - 2026-08-28
+## [0.2.1] - 2026-08-28
 
 ### Fixed
 - Fixed `.apkg`/`.colpkg` import discarding the parsed FSRS desired retention, which scheduled
@@ -11,6 +11,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   targeting: the majority `dr` value across a deck's cards is now seeded into that deck's
   `user_fsrs_params` row at import time (first-import-only, so a later re-import never overwrites
   a retention the user has since changed via `/settings`) ([#81](https://github.com/Jolls/enshu/issues/81)).
+## [0.2.0] - 2026-08-28
+
+### Fixed
+- Fixed a card requeued within a study session showing the interval labels computed for its
+  state *before* it was graded: `POST /api/reviews/batch` now returns a `preview` object per
+  result — the four rating outcomes recomputed server-side from the state the grade actually
+  stored — and the reviewer swaps those into the requeued card's slot
+  ([#142](https://github.com/Jolls/enshu/issues/142)).
 
 ## [0.1.38] - 2026-08-28
 

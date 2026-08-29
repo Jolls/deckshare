@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -219,6 +220,114 @@ func TestReviewBatch_ClientCannotWriteSchedulingState(t *testing.T) {
 	}
 }
 
+// -- #142: the grade response's preview is computed from the state the grade stored ------------
+
+func TestReviewBatch_PreviewIsRecomputedFromStoredState(t *testing.T) {
+	tx := beginTx(t)
+	clock := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	handler, a := newTestHandler(t, tx, auth.Config{}, func() time.Time { return clock })
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	_, cardID := setupOneCard(t, tx, handler, cookie)
+
+	// Easy graduates a New card straight to Review with a multi-day interval, so the post-grade
+	// preview differs from the pre-grade one in nine of the twelve wire fields (Again becomes
+	// Relearning/10 min, Hard and Good become Review with scheduledDays >= 15). Grading Again
+	// instead would leave the card in Learning with the same remaining steps, and go-fsrs's
+	// Again/Hard/Good branches would then be wire-identical before and after (scheduler_basic.go's
+	// newState vs learningState reach the same applyStep delays) -- a test that could not fail.
+	evID := newTestEventID()
+	body := fmt.Sprintf(`{"events":[{"id":%q,"cardId":%q,"rating":4,"reviewedAt":%q}]}`,
+		evID, cardID, clock.Format(time.RFC3339Nano))
+	w := doJSON(handler, "POST", "/api/reviews/batch", body, cookie, "http://example.com")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+
+	var decoded struct {
+		Results []struct {
+			Status  string `json:"status"`
+			Preview *struct {
+				Again, Hard, Good, Easy struct {
+					Due           string `json:"due"`
+					State         int    `json:"state"`
+					ScheduledDays int32  `json:"scheduledDays"`
+				}
+			} `json:"preview"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode response: %v: %s", err, w.Body.String())
+	}
+	if len(decoded.Results) != 1 {
+		t.Fatalf("results len = %d, want 1", len(decoded.Results))
+	}
+	got := decoded.Results[0]
+	if got.Status != "applied" {
+		t.Fatalf("status = %q, want applied", got.Status)
+	}
+	if got.Preview == nil {
+		t.Fatal("preview = nil, want non-nil for an applied result")
+	}
+
+	// Independently recompute from the state actually persisted -- building `stored` from the
+	// database row rather than from the response's `after` pins the preview to what was actually
+	// stored, and catches a preview taken from an in-memory Outcome the guarded upsert rejected.
+	params, err := fsrs.NewDefaultParams(review.DefaultDesiredRetention)
+	if err != nil {
+		t.Fatalf("NewDefaultParams: %v", err)
+	}
+	row := getUserCardStateByCardID(t, tx, cardID)
+	stored := fsrs.CardState{
+		Due: row.Due.Time, Stability: row.Stability, Difficulty: row.Difficulty,
+		State: fsrs.State(row.State), Reps: row.Reps, Lapses: row.Lapses,
+		ScheduledDays: row.ScheduledDays, LearningSteps: row.LearningSteps,
+		LastReview: row.LastReview.Time,
+	}
+	want, err := fsrs.PreviewAll(params, stored, clock)
+	if err != nil {
+		t.Fatalf("PreviewAll: %v", err)
+	}
+
+	type branchFields struct {
+		Due           string
+		State         int
+		ScheduledDays int32
+	}
+	gotBranches := map[string]branchFields{
+		"again": {got.Preview.Again.Due, got.Preview.Again.State, got.Preview.Again.ScheduledDays},
+		"hard":  {got.Preview.Hard.Due, got.Preview.Hard.State, got.Preview.Hard.ScheduledDays},
+		"good":  {got.Preview.Good.Due, got.Preview.Good.State, got.Preview.Good.ScheduledDays},
+		"easy":  {got.Preview.Easy.Due, got.Preview.Easy.State, got.Preview.Easy.ScheduledDays},
+	}
+	wantBranches := map[string]branchFields{
+		"again": {want.Again.Due.UTC().Format(time.RFC3339Nano), int(want.Again.State), want.Again.ScheduledDays},
+		"hard":  {want.Hard.Due.UTC().Format(time.RFC3339Nano), int(want.Hard.State), want.Hard.ScheduledDays},
+		"good":  {want.Good.Due.UTC().Format(time.RFC3339Nano), int(want.Good.State), want.Good.ScheduledDays},
+		"easy":  {want.Easy.Due.UTC().Format(time.RFC3339Nano), int(want.Easy.State), want.Easy.ScheduledDays},
+	}
+	for branch, g := range gotBranches {
+		if w := wantBranches[branch]; g != w {
+			t.Errorf("branch %s = %+v, want %+v", branch, g, w)
+		}
+	}
+
+	// Meaningfulness guard: if the pre-grade and post-grade previews agree on all twelve wire
+	// fields, the fixture no longer separates them and this test could pass vacuously.
+	stale, err := fsrs.PreviewAll(params, fsrs.CardState{}, clock)
+	if err != nil {
+		t.Fatalf("PreviewAll (stale): %v", err)
+	}
+	staleBranches := map[string]branchFields{
+		"again": {stale.Again.Due.UTC().Format(time.RFC3339Nano), int(stale.Again.State), stale.Again.ScheduledDays},
+		"hard":  {stale.Hard.Due.UTC().Format(time.RFC3339Nano), int(stale.Hard.State), stale.Hard.ScheduledDays},
+		"good":  {stale.Good.Due.UTC().Format(time.RFC3339Nano), int(stale.Good.State), stale.Good.ScheduledDays},
+		"easy":  {stale.Easy.Due.UTC().Format(time.RFC3339Nano), int(stale.Easy.State), stale.Easy.ScheduledDays},
+	}
+	if reflect.DeepEqual(staleBranches, wantBranches) {
+		t.Fatal("stale (pre-grade) and fresh (post-grade) previews agree on all fields -- fixture no longer separates them")
+	}
+}
+
 func getUserCardStateByCardID(t *testing.T, tx pgx.Tx, cardID string) db.UserCardState {
 	t.Helper()
 	var row db.UserCardState
@@ -250,6 +359,9 @@ func TestReviewBatch_Idempotency(t *testing.T) {
 		w2 := doJSON(handler, "POST", "/api/reviews/batch", body, cookie, "http://example.com")
 		if w2.Code != http.StatusOK || !strings.Contains(w2.Body.String(), `"status":"duplicate"`) {
 			t.Errorf("replay status = %d, body = %s, want 200 duplicate", w2.Code, w2.Body.String())
+		}
+		if !strings.Contains(w2.Body.String(), `"preview":`) {
+			t.Errorf("replay body = %s, want a preview object on the duplicate result too (#142)", w2.Body.String())
 		}
 		if n := countRows(t, tx, `SELECT count(*) FROM review_log WHERE id = $1`, evID); n != 1 {
 			t.Errorf("review_log rows for id = %d, want 1", n)

@@ -35,12 +35,16 @@ type Event struct {
 	DurationMs *int32
 }
 
-// Result is one event's outcome from GradeBatch.
+// Result is one event's outcome from GradeBatch. Preview is the four rating outcomes the *stored*
+// After state produces, so the client can relabel a card its in-session learning-steps heuristic
+// requeued without the branches it was shipped at batch-fetch time (#142). Display-only, like
+// every other branch preview: nothing the client sends back is ever read from it (§2.7).
 type Result struct {
-	ID     pgtype.UUID
-	CardID pgtype.UUID
-	Status Status
-	After  *CardStateDTO // nil for forbidden/rejected
+	ID      pgtype.UUID
+	CardID  pgtype.UUID
+	Status  Status
+	After   *CardStateDTO // nil for forbidden/rejected
+	Preview *fsrs.Preview // the four branches from After, at the batch's now; nil whenever After is nil
 }
 
 // CardStateDTO is the JSON shape of a graded card's resulting state, and the source of the four
