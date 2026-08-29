@@ -16,5 +16,7 @@ If DB-backed tests fail on stale state (leftover rows from a prior `run-app`
 session — see issue #95), run
 `go run ./scripts/run-app reset-db` to wipe the `pgdata` volume, bring
 Postgres back up, reapply goose migrations, and seed a test user
-(`test@test.com` / `password`) with two empty decks. Never
-improvise `docker compose down -v` by hand.
+(`test@test.com` / `password`) with two sample decks, a second user
+(`collaborator@test.com` / `password`), and a third deck shared between them
+for testing deck access management (#83). Never improvise `docker compose
+down -v` by hand.

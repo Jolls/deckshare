@@ -11,6 +11,90 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getDeckForAccessManage = `-- name: GetDeckForAccessManage :one
+SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id
+FROM decks d
+JOIN deck_access da ON da.deck_id = d.id AND da.user_id = $1
+                   AND da.can_view AND da.can_manage_access
+WHERE d.id = $2
+`
+
+type GetDeckForAccessManageParams struct {
+	UserID pgtype.UUID
+	DeckID pgtype.UUID
+}
+
+// Authorise-and-fetch for the access-management page, the same shape as decks.sql's
+// GetDeckForSettingsEdit. No row means "absent OR invisible OR not permitted" -- deliberately
+// indistinguishable, so a 403 can never become an existence oracle (docs/schema.md).
+// Deliberately no FOR UPDATE: this only authorises a read and the grant insert, neither of which
+// can strand a deck. The paths that can -- revoke and flag change -- take the row lock through
+// LockDeckForAccessChange inside db.RevokeDeckAccess/db.SetDeckAccess (deletion.sql).
+func (q *Queries) GetDeckForAccessManage(ctx context.Context, arg GetDeckForAccessManageParams) (Deck, error) {
+	row := q.db.QueryRow(ctx, getDeckForAccessManage, arg.UserID, arg.DeckID)
+	var i Deck
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Description,
+		&i.Preset,
+		&i.CreatedAt,
+		&i.ModifiedAt,
+		&i.AnkiID,
+	)
+	return i, err
+}
+
+const grantDeckAccess = `-- name: GrantDeckAccess :execrows
+INSERT INTO deck_access (deck_id, user_id, can_view, can_study, can_edit_content,
+                         can_edit_settings, can_manage_access, can_delete)
+SELECT da.deck_id, $1, $2, $3,
+       $4, $5, $6,
+       $7
+FROM deck_access da
+WHERE da.deck_id = $8 AND da.user_id = $9
+  AND da.can_view AND da.can_manage_access
+`
+
+type GrantDeckAccessParams struct {
+	TargetUserID    pgtype.UUID
+	CanView         bool
+	CanStudy        bool
+	CanEditContent  bool
+	CanEditSettings bool
+	CanManageAccess bool
+	CanDelete       bool
+	DeckID          pgtype.UUID
+	CallerUserID    pgtype.UUID
+}
+
+// Grants a second user access with an explicit choice of flags. The caller's own can_view +
+// can_manage_access is re-verified inside this statement (mirrors LockDeckForAccessChange/
+// UpdateDeck's embedded-authorization shape) rather than trusted from the earlier
+// GetDeckForAccessManage read -- otherwise a caller whose access is revoked between that read and
+// this insert could still grant (#83 review). Zero rows returned means the caller is no longer
+// authorised; the handler treats that the same as GetDeckForAccessManage's 404. No last-holder
+// guard applies here: adding a holder can never strand a deck. A duplicate target raises 23505 on
+// deck_access_pkey, which the handler turns into a 409.
+func (q *Queries) GrantDeckAccess(ctx context.Context, arg GrantDeckAccessParams) (int64, error) {
+	result, err := q.db.Exec(ctx, grantDeckAccess,
+		arg.TargetUserID,
+		arg.CanView,
+		arg.CanStudy,
+		arg.CanEditContent,
+		arg.CanEditSettings,
+		arg.CanManageAccess,
+		arg.CanDelete,
+		arg.DeckID,
+		arg.CallerUserID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const grantFullDeckAccess = `-- name: GrantFullDeckAccess :exec
 INSERT INTO deck_access (deck_id, user_id, can_view, can_study, can_edit_content,
                          can_edit_settings, can_manage_access, can_delete)
@@ -27,4 +111,58 @@ type GrantFullDeckAccessParams struct {
 func (q *Queries) GrantFullDeckAccess(ctx context.Context, arg GrantFullDeckAccessParams) error {
 	_, err := q.db.Exec(ctx, grantFullDeckAccess, arg.DeckID, arg.UserID)
 	return err
+}
+
+const listDeckAccessForDeck = `-- name: ListDeckAccessForDeck :many
+SELECT u.id AS user_id, u.email, u.display_name,
+       da.can_view, da.can_study, da.can_edit_content,
+       da.can_edit_settings, da.can_manage_access, da.can_delete
+FROM deck_access da
+JOIN users u ON u.id = da.user_id
+WHERE da.deck_id = $1
+ORDER BY u.email
+`
+
+type ListDeckAccessForDeckRow struct {
+	UserID          pgtype.UUID
+	Email           string
+	DisplayName     string
+	CanView         bool
+	CanStudy        bool
+	CanEditContent  bool
+	CanEditSettings bool
+	CanManageAccess bool
+	CanDelete       bool
+}
+
+// The collaborator list for one deck. Authorisation happens in GetDeckForAccessManage above; a
+// caller reaching this has already proved can_manage_access on this deck.
+func (q *Queries) ListDeckAccessForDeck(ctx context.Context, deckID pgtype.UUID) ([]ListDeckAccessForDeckRow, error) {
+	rows, err := q.db.Query(ctx, listDeckAccessForDeck, deckID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDeckAccessForDeckRow
+	for rows.Next() {
+		var i ListDeckAccessForDeckRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.Email,
+			&i.DisplayName,
+			&i.CanView,
+			&i.CanStudy,
+			&i.CanEditContent,
+			&i.CanEditSettings,
+			&i.CanManageAccess,
+			&i.CanDelete,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

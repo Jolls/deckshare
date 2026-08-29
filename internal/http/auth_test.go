@@ -103,6 +103,7 @@ func newTestHandler(t *testing.T, tx pgx.Tx, cfg auth.Config, clocks ...func() t
 	registerAuthRoutes(mux, a, pages)
 	registerSettingsRoutes(mux, a, tx, pages)
 	registerDeckRoutes(mux, tx, pages, clock)
+	registerAccessRoutes(mux, tx, pages)
 	registerNoteTypeRoutes(mux, tx, pages)
 	registerNoteRoutes(mux, tx, pages)
 	registerReviewRoutes(mux, tx, pages, fragments, clock)
