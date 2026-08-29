@@ -103,17 +103,24 @@ deck_access deck_id, user_id, created_at,
             -- six independent per-(user, deck) permissions, not a role enum -- see below
 ```
 
-`decks.preset` holds Anki's `dconf` shape:
-`{"new": {"perDay": 20, "mix": "afterReviews"}, "rev": {"perDay": 200, "order": "due"}}` — the
-per-deck daily new-card limit (#101), daily review-card limit (#115), review order, and
-new/review interleaving (#116). Each field is independently optional; absent, malformed, or
-out-of-range reads as its default (`new.perDay`/`rev.perDay`: Anki's own 0..9999 range, default
-20/200; `rev.order`: `due`; `new.mix`: `afterReviews`). Parsing happens in Go
-(`internal/review.NewPerDay`/`RevPerDay`/`ParseRevOrder`/`ParseNewMix`), never in SQL, so a
-malformed value degrades to the default instead of failing a study fetch. Enforced by
-`ListDueCardsForStudy`/`ListReviewCardsForStudy`/`ListNewCardsForStudy`;
+`decks.preset` holds Anki's `dconf` shape, extended with one field of our own:
+`{"new": {"perDay": 20, "mix": "afterReviews"}, "rev": {"perDay": 200, "order": "due"},
+"due": {"lookAheadMinutes": 0}}` — the per-deck daily new-card limit (#101), daily review-card
+limit (#115), review order and new/review interleaving (#116), and the due-date look-ahead
+window (#154, not an Anki `dconf` field). Each field is independently optional; absent,
+malformed, or out-of-range reads as its default (`new.perDay`/`rev.perDay`: Anki's own 0..9999
+range, default 20/200; `rev.order`: `due`; `new.mix`: `afterReviews`;
+`due.lookAheadMinutes`: 0..1440, default 0). Parsing happens in Go
+(`internal/review.NewPerDay`/`RevPerDay`/`ParseRevOrder`/`ParseNewMix`/`DueLookAheadMinutes`),
+never in SQL, so a malformed value degrades to the default instead of failing a study fetch.
+Enforced by `ListDueCardsForStudy`/`ListReviewCardsForStudy`/`ListNewCardsForStudy`;
 `CountQueueForDeck`/`CountQueueForUser` still report the deck's raw unseen-card count, uncapped
-([#106](https://github.com/Jolls/enshu/issues/106)).
+by `new.perDay`/`rev.perDay` ([#106](https://github.com/Jolls/enshu/issues/106)), but do apply
+`due.lookAheadMinutes` to their due-card filter same as the study queries. `CountQueueForUser`
+groups counts across every deck a user can view in one query, so it can't bind
+`look_ahead_minutes` as a single scalar the way the other three do — the caller passes parallel
+`deck_ids`/`look_ahead_minutes` arrays (each value parsed in Go same as everywhere else) and the
+query unnests them into a per-deck join.
 
 `notes.fields` as `jsonb` (ordered array of strings) rather than a `note_fields` table:
 fields are always read and written as a unit with the note, never queried individually, and

@@ -877,3 +877,17 @@ user says they know is always deferred to the next study session rather than cyc
 minutes later ([#136](https://github.com/Jolls/enshu/issues/136)). This does not trace to the
 content/progress seam (§2.1) — it is a UX choice, not a multiuser-forced one — which is why it
 needs this row per the §20 test.
+
+**Due-card look-ahead defaults to zero, not the day rollover.** Anki always offers every card due
+before the next day-boundary rollover — up to ~24h of look-ahead depending what time of day you
+study. Enshu's study-queue queries (`ListDueCardsForStudy`/`ListReviewCardsForStudy`/
+`CountQueueForDeck`/`CountQueueForUser`) filtered the same way until
+[#155](https://github.com/Jolls/enshu/issues/155), which tightened the cutoff to `due <= now`
+(zero look-ahead): the day-window version let a card graded Hard with a short FSRS learning step
+requeue itself indefinitely within one session, since it stayed "due" relative to the day-window
+end rather than the actual clock. This does not trace to the content/progress seam either — it is
+a correctness fix, not a multiuser-forced one. [#154](https://github.com/Jolls/enshu/issues/154)
+reintroduces the old behavior as an explicit opt-in, per-deck `due.lookAheadMinutes` preset field
+(default 0, capped at 1440 — the same span the day-window used to allow, so this setting can
+restore Anki's default look-ahead at most, never exceed it), rather than reverting to Anki's
+always-on version.

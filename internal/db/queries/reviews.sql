@@ -131,7 +131,7 @@ LEFT JOIN LATERAL (
     WHERE c2.deck_id = sqlc.arg(deck_id) AND u2.state = 2
       AND NOT u2.suspended
       AND (u2.buried_until IS NULL OR u2.buried_until <= (sqlc.arg(study_day_start)::timestamptz)::date)
-      AND u2.due <= sqlc.arg(now)::timestamptz
+      AND u2.due <= sqlc.arg(now)::timestamptz + make_interval(mins => sqlc.arg(look_ahead_minutes)::int)
       AND (u2.last_review IS NULL OR u2.last_review < sqlc.arg(study_day_start)::timestamptz)
     ORDER BY cutoff_key, c2.id
     OFFSET GREATEST(sqlc.arg(rev_remaining)::int - 1, 0)
@@ -155,7 +155,11 @@ LEFT JOIN LATERAL (
 ) new_cutoff ON true
 WHERE NOT scored.suspended
   AND (scored.buried_until IS NULL OR scored.buried_until <= (sqlc.arg(study_day_start)::timestamptz)::date)
-  AND (scored.unseen OR scored.due <= sqlc.arg(now)::timestamptz)
+  -- look_ahead_minutes (#154, decks.preset "due.lookAheadMinutes", default 0) widens the due
+  -- cutoff past "now" by an explicit opt-in amount; the rev_cutoff subquery above must widen it
+  -- identically, or the daily review cap's boundary would be computed over a different-sized
+  -- eligible set than this filter admits.
+  AND (scored.unseen OR scored.due <= sqlc.arg(now)::timestamptz + make_interval(mins => sqlc.arg(look_ahead_minutes)::int))
   AND (scored.last_review IS NULL OR scored.last_review < sqlc.arg(study_day_start)::timestamptz)
   -- The per-deck daily new-card cap (#101). new_remaining is the deck's configured limit minus what
   -- has already been introduced today; the caller computes it. Capping by POSITION (raw_key/id),
@@ -250,7 +254,7 @@ LEFT JOIN LATERAL (
     WHERE c2.deck_id = sqlc.arg(deck_id) AND u2.state = 2
       AND NOT u2.suspended
       AND (u2.buried_until IS NULL OR u2.buried_until <= (sqlc.arg(study_day_start)::timestamptz)::date)
-      AND u2.due <= sqlc.arg(now)::timestamptz
+      AND u2.due <= sqlc.arg(now)::timestamptz + make_interval(mins => sqlc.arg(look_ahead_minutes)::int)
       AND (u2.last_review IS NULL OR u2.last_review < sqlc.arg(study_day_start)::timestamptz)
     ORDER BY cutoff_key, c2.id
     OFFSET GREATEST(sqlc.arg(rev_remaining)::int - 1, 0)
@@ -258,7 +262,9 @@ LEFT JOIN LATERAL (
 ) rev_cutoff ON true
 WHERE NOT scored.suspended
   AND (scored.buried_until IS NULL OR scored.buried_until <= (sqlc.arg(study_day_start)::timestamptz)::date)
-  AND scored.due <= sqlc.arg(now)::timestamptz
+  -- look_ahead_minutes (#154): same widening and same reason as ListDueCardsForStudy's doc comment
+  -- above -- this filter and its rev_cutoff subquery must agree on the cutoff.
+  AND scored.due <= sqlc.arg(now)::timestamptz + make_interval(mins => sqlc.arg(look_ahead_minutes)::int)
   AND (scored.last_review IS NULL OR scored.last_review < sqlc.arg(study_day_start)::timestamptz)
   AND (scored.state IS DISTINCT FROM 2
        OR (sqlc.arg(rev_remaining)::int > 0
@@ -412,12 +418,26 @@ LEFT JOIN user_card_state ucs ON ucs.user_id = sqlc.arg(user_id) AND ucs.card_id
 WHERE c.deck_id = sqlc.arg(deck_id)
   AND NOT COALESCE(ucs.suspended, false)
   AND (ucs.buried_until IS NULL OR ucs.buried_until <= (sqlc.arg(study_day_start)::timestamptz)::date)
-  AND (ucs.due IS NULL OR ucs.due <= sqlc.arg(now)::timestamptz)
+  AND (ucs.due IS NULL OR ucs.due <= sqlc.arg(now)::timestamptz + make_interval(mins => sqlc.arg(look_ahead_minutes)::int))
   AND (ucs.last_review IS NULL OR ucs.last_review < sqlc.arg(study_day_start)::timestamptz);
 
 -- Same queue summary, grouped by deck, for the /decks list (#80). One query for every deck the
 -- user can view rather than one CountQueueForDeck call per row.
+--
+-- look_ahead_minutes (#154) varies per deck, but this query spans every deck the user can view in
+-- one grouped result, so it can't take a single scalar arg the way CountQueueForDeck does. The
+-- caller passes two parallel arrays (deck_ids, look_ahead_minutes -- each deck's value already
+-- parsed from its own preset in Go, same as everywhere else preset fields are read) and `la`
+-- unnests them into one row per deck, joined on deck_id, so each deck's due filter widens by its
+-- own configured amount. A deck_id with no matching row in either array (there won't be one, since
+-- the caller derives both from the same deck list) would simply drop out of the INNER JOIN.
 -- name: CountQueueForUser :many
+WITH la AS (
+    SELECT d.deck_id, l.look_ahead_minutes
+    FROM unnest(sqlc.arg(deck_ids)::uuid[]) WITH ORDINALITY AS d(deck_id, ord)
+    JOIN unnest(sqlc.arg(look_ahead_minutes)::int[]) WITH ORDINALITY AS l(look_ahead_minutes, ord)
+      ON d.ord = l.ord
+)
 SELECT c.deck_id                                     AS deck_id,
        count(*) FILTER (WHERE ucs.user_id IS NULL)   AS new_count,
        count(*) FILTER (WHERE ucs.state IN (1, 3))   AS learning_count,
@@ -425,10 +445,11 @@ SELECT c.deck_id                                     AS deck_id,
 FROM cards c
 JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = sqlc.arg(user_id)
                    AND da.can_view AND da.can_study
+JOIN la ON la.deck_id = c.deck_id
 LEFT JOIN user_card_state ucs ON ucs.user_id = sqlc.arg(user_id) AND ucs.card_id = c.id
 WHERE NOT COALESCE(ucs.suspended, false)
   AND (ucs.buried_until IS NULL OR ucs.buried_until <= (sqlc.arg(study_day_start)::timestamptz)::date)
-  AND (ucs.due IS NULL OR ucs.due <= sqlc.arg(now)::timestamptz)
+  AND (ucs.due IS NULL OR ucs.due <= sqlc.arg(now)::timestamptz + make_interval(mins => la.look_ahead_minutes))
   AND (ucs.last_review IS NULL OR ucs.last_review < sqlc.arg(study_day_start)::timestamptz)
 GROUP BY c.deck_id;
 
