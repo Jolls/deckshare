@@ -424,6 +424,14 @@ different answer than they'd get for a deck id that was never valid at all.
 `user_card_state` and `review_log` are per-user throughout. A deck's content is shared; nobody's
 progress on it ever is.
 
+**Access-management operations require `can_view` alongside `can_manage_access`.** Reading the
+access page (`GetDeckForAccessManage`), granting a new collaborator (`GrantDeckAccess`), and
+locking the deck for a revoke or flag edit (`LockDeckForAccessChange`, `internal/db/queries/`)
+all query for both flags together, never `can_manage_access` alone. Otherwise a caller whose
+`can_view` was stripped but who still holds `can_manage_access` would be 404'd off the access
+page yet could still grant, revoke, or edit other collaborators' rows by posting to the mutation
+routes directly ([#83](https://github.com/Jolls/enshu/issues/83)).
+
 ---
 
 ## Migrations
