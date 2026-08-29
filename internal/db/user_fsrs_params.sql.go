@@ -86,6 +86,33 @@ func (q *Queries) GetUserFsrsParams(ctx context.Context, id pgtype.UUID) (UserFs
 	return i, err
 }
 
+const seedDeckFsrsRetention = `-- name: SeedDeckFsrsRetention :exec
+INSERT INTO user_fsrs_params (user_id, deck_id, fsrs_version, params, desired_retention)
+SELECT $1, $2, $3, '[]'::jsonb, $4
+FROM deck_access da
+WHERE da.deck_id = $2 AND da.user_id = $1 AND da.can_view AND da.can_study
+ON CONFLICT (user_id, deck_id) DO NOTHING
+`
+
+type SeedDeckFsrsRetentionParams struct {
+	UserID           pgtype.UUID
+	DeckID           pgtype.UUID
+	FsrsVersion      int16
+	DesiredRetention float64
+}
+
+// Seeds a deck's desired retention from an apkg import, first-import-only: DO NOTHING on
+// conflict so a re-import never clobbers a retention the user has since changed themselves.
+func (q *Queries) SeedDeckFsrsRetention(ctx context.Context, arg SeedDeckFsrsRetentionParams) error {
+	_, err := q.db.Exec(ctx, seedDeckFsrsRetention,
+		arg.UserID,
+		arg.DeckID,
+		arg.FsrsVersion,
+		arg.DesiredRetention,
+	)
+	return err
+}
+
 const upsertDeckFsrsRetention = `-- name: UpsertDeckFsrsRetention :execrows
 INSERT INTO user_fsrs_params (user_id, deck_id, fsrs_version, params, desired_retention)
 SELECT $1, $2, $3, '[]'::jsonb, $4
