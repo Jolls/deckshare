@@ -58,6 +58,8 @@ func TestSanitiseCardHTML_XSSFixtures(t *testing.T) {
 		{"object embed", `<object data="evil.swf"></object><embed src="evil.swf">`, []string{"<object", "<embed"}},
 		{"base tag", `<base href="//evil.example/">`, []string{"<base"}},
 		{"meta refresh", `<meta http-equiv="refresh" content="0;url=//evil.example">`, []string{"<meta"}},
+		{"remote img src", `<img src="https://evil.example/track.png">`, []string{"src", "evil.example"}},
+		{"protocol-relative img src", `<img src="//evil.example/track.png">`, []string{"src", "evil.example"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -79,6 +81,7 @@ func TestSanitiseCardHTML_KeepsSafeConstructs(t *testing.T) {
 	}{
 		{"keeps cloze span", `<span class="cloze">[...]</span>`, `<span class="cloze">[...]</span>`},
 		{"keeps ruby", `<ruby>漢<rt>かん</rt></ruby>`, "<ruby>"},
+		{"keeps relative img src", `<img src="x.jpg">`, `src="x.jpg"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
