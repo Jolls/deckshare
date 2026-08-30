@@ -29,3 +29,9 @@ coverage.out
 .claude/skills/run-app/.enshu-server.exe
 .claude/skills/run-app/.media/
 .claude/skills/run-app/.enshu-server.exe~
+
+# Playwright / Node (tests/e2e)
+node_modules/
+/test-results/
+/playwright-report/
+/playwright/.cache/

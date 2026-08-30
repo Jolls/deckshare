@@ -3,6 +3,17 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.9] - 2026-08-29
+
+### Added
+- Playwright E2E suite (`tests/e2e/`): a real-browser spec drives signup, deck/note creation,
+  and keyboard grading (`Space` to reveal, a digit to rate) on `/decks/{id}/review`, asserting
+  the batched `POST /api/reviews/batch` fires within the client's flush debounce window and the
+  server reports the event `applied` ([#100](https://github.com/Jolls/enshu/issues/100)).
+  Nothing prior exercised `web/static/review.js` against a live server — every existing test
+  called Go functions or `/api/reviews/batch` directly, bypassing the browser (CLAUDE.md §10
+  priority 6). CI runs it as a separate `e2e` job against a built-and-started server.
+
 ## [0.2.8] - 2026-08-29
 
 ### Added
