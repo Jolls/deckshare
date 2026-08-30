@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.10] - 2026-08-29
+
+### Fixed
+- The "New" count on `/decks` and `/decks/{id}` is now capped to the deck's remaining daily
+  new-card allowance instead of showing its total unseen-card count, matching what
+  `LeftToStudy` already accounted for internally
+  ([#106](https://github.com/Jolls/enshu/issues/106)).
+
 ## [0.2.9] - 2026-08-29
 
 ### Added

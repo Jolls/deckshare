@@ -17,6 +17,8 @@ import (
 )
 
 // queueCounts is the New/Learning/Due summary shown on the decks list and the deck page (#80).
+// New is capped to the deck's remaining daily new-card allowance (#106), so it reflects what's
+// actually servable today rather than the deck's total unseen-card count.
 type queueCounts struct {
 	New      int64
 	Learning int64
@@ -90,7 +92,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			newRemaining := review.NewRemaining(review.NewPerDay(preset), introduced[row.DeckID])
 			totalRemaining := review.RevRemaining(review.RevPerDay(preset), introduced[row.DeckID]+reviewed[row.DeckID])
 			counts[row.DeckID] = queueCounts{
-				New: row.NewCount, Learning: row.LearningCount, Due: row.DueCount,
+				New: min(row.NewCount, int64(newRemaining)), Learning: row.LearningCount, Due: row.DueCount,
 				Left: review.LeftToStudy(row.NewCount, row.LearningCount, row.DueCount, review.ParsePriority(preset), newRemaining, totalRemaining),
 			}
 		}
@@ -211,7 +213,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			"User": user, "Deck": deck, "Counts": counts, "Notes": notes,
 			"DesiredRetention": params.DesiredRetention(),
 			"Queue": queueCounts{
-				New: queueRow.NewCount, Learning: queueRow.LearningCount, Due: queueRow.DueCount,
+				New: min(queueRow.NewCount, int64(newRemaining)), Learning: queueRow.LearningCount, Due: queueRow.DueCount,
 				Left: review.LeftToStudy(queueRow.NewCount, queueRow.LearningCount, queueRow.DueCount, review.ParsePriority(deck.Preset), newRemaining, totalRemaining),
 			},
 		})
