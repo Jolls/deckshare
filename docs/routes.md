@@ -115,7 +115,7 @@ duplicate the pseudocode.
 |---|---|---|---|
 | GET | `/decks/{id}/review` | `can_view` + `can_study` | Reviewer page. First batch (20 cards), the precomputed 4-rating outcome per card, and the user's FSRS params are rendered inline in the response — no separate request for card 1 (§6) |
 | GET | `/api/reviews/next` | `can_view` + `can_study` | Refill batch, **HTML fragment** (the shared hidden-card partial, not JSON — §6: "not a client-side template driven by JSON"). Opaque keyset cursor + deck id, query params `deck`/`cursor`; the cursor's shape follows the
-deck's `rev.order`/`new.mix` preset — `(group_bit, sort_key, cardId)` for the single-query
+deck's `rev.order`/`priority` preset — `(group_bit, sort_key, cardId)` for the single-query
 modes, a pair of independent sub-cursors for `mixed` (§6, `internal/review/types.go`'s `Cursor`);
 server excludes cards already reviewed this study day (§6). **401 JSON**, not the usual `RequireUser` redirect, on no session — an XHR hitting a login-page redirect would silently lose the request |
 | POST | `/api/reviews/batch` | `can_view` + `can_study` | Grade. `{events:[{id,cardId,rating,reviewedAt,durationMs}]}` — exactly these fields, idempotent, returns `{results:[{id,cardId,status,after,preview}]}` per event (`status` ∈ `applied\|duplicate\|forbidden\|rejected`, always HTTP 200 once authenticated — a single bad event must not wedge the rest of the batch; `preview` = the four rating branches recomputed from `after`, display-only, so a card the client requeued in-session can be relabelled — absent on forbidden/rejected). Same 401-JSON auth posture as `/api/reviews/next`. See §6 for the full authorise/recompute/store sequence and the concurrency mechanisms |

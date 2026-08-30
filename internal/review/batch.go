@@ -141,15 +141,18 @@ func hashSeedFor(userID pgtype.UUID, window StudyDay) string {
 // wall-clock advances is expected (architecture.md §6), not a bug. A render error on one card
 // fails the whole batch: a card that cannot render cannot be graded honestly.
 //
-// New (never-seen) cards are capped at the deck's preset new/perDay minus the introductions
-// already logged this study day (#101); review-state cards are capped independently at the
-// deck's preset rev/perDay minus reviews already logged today (#115). Learning/relearning cards
-// are never capped. order and mix are the deck's preset rev/order and new/mix (#116); mix ==
-// NewMixMixed branches to the two-query interleave path, everything else to the single query.
-// lookAheadMinutes is the deck's preset due/lookAheadMinutes (#154): widens the due<=now cutoff
-// by an explicit opt-in amount, zero by default.
+// New (never-seen) cards are ceilinged at the deck's preset new/perDay minus introductions already
+// logged today (#101). New and review-state cards together share one combined daily total, the
+// deck's preset rev/perDay minus new+due consumption already logged today (#118, formerly an
+// independent due-only cap, #115); priority decides which side fills that shared total first when
+// it binds, the other side backfilling the rest -- see effectiveLimit below and PriorityAllocate's
+// doc comment. Learning/relearning cards are never capped. order and priority are the deck's
+// preset rev/order (#116) and priority (#118); priority == PriorityMixed branches to the
+// two-query interleave path, everything else to the single query. lookAheadMinutes is the deck's
+// preset due/lookAheadMinutes (#154): widens the due<=now cutoff by an explicit opt-in amount,
+// zero by default.
 func BuildBatch(ctx context.Context, store db.DBTX, p fsrs.Params, userID, deckID pgtype.UUID,
-	deckName string, window StudyDay, newPerDay, revPerDay int32, order RevOrder, mix NewMix,
+	deckName string, window StudyDay, newPerDay, revPerDay int32, order RevOrder, priority Priority,
 	cur Cursor, limit int32, now time.Time, lookAheadMinutes int32) (Batch, error) {
 	q := db.New(store)
 
@@ -174,21 +177,41 @@ func BuildBatch(ctx context.Context, store db.DBTX, p fsrs.Params, userID, deckI
 	}
 
 	newRemaining := NewRemaining(newPerDay, introduced)
-	revRemaining := RevRemaining(revPerDay, reviewed)
+	totalRemaining := RevRemaining(revPerDay, introduced+reviewed)
 
-	if mix == NewMixMixed {
-		return buildMixedBatch(ctx, q, p, userID, deckID, deckName, window, order, newRemaining, revRemaining, cur, limit, now, lookAheadMinutes)
+	// effectiveLimit is the day's remaining combined budget, not just the page size -- once it
+	// binds tighter than the page limit, this fetch (and the query's own priority-driven
+	// ordering + per-side cutoffs below) is what actually performs the backfill: the priority
+	// side sorts first and is cut off at totalRemaining, so LIMIT effectiveLimit naturally
+	// spills whatever's left of the total into the other side.
+	//
+	// Once the total is fully spent, new and due rows must both be excluded -- forcing
+	// newRemaining to 0 here too, since new introductions draw on the same shared total -- but
+	// the query still has to run at the full page size, uncapped by the (now zero) budget:
+	// learning/relearning cards are never subject to the daily-limit system (#101/#115/#118),
+	// and clamping effectiveLimit to 0 here would silently stop them from ever resurfacing for
+	// the rest of the study day, since the query would never even run to find them.
+	effectiveLimit := limit
+	if totalRemaining <= 0 {
+		newRemaining = 0
+	} else {
+		effectiveLimit = min(limit, totalRemaining)
 	}
-	return buildSingleBatch(ctx, q, p, userID, deckID, deckName, window, order, mix, newRemaining, revRemaining, cur, limit, now, lookAheadMinutes)
+
+	if priority == PriorityMixed {
+		return buildMixedBatch(ctx, q, p, userID, deckID, deckName, window, order, newRemaining, totalRemaining, cur, effectiveLimit, now, lookAheadMinutes)
+	}
+	return buildSingleBatch(ctx, q, p, userID, deckID, deckName, window, order, priority, newRemaining, totalRemaining, cur, effectiveLimit, now, lookAheadMinutes)
 }
 
-// buildSingleBatch is BuildBatch's path for every new.mix mode except "mixed": one keyset query,
-// one combined (sort_key, card_id) cursor (#116 doc comment on ListDueCardsForStudy).
+// buildSingleBatch is BuildBatch's path for every priority mode except "mixed": one keyset query,
+// one combined (sort_key, card_id) cursor (#116 doc comment on ListDueCardsForStudy). limit here
+// is already BuildBatch's effectiveLimit (page size clamped to the day's remaining total).
 func buildSingleBatch(ctx context.Context, q *db.Queries, p fsrs.Params, userID, deckID pgtype.UUID,
-	deckName string, window StudyDay, order RevOrder, mix NewMix, newRemaining, revRemaining int32,
+	deckName string, window StudyDay, order RevOrder, priority Priority, newRemaining, totalRemaining int32,
 	cur Cursor, limit int32, now time.Time, lookAheadMinutes int32) (Batch, error) {
 	rows, err := q.ListDueCardsForStudy(ctx, db.ListDueCardsForStudyParams{
-		NewMix:           string(mix),
+		Priority:         string(priority),
 		RevOrder:         string(order),
 		HashSeed:         hashSeedFor(userID, window),
 		UserID:           userID,
@@ -196,7 +219,7 @@ func buildSingleBatch(ctx context.Context, q *db.Queries, p fsrs.Params, userID,
 		StudyDayStart:    pgtype.Timestamptz{Time: window.Start, Valid: true},
 		Now:              pgtype.Timestamptz{Time: now, Valid: true},
 		LookAheadMinutes: lookAheadMinutes,
-		RevRemaining:     revRemaining,
+		RevRemaining:     totalRemaining,
 		NewRemaining:     newRemaining,
 		CursorGroupBit:   cur.groupBitArg(),
 		CursorKey:        cur.keyArg(),
@@ -231,14 +254,16 @@ func buildSingleBatch(ctx context.Context, q *db.Queries, p fsrs.Params, userID,
 	return batch, nil
 }
 
-// buildMixedBatch is BuildBatch's path for new.mix = "mixed" (#116): two independent keyset
-// fetches, each capped at limit, interleaved by their fetched counts (not a cross-fetch running
-// total -- see interleave's doc comment) into up to limit cards. Exhausted only once both
-// sub-fetches come back undersized. A source that contributed zero picks this round keeps its
-// incoming sub-cursor position unchanged (carryRevCursor/carryNewCursor) rather than resetting to
-// start, since nothing about it was consumed.
+// buildMixedBatch is BuildBatch's path for priority == PriorityMixed (#116, #118): two independent
+// keyset fetches, each capped at limit (BuildBatch's effectiveLimit -- page size clamped to the
+// day's remaining combined total), interleaved by their fetched counts (not a cross-fetch running
+// total -- see interleave's doc comment) into up to limit cards, which is what makes "mixed"
+// truncate to the day's total the same way the single-query priority modes do. Exhausted only once
+// both sub-fetches come back undersized relative to limit. A source that contributed zero picks
+// this round keeps its incoming sub-cursor position unchanged (carryRevCursor/carryNewCursor)
+// rather than resetting to start, since nothing about it was consumed.
 func buildMixedBatch(ctx context.Context, q *db.Queries, p fsrs.Params, userID, deckID pgtype.UUID,
-	deckName string, window StudyDay, order RevOrder, newRemaining, revRemaining int32,
+	deckName string, window StudyDay, order RevOrder, newRemaining, totalRemaining int32,
 	cur Cursor, limit int32, now time.Time, lookAheadMinutes int32) (Batch, error) {
 	hashSeed := hashSeedFor(userID, window)
 
@@ -250,7 +275,7 @@ func buildMixedBatch(ctx context.Context, q *db.Queries, p fsrs.Params, userID, 
 		StudyDayStart:    pgtype.Timestamptz{Time: window.Start, Valid: true},
 		Now:              pgtype.Timestamptz{Time: now, Valid: true},
 		LookAheadMinutes: lookAheadMinutes,
-		RevRemaining:     revRemaining,
+		RevRemaining:     totalRemaining,
 		CursorKey:        cur.revKeyArg(),
 		CursorCardID:     cur.revCardIDArg(),
 		BatchSize:        limit,

@@ -86,11 +86,12 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		}
 		counts := make(map[pgtype.UUID]queueCounts, len(rows))
 		for _, row := range rows {
-			newRemaining := review.NewRemaining(review.NewPerDay(presetByDeck[row.DeckID]), introduced[row.DeckID])
-			revRemaining := review.RevRemaining(review.RevPerDay(presetByDeck[row.DeckID]), reviewed[row.DeckID])
+			preset := presetByDeck[row.DeckID]
+			newRemaining := review.NewRemaining(review.NewPerDay(preset), introduced[row.DeckID])
+			totalRemaining := review.RevRemaining(review.RevPerDay(preset), introduced[row.DeckID]+reviewed[row.DeckID])
 			counts[row.DeckID] = queueCounts{
 				New: row.NewCount, Learning: row.LearningCount, Due: row.DueCount,
-				Left: review.LeftToStudy(row.NewCount, row.LearningCount, row.DueCount, newRemaining, revRemaining),
+				Left: review.LeftToStudy(row.NewCount, row.LearningCount, row.DueCount, review.ParsePriority(preset), newRemaining, totalRemaining),
 			}
 		}
 		render(w, pages["decks"], http.StatusOK, map[string]any{"User": user, "Decks": decks, "Counts": counts})
@@ -205,13 +206,13 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			return
 		}
 		newRemaining := review.NewRemaining(review.NewPerDay(deck.Preset), introducedToday)
-		revRemaining := review.RevRemaining(review.RevPerDay(deck.Preset), reviewedToday)
+		totalRemaining := review.RevRemaining(review.RevPerDay(deck.Preset), introducedToday+reviewedToday)
 		render(w, pages["deck"], http.StatusOK, map[string]any{
 			"User": user, "Deck": deck, "Counts": counts, "Notes": notes,
 			"DesiredRetention": params.DesiredRetention(),
 			"Queue": queueCounts{
 				New: queueRow.NewCount, Learning: queueRow.LearningCount, Due: queueRow.DueCount,
-				Left: review.LeftToStudy(queueRow.NewCount, queueRow.LearningCount, queueRow.DueCount, newRemaining, revRemaining),
+				Left: review.LeftToStudy(queueRow.NewCount, queueRow.LearningCount, queueRow.DueCount, review.ParsePriority(deck.Preset), newRemaining, totalRemaining),
 			},
 		})
 	})))
@@ -230,7 +231,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		render(w, pages["deck_edit"], http.StatusOK, map[string]any{
 			"User": user, "Deck": deck,
 			"NewPerDay": review.NewPerDay(deck.Preset), "RevPerDay": review.RevPerDay(deck.Preset),
-			"RevOrder": review.ParseRevOrder(deck.Preset), "NewMix": review.ParseNewMix(deck.Preset),
+			"RevOrder": review.ParseRevOrder(deck.Preset), "Priority": review.ParsePriority(deck.Preset),
 			"DueLookAheadMinutes": review.DueLookAheadMinutes(deck.Preset),
 		})
 	})))
@@ -269,13 +270,13 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			}
 			revPerDay = pgtype.Int4{Int32: int32(v), Valid: true}
 		}
-		newMix := pgtype.Text{} // absent or empty -> leave preset untouched
-		if raw := strings.TrimSpace(r.PostForm.Get("new_mix")); raw != "" {
-			if !review.NewMix(raw).Valid() {
+		priority := pgtype.Text{} // absent or empty -> leave preset untouched
+		if raw := strings.TrimSpace(r.PostForm.Get("priority")); raw != "" {
+			if !review.Priority(raw).Valid() {
 				badRequest(w)
 				return
 			}
-			newMix = pgtype.Text{String: raw, Valid: true}
+			priority = pgtype.Text{String: raw, Valid: true}
 		}
 		revOrder := pgtype.Text{} // absent or empty -> leave preset untouched
 		if raw := strings.TrimSpace(r.PostForm.Get("rev_order")); raw != "" {
@@ -297,7 +298,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 
 		n, err := db.New(store).UpdateDeck(r.Context(), db.UpdateDeckParams{
 			Name: name, Description: description, NewPerDay: newPerDay, RevPerDay: revPerDay,
-			NewMix: newMix, RevOrder: revOrder, DueLookAheadMinutes: dueLookAheadMinutes,
+			Priority: priority, RevOrder: revOrder, DueLookAheadMinutes: dueLookAheadMinutes,
 			DeckID: deckID, UserID: user.ID,
 		})
 		if err != nil {

@@ -103,17 +103,24 @@ deck_access deck_id, user_id, created_at,
             -- six independent per-(user, deck) permissions, not a role enum -- see below
 ```
 
-`decks.preset` holds Anki's `dconf` shape, extended with one field of our own:
-`{"new": {"perDay": 20, "mix": "afterReviews"}, "rev": {"perDay": 200, "order": "due"},
-"due": {"lookAheadMinutes": 0}}` — the per-deck daily new-card limit (#101), daily review-card
-limit (#115), review order and new/review interleaving (#116), and the due-date look-ahead
-window (#154, not an Anki `dconf` field). Each field is independently optional; absent,
-malformed, or out-of-range reads as its default (`new.perDay`/`rev.perDay`: Anki's own 0..9999
-range, default 20/200; `rev.order`: `due`; `new.mix`: `afterReviews`;
-`due.lookAheadMinutes`: 0..1440, default 0). Parsing happens in Go
-(`internal/review.NewPerDay`/`RevPerDay`/`ParseRevOrder`/`ParseNewMix`/`DueLookAheadMinutes`),
-never in SQL, so a malformed value degrades to the default instead of failing a study fetch.
-Enforced by `ListDueCardsForStudy`/`ListReviewCardsForStudy`/`ListNewCardsForStudy`;
+`decks.preset` holds Anki's `dconf` shape, extended with fields of our own:
+`{"new": {"perDay": 20}, "rev": {"perDay": 200, "order": "due"}, "priority": "due",
+"due": {"lookAheadMinutes": 0}}` — the per-deck daily new-card ceiling (#101), the deck's combined
+new+due daily total (`rev.perDay`, originally an independent due-only cap under #115, redefined
+by [#118](https://github.com/Jolls/enshu/issues/118) as the shared total), review order (#116),
+review prioritization (`priority`, #118 — which side of the new/due split fills the shared total
+first, the other side backfilling the remainder; top-level rather than nested under `new` since it
+governs the whole day's split rather than describing new-card mixing the way its predecessor,
+`new.mix`, did), and the due-date look-ahead window (#154, not an Anki `dconf` field). Each field
+is independently optional; absent, malformed, or out-of-range reads as its default
+(`new.perDay`/`rev.perDay`: Anki's own 0..9999 range, default 20/200; `rev.order`: `due`;
+`priority`: `due`; `due.lookAheadMinutes`: 0..1440, default 0). Parsing happens in Go
+(`internal/review.NewPerDay`/`RevPerDay`/`ParseRevOrder`/`ParsePriority`/`DueLookAheadMinutes`),
+never in SQL, so a malformed value degrades to the default instead of failing a study fetch. The
+new/due split itself (`PriorityAllocate`) is also Go-side, used by the "left to study" display;
+`ListDueCardsForStudy`/`ListReviewCardsForStudy`/`ListNewCardsForStudy` achieve the same split at
+fetch time via ordering + per-side cutoffs + a `LIMIT` clamped to the remaining total, not by
+calling `PriorityAllocate` directly (docs/architecture.md §6/§20 has the reasoning).
 `CountQueueForDeck`/`CountQueueForUser` still report the deck's raw unseen-card count, uncapped
 by `new.perDay`/`rev.perDay` ([#106](https://github.com/Jolls/enshu/issues/106)), but do apply
 `due.lookAheadMinutes` to their due-card filter same as the study queries. `CountQueueForUser`

@@ -13,7 +13,9 @@
 
     <label for="rev_per_day">Reviews per day</label>
     <input type="number" id="rev_per_day" name="rev_per_day" min="0" max="9999" step="1" value="{{.RevPerDay}}" required>
-    <small>0 serves no due cards from this deck. Enforced independently of new cards per day.</small>
+    <small>0 studies nothing from this deck. This is the deck's combined new+due total for the day
+    -- new cards per day still separately ceilings how many of that total can be new; Review Deck
+    Prioritization below decides which side fills first.</small>
 
     <label for="rev_order">Review order</label>
     <select id="rev_order" name="rev_order" required>
@@ -23,12 +25,15 @@
         <option value="intervalDesc" {{if eq (print .RevOrder) "intervalDesc"}}selected{{end}}>Descending intervals</option>
     </select>
 
-    <label for="new_mix">New/review order</label>
-    <select id="new_mix" name="new_mix" required>
-        <option value="afterReviews" {{if eq (print .NewMix) "afterReviews"}}selected{{end}}>Reviews first</option>
-        <option value="beforeReviews" {{if eq (print .NewMix) "beforeReviews"}}selected{{end}}>New cards first</option>
-        <option value="mixed" {{if eq (print .NewMix) "mixed"}}selected{{end}}>Mixed</option>
+    <label for="priority">Review Deck Prioritization</label>
+    <select id="priority" name="priority" required>
+        <option value="due" {{if eq (print .Priority) "due"}}selected{{end}}>Due cards first</option>
+        <option value="new" {{if eq (print .Priority) "new"}}selected{{end}}>New cards first</option>
+        <option value="mixed" {{if eq (print .Priority) "mixed"}}selected{{end}}>No priority (mixed)</option>
     </select>
+    <small>When reviews per day caps the deck's total, which side fills first -- the other side
+    backfills whatever's left of the total. No priority leaves new and due independently capped
+    with no backfill between them.</small>
 
     <label for="due_look_ahead_minutes">Due look-ahead (minutes)</label>
     <input type="number" id="due_look_ahead_minutes" name="due_look_ahead_minutes" min="0" max="1440" step="1" value="{{.DueLookAheadMinutes}}" required>

@@ -1,7 +1,7 @@
 package review
 
 // interleave decides, for up to limit total picks, whether each pick comes from the review
-// source or the new source (#116, new.mix = "mixed"), proportional to reviewCount:newCount in
+// source or the new source (#116, priority = "mixed", #118), proportional to reviewCount:newCount in
 // *this* fetch -- not a running total carried across the whole study day, which is what makes it
 // robust to cards being introduced or graded between fetches (nothing depends on cumulative state
 // from an earlier one). Returns a slice of length min(limit, reviewCount+newCount) where true

@@ -145,12 +145,19 @@ already uses for `can_edit_settings`.
 Anki's own shape), editable from `/decks/{id}/edit`; `/decks` and `/decks/{id}` keep showing the
 raw uncapped unseen-card count until [#106](https://github.com/Jolls/enshu/issues/106).
 
-**Per-deck daily review-card limit has landed** ([#115](https://github.com/Jolls/enshu/issues/115)
-item 1): the same position-based-cutoff shape as the new-card cap above, independently enforced —
-`ListDueCardsForStudy` caps review-state (state=2) cards at `preset` `rev.perDay` (default 200,
-Anki's own default), editable alongside `new.perDay` from `/decks/{id}/edit`. The issue's second
-item — an optional combined new+due total cap with a priority split — depends on
-[#116](https://github.com/Jolls/enshu/issues/116)'s two-query new/review merge and has not landed.
+**Per-deck combined new+due daily total with priority backfill has landed**
+([#115](https://github.com/Jolls/enshu/issues/115) item 1,
+[#118](https://github.com/Jolls/enshu/issues/118)): `preset` `rev.perDay` (default 200, Anki's own
+`reviews/day` default) started as an independent due-only cap (#115 item 1) and was redefined by
+#118 as the deck's combined new+due daily total — `new.perDay` still separately ceilings how many
+of that total can be new. `preset` `priority` (`due`/`new`/`mixed`, default `due`) decides which
+side fills the shared total first when it binds, the other side backfilling the remainder;
+`mixed` leaves the two sides independently capped with no backfill, truncated to the total.
+`ListDueCardsForStudy`'s existing position-based-cutoff/ordering shape (`group_bit` sorting the
+priority side first, per-side `LEFT JOIN LATERAL` cutoffs, `LIMIT`) implements the backfill for
+free once the due-side cutoff and the outer `LIMIT` are both driven by the remaining total rather
+than an independent due cap — see `internal/review/batch.go`'s `effectiveLimit`. Editable from
+`/decks/{id}/edit` (labelled "Review Deck Prioritization").
 
 ---
 
@@ -372,21 +379,25 @@ those come back from the client's local queue if they are still due, never from 
 client also dedupes by `cardId` on receipt, which is cheap and covers the case where a graded
 card's new `due` lands it back inside the window.
 
-**Queue ordering is per-deck configurable** (#116, mirroring Anki's own review-order and
-new-review-order dconf options — not a divergence, see §20). `decks.preset` carries `rev.order`
-(`due` — the original default, ascending — `random`, `intervalAsc`, `intervalDesc`) and
-`new.mix` (`afterReviews` — the original default, reviews before never-seen — `beforeReviews`,
-or `mixed`). For every `new.mix` value except `mixed`, one query serves both groups: each row
-gets a `raw_key` (the `rev.order`-selected expression; a constant for never-seen rows, since
-new-card gather order stays out of scope, #117) and a `group_bit` (0/1, which group sorts
-first), and the keyset orders and pages on `(group_bit, raw_key, card_id)` — three separate
+**Queue ordering and prioritization are per-deck configurable** (#116, #118, mirroring Anki's own
+review-order and new-review-order dconf options in shape though not in effect — see §20).
+`decks.preset` carries `rev.order` (`due` — the original default, ascending — `random`,
+`intervalAsc`, `intervalDesc`) and `priority` (`due` — the original default, reviews before
+never-seen — `new`, or `mixed`). For every `priority` value except `mixed`, one query serves both
+groups: each row gets a `raw_key` (the `rev.order`-selected expression; a constant for never-seen
+rows, since new-card gather order stays out of scope, #117) and a `group_bit` (0/1, which group
+sorts first), and the keyset orders and pages on `(group_bit, raw_key, card_id)` — three separate
 columns, not one combined float, because folding `group_bit` into `raw_key` by arithmetic
 (`group_bit * large_constant + raw_key`) silently loses `raw_key`'s precision once the constant
-dominates `float8`'s ~15–17 significant digits. `mixed` instead runs two independent keyset
-queries (review-state cards ordered by `rev.order`, never-seen cards ordered by id) and
-interleaves the two result sets in Go proportional to how many each fetch actually returned —
-not a running total carried across the study day, so introducing or grading cards between
-fetches can't desync it. The combined cursor is just the pair of independent sub-cursors.
+dominates `float8`'s ~15–17 significant digits. Since #118, the `LIMIT` this query pages by is
+also clamped to the deck's remaining combined new+due total for the day, which turns this same
+ordering into a backfill: the priority group is exhausted (by its own cutoff) or the `LIMIT` is
+reached first, and whichever cards from the other group still fit spill in after it. `mixed`
+instead runs two independent keyset queries (review-state cards ordered by `rev.order`,
+never-seen cards ordered by id) and interleaves the two result sets in Go proportional to how many
+each fetch actually returned — not a running total carried across the study day, so introducing or
+grading cards between fetches can't desync it — with the same total-clamped `LIMIT` bounding the
+interleave's output. The combined cursor is just the pair of independent sub-cursors.
 
 **Media is deliberately not part of this yet.** Card content prefetches cheaply; media does
 not, and prefetching 20 cards' images is a different problem from prefetching 20 cards' HTML.
@@ -894,3 +905,20 @@ reintroduces the old behavior as an explicit opt-in, per-deck `due.lookAheadMinu
 (default 0, capped at 1440 — the same span the day-window used to allow, so this setting can
 restore Anki's default look-ahead at most, never exceed it), rather than reverting to Anki's
 always-on version.
+
+**A deck's daily new/due limits share one total, with a priority split, instead of being fully
+independent.** Anki's `new cards/day` and `maximum reviews/day` never interact — each is its own
+hard ceiling, and its new-review-order setting is purely cosmetic (which group displays first),
+never an allocation or eligibility cap. [#118](https://github.com/Jolls/enshu/issues/118) asked
+for something Anki has no equivalent of: a deck-level cap on the day's *combined* card count, with
+a priority mode (`due`/`new`/`mixed`) deciding which side of the new/due split gets first claim on
+that shared budget when it binds, the other side backfilling whatever's left. This does not trace
+to the content/progress seam (§2.1) — it is a UX control for capping a deck's total daily study
+size while still expressing a same-day preference for new vs. due, which neither Anki's
+independent caps nor its purely-cosmetic new-review-order setting can do. Landed by redefining the
+existing `rev.perDay` preset field (previously an independent due-only cap, #115 item 1) as this
+combined total, and repurposing the existing new/review-order setting (`new.mix`, #116) into
+`priority` — a field that decides an allocation, not just a display order. `new.perDay` still
+separately ceilings how many of the shared total can be new. This is a behavior change for any
+deck that already had `rev.perDay` configured to a value smaller than what its new+due total would
+otherwise reach, since that value now bounds both card types together rather than due cards alone.
