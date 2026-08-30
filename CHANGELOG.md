@@ -3,6 +3,18 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.13] - 2026-08-30
+
+### Added
+- Vendored Alpine.js and a small `web/static/app.css` to make the frontend responsive on
+  narrow screens: action-link lists collapse behind a menu toggle, wide tables scroll instead
+  of overflowing, and the review screen's four rating buttons wrap to two columns
+  ([#166](https://github.com/Jolls/enshu/issues/166)).
+
+### Changed
+- Destructive delete/revoke buttons (deck, note, note type, deck access) now ask for
+  confirmation before submitting ([#166](https://github.com/Jolls/enshu/issues/166)).
+
 ## [0.2.12] - 2026-08-30
 
 ### Changed

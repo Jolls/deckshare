@@ -24,7 +24,7 @@
             <td>
                 <button type="submit" form="edit-{{.UserID}}">Save</button>
                 <form method="post" action="/decks/{{$.Deck.ID}}/access/{{.UserID}}/delete" style="display:inline">
-                    <button type="submit">Revoke</button>
+                    <button type="submit" x-data @click="confirm('Revoke this user\'s access?') || $event.preventDefault()">Revoke</button>
                 </form>
             </td>
         </tr>

@@ -1,8 +1,14 @@
 {{define "content"}}
 <h1>Decks</h1>
-<p><a href="/decks/new">New deck</a> · <a href="/note-types">Note types</a> · <a href="/import">Import</a></p>
+<nav x-data="{ open: false }" class="action-nav">
+    <button type="button" class="action-nav-toggle" @click="open = !open" :aria-expanded="open">Menu</button>
+    <p class="action-nav-links" :class="{ open: open }">
+        <a href="/decks/new">New deck</a> · <a href="/note-types">Note types</a> · <a href="/import">Import</a>
+    </p>
+</nav>
 
 {{if .Decks}}
+<div class="table-scroll">
 <table>
     <thead>
         <tr><th>Name</th><th>Cards</th><th>New</th><th>Learning</th><th>Due</th><th>Left today</th><th></th></tr>
@@ -22,6 +28,7 @@
         {{end}}
     </tbody>
 </table>
+</div>
 {{else}}
 <p>No decks yet.</p>
 {{end}}

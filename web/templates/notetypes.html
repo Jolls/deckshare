@@ -16,7 +16,7 @@
             <td>
                 <a href="/note-types/{{.ID}}/edit">Edit</a>
                 <form method="post" action="/note-types/{{.ID}}/delete" style="display:inline">
-                    <button type="submit">Delete</button>
+                    <button type="submit" x-data @click="confirm('Delete this note type and all its notes?') || $event.preventDefault()">Delete</button>
                 </form>
             </td>
         </tr>
