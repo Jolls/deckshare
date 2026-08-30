@@ -607,6 +607,16 @@ each item closes a specific attack, not a generic one:
 - **Scheme allowlist on URL-bearing attributes** (`http`/`https`/`mailto`) that excludes
   `javascript:`, `data:`, `vbscript:`, and `file:` by omission — an allowlist that names what's
   in, not a denylist that has to keep naming what's out.
+- **`<img src>` is further restricted to a bare relative filename** (Anki's flat media
+  namespace, §7) — no scheme, no `/`, so a remote image can't be referenced at all. `http`/
+  `https` above stay allowed for `a href` (a link a user must click), but not for `img`: a
+  remote image loads unconditionally and passively, so it's a beaconing/tracking vector a link
+  isn't. This was originally left to `img-src 'self'` (the CSP layer, `internal/http/security.go`)
+  to refuse in the browser, but that left the blocked URL visible in the console and the served
+  HTML inconsistent with what CSP actually allows — dropped at sanitisation time instead
+  ([#92](https://github.com/Jolls/enshu/issues/92)). Fetching and locally caching remote images
+  at import time, so decks stay self-contained, is deferred pending SSRF/content-validation
+  hardening ([#163](https://github.com/Jolls/enshu/issues/163)).
 - **A CSS value grammar that admits no bare `(`** outside the four colour functions
   (`rgb`/`rgba`/`hsl`/`hsla`), so `url(...)`, `expression(...)`, and `image-set(...)` stay out
   even if a URL-accepting property is ever added to the allowed-properties list by mistake later.
@@ -839,7 +849,7 @@ seemed tidier."
 | Row ids | Epoch-millis integers, unique per collection | UUIDv7; Anki's ids kept as `anki_id` for export fidelity. Per-collection ids cannot key across users — deck id 1 is `Default` in every collection ever made |
 | Card HTML | Trusted: it is always your own content | Sanitised on render (§8). A shared deck is *other users'* HTML |
 | Deck-content licensing | AnkiWeb hosts a public deck catalogue | No catalogue; a deck moves by `deck_access` row or by a file its owner passed on (§11) |
-| Remote card media | The webview loads whatever the card HTML references, including images on remote hosts | `img-src 'self'` refuses them (`internal/http/security.go`). Card content is always your own in Anki; under `deck_access` it is someone else's, and a remote `<img>` is a beacon reporting every reviewer's IP, UA and review timing to a host the deck author picked. Relative Anki filenames and `/media/{sha256}` (#60) are unaffected |
+| Remote card media | The webview loads whatever the card HTML references, including images on remote hosts | `internal/render/sanitise.go` strips remote `<img src>` outright (§8, [#92](https://github.com/Jolls/enshu/issues/92)); `img-src 'self'` (`internal/http/security.go`) is defence in depth, not the primary control. Card content is always your own in Anki; under `deck_access` it is someone else's, and a remote `<img>` is a beacon reporting every reviewer's IP, UA and review timing to a host the deck author picked. Relative Anki filenames and `/media/{sha256}` (#60) are unaffected. Fetching remote images to local media at import time is deferred ([#163](https://github.com/Jolls/enshu/issues/163)) pending SSRF/content-validation hardening |
 
 ### Deliberate scope, not disagreement
 

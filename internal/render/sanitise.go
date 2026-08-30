@@ -44,6 +44,14 @@ var svgShapeElements = []string{"svg", "g", "path", "rect", "circle", "ellipse",
 // has to see both.
 var allAllowedElements = append(append([]string{}, sanitisableElements...), svgShapeElements...)
 
+// imgSrcLocalRe restricts <img src> to a bare Anki media filename (§7's flat media namespace --
+// internal/apkg/media.go never produces a "/"-containing name): no scheme and no "/", which rules
+// out both "https://..." and protocol-relative "//host/...". Remote images are dropped here
+// rather than left for img-src 'self' (docs/architecture.md §7's CSP layer) to refuse in-browser
+// -- issue #92: CSP-refuse-and-show-broken-icon still leaked "this deck tried to load a tracking
+// pixel" as a visible URL, and left the served HTML inconsistent with what the CSP policy allows.
+var imgSrcLocalRe = regexp.MustCompile(`^[^:/]+$`)
+
 var classAttrRe = regexp.MustCompile(`^[A-Za-z0-9 _-]{0,200}$`)
 var langAttrRe = regexp.MustCompile(`^[A-Za-z0-9-]{1,35}$`)
 var numericAttrRe = regexp.MustCompile(`^[0-9]{1,3}$`)
@@ -101,7 +109,8 @@ var cardPolicy = sync.OnceValue(func() *bluemonday.Policy {
 	p.AllowAttrs("title", "alt").Globally()
 	p.AllowAttrs("colspan", "rowspan", "span").Matching(numericAttrRe).OnElements("td", "th", "col", "colgroup")
 	p.AllowAttrs("href").OnElements("a")
-	p.AllowAttrs("src", "width", "height").OnElements("img")
+	p.AllowAttrs("src").Matching(imgSrcLocalRe).OnElements("img")
+	p.AllowAttrs("width", "height").OnElements("img")
 	p.AllowAttrs("open").Matching(openAttrRe).OnElements("details")
 
 	// svgShapeElements' geometry: id, href/xlink:href, and every event/animation attribute stay
@@ -125,6 +134,9 @@ var cardPolicy = sync.OnceValue(func() *bluemonday.Policy {
 	p.AllowURLSchemes("http", "https", "mailto") // allowlist: javascript:/data:/vbscript:/file: excluded by omission
 	p.RequireParseableURLs(true)
 	p.AllowRelativeURLs(true) // Anki media convention (img src="x.jpg"); see plan Open question 3
+	// http/https above is for a.href (external links a user must click to reach); img's src is
+	// further restricted to imgSrcLocalRe above, so this scheme allowlist does not reopen remote
+	// images -- see imgSrcLocalRe's comment and #92.
 	p.RequireNoFollowOnLinks(true)
 	p.AddTargetBlankToFullyQualifiedLinks(true)
 
