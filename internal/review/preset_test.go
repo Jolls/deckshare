@@ -106,25 +106,66 @@ func TestLeftToStudy(t *testing.T) {
 	cases := []struct {
 		name                              string
 		newCount, learningCount, dueCount int64
-		newRemaining, revRemaining        int32
+		priority                          Priority
+		newRemaining, totalRemaining      int32
 		want                              int64
 	}{
-		{"new under remaining", 5, 3, 5, 20, 200, 5 + 3 + 5},
-		{"new over remaining", 25, 3, 5, 20, 200, 20 + 3 + 5},
-		{"new equal to remaining", 20, 3, 5, 20, 200, 20 + 3 + 5},
-		{"due under remaining", 5, 3, 5, 20, 200, 5 + 3 + 5},
-		{"due over remaining", 5, 3, 250, 20, 200, 5 + 3 + 200},
-		{"due equal to remaining", 5, 3, 200, 20, 200, 5 + 3 + 200},
-		{"learning always passed through", 0, 42, 0, 0, 0, 42},
-		{"zero new remaining", 5, 3, 5, 0, 200, 0 + 3 + 5},
-		{"zero rev remaining", 5, 3, 5, 20, 0, 5 + 3 + 0},
-		{"zero everything", 0, 0, 0, 0, 0, 0},
+		// Mixed matches PriorityAllocate's no-cross-awareness branch when new+due doesn't exceed
+		// totalRemaining -- exactly the pre-#118 independent-cap formula in that case.
+		{"new under remaining", 5, 3, 5, PriorityMixed, 20, 200, 5 + 3 + 5},
+		{"new over remaining", 25, 3, 5, PriorityMixed, 20, 200, 20 + 3 + 5},
+		{"new equal to remaining", 20, 3, 5, PriorityMixed, 20, 200, 20 + 3 + 5},
+		{"due under remaining", 5, 3, 5, PriorityMixed, 20, 200, 5 + 3 + 5},
+		{"learning always passed through", 0, 42, 0, PriorityMixed, 0, 0, 42},
+		{"zero new remaining", 5, 3, 5, PriorityMixed, 0, 200, 0 + 3 + 5},
+		{"zero everything", 0, 0, 0, PriorityMixed, 0, 0, 0},
+		// Mixed's independent new+due allowances can individually exceed totalRemaining once
+		// summed (PriorityAllocate deliberately doesn't cross-cap them, see its doc comment) --
+		// LeftToStudy clamps the sum itself so this never overstates what's actually servable.
+		{"due over remaining, mixed clamps to total", 5, 3, 250, PriorityMixed, 20, 200, 200 + 3},
+		{"due equal to remaining, mixed clamps to total", 5, 3, 200, PriorityMixed, 20, 200, 200 + 3},
+		{"zero total remaining clamps mixed to zero", 5, 3, 5, PriorityMixed, 20, 0, 0 + 3},
+		// #118: due/new priority split one shared total rather than each having its own,
+		// so their sum can no longer exceed totalRemaining the way mixed's can.
+		{"new priority backfills due", 1, 0, 20, PriorityNew, 5, 10, 1 + 0 + 9},
+		{"due priority backfills new", 20, 0, 2, PriorityDue, 5, 10, 5 + 0 + 2},
+		{"new priority, new ceiling below total", 20, 0, 20, PriorityNew, 5, 10, 5 + 0 + 5},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := LeftToStudy(c.newCount, c.learningCount, c.dueCount, c.newRemaining, c.revRemaining); got != c.want {
-				t.Errorf("LeftToStudy(%d, %d, %d, %d, %d) = %d, want %d",
-					c.newCount, c.learningCount, c.dueCount, c.newRemaining, c.revRemaining, got, c.want)
+			if got := LeftToStudy(c.newCount, c.learningCount, c.dueCount, c.priority, c.newRemaining, c.totalRemaining); got != c.want {
+				t.Errorf("LeftToStudy(%d, %d, %d, %q, %d, %d) = %d, want %d",
+					c.newCount, c.learningCount, c.dueCount, c.priority, c.newRemaining, c.totalRemaining, got, c.want)
+			}
+		})
+	}
+}
+
+func TestPriorityAllocate(t *testing.T) {
+	cases := []struct {
+		name                               string
+		priority                           Priority
+		newCeiling, totalRemaining         int32
+		newAvailable, dueAvailable         int64
+		wantNewAllowance, wantDueAllowance int32
+	}{
+		{"new priority, new scarce, due backfills", PriorityNew, 5, 10, 1, 20, 1, 9},
+		{"new priority, new plentiful, ceiling binds", PriorityNew, 5, 10, 20, 20, 5, 5},
+		{"new priority, total smaller than ceiling", PriorityNew, 20, 3, 20, 20, 3, 0},
+		{"due priority, due scarce, new backfills", PriorityDue, 20, 10, 20, 2, 8, 2},
+		{"due priority, due plentiful, total binds", PriorityDue, 20, 10, 20, 20, 0, 10},
+		{"mixed, independent caps, no cross-awareness", PriorityMixed, 5, 10, 20, 20, 5, 10},
+		{"mixed, both scarce", PriorityMixed, 5, 10, 2, 3, 2, 3},
+		{"zero total", PriorityDue, 20, 0, 20, 20, 0, 0},
+		{"zero ceiling under new priority", PriorityNew, 0, 10, 20, 20, 0, 10},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gotNew, gotDue := PriorityAllocate(c.priority, c.newCeiling, c.totalRemaining, c.newAvailable, c.dueAvailable)
+			if gotNew != c.wantNewAllowance || gotDue != c.wantDueAllowance {
+				t.Errorf("PriorityAllocate(%q, %d, %d, %d, %d) = (%d, %d), want (%d, %d)",
+					c.priority, c.newCeiling, c.totalRemaining, c.newAvailable, c.dueAvailable,
+					gotNew, gotDue, c.wantNewAllowance, c.wantDueAllowance)
 			}
 		})
 	}

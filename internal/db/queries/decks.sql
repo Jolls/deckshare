@@ -37,21 +37,20 @@ INSERT INTO decks (owner_id, name, description) VALUES ($1, $2, $3) RETURNING *;
 UPDATE decks d
 SET name = sqlc.arg(name),
     description = sqlc.arg(description),
-    -- #101/#115/#116/#154: nested-merge, not jsonb_set. jsonb_set('{}', '{new,perDay}', …, true) is
-    -- a no-op when the parent object is missing, which every deck's default '{}' preset is. NULL
+    -- #101/#115/#116/#118/#154: nested-merge, not jsonb_set. jsonb_set('{}', '{new,perDay}', …, true)
+    -- is a no-op when the parent object is missing, which every deck's default '{}' preset is. NULL
     -- leaves the corresponding key untouched so a form that doesn't carry the field can't wipe
-    -- the setting. 'new', 'rev', and 'due' are independent top-level keys, all patched off the
-    -- same original d.preset and merged with a single ||  -- Postgres rejects assigning the same
-    -- target column (preset) twice in one SET clause, so this has to be one expression, not three.
-    -- Within 'new'/'rev', perDay and mix/order are independently-nullable sub-patches of the same
-    -- key; 'due' has only the one field so far, so it skips that extra layer.
-    preset = (CASE WHEN sqlc.narg(new_per_day)::int IS NULL AND sqlc.narg(new_mix)::text IS NULL THEN d.preset
+    -- the setting. 'new', 'rev', 'priority', and 'due' are independent top-level keys, all patched
+    -- off the same original d.preset and merged with a single ||  -- Postgres rejects assigning the
+    -- same target column (preset) twice in one SET clause, so this has to be one expression, not
+    -- four. Within 'new'/'rev', perDay and order are independently-nullable sub-patches of the same
+    -- key; 'priority' and 'due' have only the one field so far, so they skip that extra layer.
+    -- priority is top-level rather than nested under 'new' (unlike its predecessor, new.mix) since
+    -- it governs the whole day's new/due split (#118), not new-card mixing specifically.
+    preset = (CASE WHEN sqlc.narg(new_per_day)::int IS NULL THEN d.preset
                    ELSE d.preset || jsonb_build_object('new',
                           COALESCE(d.preset -> 'new', '{}'::jsonb)
-                          || (CASE WHEN sqlc.narg(new_per_day)::int IS NULL THEN '{}'::jsonb
-                                   ELSE jsonb_build_object('perDay', sqlc.narg(new_per_day)::int) END)
-                          || (CASE WHEN sqlc.narg(new_mix)::text IS NULL THEN '{}'::jsonb
-                                   ELSE jsonb_build_object('mix', sqlc.narg(new_mix)::text) END))
+                          || jsonb_build_object('perDay', sqlc.narg(new_per_day)::int))
               END)
            || (CASE WHEN sqlc.narg(rev_per_day)::int IS NULL AND sqlc.narg(rev_order)::text IS NULL THEN '{}'::jsonb
                     ELSE jsonb_build_object('rev',
@@ -60,6 +59,9 @@ SET name = sqlc.arg(name),
                                     ELSE jsonb_build_object('perDay', sqlc.narg(rev_per_day)::int) END)
                            || (CASE WHEN sqlc.narg(rev_order)::text IS NULL THEN '{}'::jsonb
                                     ELSE jsonb_build_object('order', sqlc.narg(rev_order)::text) END))
+               END)
+           || (CASE WHEN sqlc.narg(priority)::text IS NULL THEN '{}'::jsonb
+                    ELSE jsonb_build_object('priority', sqlc.narg(priority)::text)
                END)
            || (CASE WHEN sqlc.narg(due_look_ahead_minutes)::int IS NULL THEN '{}'::jsonb
                     ELSE jsonb_build_object('due',

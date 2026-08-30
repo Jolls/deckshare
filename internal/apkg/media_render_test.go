@@ -47,7 +47,7 @@ func TestImport_ImageRendersFromApkgImport(t *testing.T) {
 	now := time.Now()
 	window := review.StudyDay{Start: now.Add(-time.Hour), End: now.Add(23 * time.Hour)}
 	batch, err := review.BuildBatch(ctx, tx, p, ownerID, deck.ID, deck.Name, window,
-		review.DefaultNewPerDay, review.DefaultRevPerDay, review.RevOrderDue, review.NewMixAfterReviews,
+		review.DefaultNewPerDay, review.DefaultRevPerDay, review.RevOrderDue, review.PriorityDue,
 		review.Cursor{AtStart: true}, 30, now, 0)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)

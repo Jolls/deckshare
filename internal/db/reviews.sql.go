@@ -241,11 +241,12 @@ type CountReviewedTodayParams struct {
 	StudyDayEnd   pgtype.Timestamptz
 }
 
-// Review-state (state=2) cards answered inside the current study day, for one deck (#115), the
-// rev.perDay counterpart to CountNewIntroducedToday above. rl.state_before = 2 marks "this card
-// was already in review state when answered" -- the same marker ListDueCardsForStudy's rev_cutoff
-// excludes past the allowance. count(DISTINCT card_id), not count(*), for the same out-of-order
-// replay reason as CountNewIntroducedToday.
+// Review-state (state=2) cards answered inside the current study day, for one deck (#115). Summed
+// with CountNewIntroducedToday's result by the caller (BuildBatch) to net against rev.perDay's
+// combined new+due total (#118). rl.state_before = 2 marks "this card was already in review state
+// when answered" -- the same marker ListDueCardsForStudy's rev_cutoff excludes past the allowance.
+// count(DISTINCT card_id), not count(*), for the same out-of-order replay reason as
+// CountNewIntroducedToday.
 func (q *Queries) CountReviewedToday(ctx context.Context, arg CountReviewedTodayParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countReviewedToday,
 		arg.UserID,
@@ -433,9 +434,14 @@ SELECT scored.card_id, scored.card_ordinal, scored.unseen, scored.due, scored.st
        -- float8 has ~15-17 significant decimal digits total, so "add a big constant to select
        -- the group" (an earlier version of this query) silently loses raw_key's low digits once
        -- the constant is large enough to dominate, corrupting the ordering within the offset
-       -- group. beforeReviews puts never-seen first (group_bit 0), reviews second (group_bit 1);
-       -- afterReviews (the default) is the reverse.
-       (CASE WHEN $1::text = 'beforeReviews' THEN (NOT scored.unseen)::int ELSE scored.unseen::int END)
+       -- group. priority='new' puts never-seen first (group_bit 0), reviews second (group_bit 1);
+       -- priority='due' (the default) is the reverse. Whichever group sorts first is also the one
+       -- ORDER BY ... LIMIT batch_size fills first when the combined daily total (rev_remaining
+       -- below) binds tighter than batch_size -- the caller (BuildBatch, #118) is responsible for
+       -- passing a batch_size already clamped to that remaining total, which is what turns this
+       -- ordering into "fill the priority side, backfill the rest from the other side" rather
+       -- than just display order.
+       (CASE WHEN $1::text = 'new' THEN (NOT scored.unseen)::int ELSE scored.unseen::int END)
            AS group_bit,
        scored.raw_key::double precision AS sort_key
 FROM scored
@@ -491,17 +497,21 @@ WHERE NOT scored.suspended
        OR ($10::int > 0
            AND (new_cutoff.cutoff_key IS NULL
                 OR (scored.raw_key, scored.card_id) <= (new_cutoff.cutoff_key, new_cutoff.cutoff_id))))
-  -- The per-deck daily review cap (#115), independent of the new-card cap above. rev_remaining is
-  -- the deck's configured limit minus what's already been reviewed today; the caller computes it.
-  -- Row comparison against rev_cutoff (the (raw_key,id) at the allowance boundary, computed above)
-  -- keeps a review-state card in only if it ranks at or before that boundary; cutoff_key NULL
-  -- means fewer review-state cards exist than the allowance, so nothing is excluded. Never-seen
-  -- and learning/relearning cards (state 0, 1, 3) are unaffected.
+  -- The deck's combined new+due daily total cutoff (#118; rev_remaining is RevRemaining's return
+  -- value, formerly an independent per-deck review cap, #115). The caller (BuildBatch) has already
+  -- clamped batch_size below to this same remaining total, so this cutoff and that LIMIT agree on
+  -- the same boundary; this cutoff alone is what stops a scarce priority side from starving the
+  -- backfill side within one page. Row comparison against rev_cutoff (the (raw_key,id) at the
+  -- allowance boundary, computed above) keeps a review-state card in only if it ranks at or before
+  -- that boundary; cutoff_key NULL means fewer review-state cards exist than the allowance, so
+  -- nothing is excluded. Never-seen and learning/relearning cards (state 0, 1, 3) are unaffected
+  -- by this cutoff (never-seen has its own new_remaining cutoff above; learning/relearning is
+  -- never capped).
   AND (scored.state IS DISTINCT FROM 2
        OR ($9::int > 0
            AND (rev_cutoff.cutoff_key IS NULL
                 OR (scored.raw_key, scored.card_id) <= (rev_cutoff.cutoff_key, rev_cutoff.cutoff_id))))
-  AND ((CASE WHEN $1::text = 'beforeReviews' THEN (NOT scored.unseen)::int ELSE scored.unseen::int END),
+  AND ((CASE WHEN $1::text = 'new' THEN (NOT scored.unseen)::int ELSE scored.unseen::int END),
         scored.raw_key, scored.card_id)
       > ($11::int, $12::double precision, $13::uuid)
 ORDER BY group_bit, sort_key, scored.card_id
@@ -509,7 +519,7 @@ LIMIT $14
 `
 
 type ListDueCardsForStudyParams struct {
-	NewMix           string
+	Priority         string
 	RevOrder         string
 	HashSeed         string
 	UserID           pgtype.UUID
@@ -550,11 +560,11 @@ type ListDueCardsForStudyRow struct {
 	SortKey       float64
 }
 
-// The queue, configurable per deck (#116): decks.preset "rev.order" picks the review-state sort
-// key ('due' -- the original and Anki's classic default -- 'random', 'intervalAsc',
-// 'intervalDesc'), "new.mix" picks whether never-seen cards sort as a group before or after
-// everything else ('afterReviews' -- the original default -- or 'beforeReviews'; 'mixed' bypasses
-// this query entirely, see ListReviewCardsForStudy/ListNewCardsForStudy below).
+// The queue, configurable per deck (#116, #118): decks.preset "rev.order" picks the review-state
+// sort key ('due' -- the original and Anki's classic default -- 'random', 'intervalAsc',
+// 'intervalDesc'), "priority" picks whether never-seen cards sort as a group before or after
+// everything else ('due' -- the original default -- or 'new'; 'mixed' bypasses this query
+// entirely, see ListReviewCardsForStudy/ListNewCardsForStudy below).
 //
 // `scored` computes each row's raw_key once: a never-seen row sorts by its persisted Anki
 // new-card queue position when the import carried one, else after every real position (#82; the
@@ -563,17 +573,17 @@ type ListDueCardsForStudyRow struct {
 // row (once for the CASE, once for a plain column reference) would risk the two copies drifting;
 // a CTE lets the outer query reference it as an ordinary column instead.
 //
-// The outer query also computes group_bit -- 0/1 depending on new_mix -- so the two groups
+// The outer query also computes group_bit -- 0/1 depending on priority -- so the two groups
 // (never-seen vs. everything else) always sort as a whole ahead of/behind each other. group_bit
 // is its own ORDER BY/cursor column rather than an offset folded into sort_key by arithmetic: see
 // the doc comment on group_bit's SELECT expression below for why. Keyset cursor and ORDER BY both
 // key on (group_bit, sort_key, card_id).
-// The review cutoff for the per-deck daily review cap (#115): the (raw_key, id) of the card
-// ranked last within the deck's remaining review allowance, in the same rev_order this query
-// serves review-state cards in. LATERAL + "ON true" makes it an uncorrelated one-row subquery
-// Postgres evaluates once per fetch, same InitPlan shape as the new-card cutoff below; a LEFT
-// JOIN so a deck with fewer review-state cards than the allowance still returns a row
-// (cutoff_key NULL).
+// The cutoff for the deck's combined new+due daily total (#118, rev_remaining -- formerly an
+// independent due-only cap, #115): the (raw_key, id) of the review-state card ranked last within
+// that remaining total, in the same rev_order this query serves review-state cards in. LATERAL +
+// "ON true" makes it an uncorrelated one-row subquery Postgres evaluates once per fetch, same
+// InitPlan shape as the new-card cutoff below; a LEFT JOIN so a deck with fewer review-state cards
+// than the allowance still returns a row (cutoff_key NULL).
 // The new-card cutoff for the per-deck daily new-card cap (#101): the (position, id) of the card
 // ranked last within the deck's remaining new-card allowance, in the same (import_due_position,
 // id) gather order raw_key uses for never-seen rows (#82) -- so the cap boundary agrees with the
@@ -581,7 +591,7 @@ type ListDueCardsForStudyRow struct {
 // with the scored CTE's raw_key CASE above (see its doc comment).
 func (q *Queries) ListDueCardsForStudy(ctx context.Context, arg ListDueCardsForStudyParams) ([]ListDueCardsForStudyRow, error) {
 	rows, err := q.db.Query(ctx, listDueCardsForStudy,
-		arg.NewMix,
+		arg.Priority,
 		arg.RevOrder,
 		arg.HashSeed,
 		arg.UserID,
@@ -941,8 +951,8 @@ type ListReviewCardsForStudyRow struct {
 	SortKey       float64
 }
 
-// The review-state half of mixed new/review interleaving (#116, decks.preset "new.mix" =
-// "mixed"): the same review-side filters and rev_order as ListDueCardsForStudy above, minus
+// The review-state half of mixed new/review interleaving (#116, decks.preset "priority" =
+// "mixed", #118): the same review-side filters and rev_order as ListDueCardsForStudy above, minus
 // never-seen cards entirely (those come from ListNewCardsForStudy) and minus the group-prefix
 // bit (there is only one group here). BuildBatch interleaves the two result sets in Go.
 func (q *Queries) ListReviewCardsForStudy(ctx context.Context, arg ListReviewCardsForStudyParams) ([]ListReviewCardsForStudyRow, error) {

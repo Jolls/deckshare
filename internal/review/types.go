@@ -68,12 +68,12 @@ var ErrMalformedCursor = errors.New("review: malformed cursor")
 // Cursor is the opaque keyset position over the reviewer's queue (architecture.md §6, plan §0.10).
 // The zero Cursor (AtStart true) is the start of the queue.
 //
-// Single-query mode (rev.order due/random/interval, new.mix afterReviews/beforeReviews): GroupBit,
+// Single-query mode (rev.order due/random/interval, priority due/new, #118): GroupBit,
 // Key, and CardID are the (group_bit, sort_key, card_id) position ListDueCardsForStudy's keyset
 // compares against -- see #116 doc comment on that query for why group_bit is a separate column
 // rather than folded into Key.
 //
-// Mixed mode (new.mix = "mixed"): Mixed is true and the position is the pair of independent
+// Mixed mode (priority = "mixed"): Mixed is true and the position is the pair of independent
 // sub-cursors over ListReviewCardsForStudy (RevAtStart/RevKey/RevCardID -- no group bit, this
 // query only ever serves one group) and ListNewCardsForStudy (NewAtStart/NewKey/NewCardID,
 // ordered by (import_due_position, id), #82).

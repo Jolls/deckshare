@@ -3,6 +3,23 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.8] - 2026-08-29
+
+### Added
+- Review Deck Prioritization (`priority` deck setting: due cards first, new cards first, or no
+  priority/mixed) decides which side of a deck's new/due split fills its daily total first when
+  the total binds, the other side backfilling the remainder — the combined-cap-with-priority
+  behavior [#118](https://github.com/Jolls/enshu/issues/118) asked for and
+  [#115](https://github.com/Jolls/enshu/issues/115) had left unbuilt. Replaces the "New/review
+  order" setting, which only ever reordered display, never allocated — a deck's prior choice
+  there (`new.mix`) still reads back as the equivalent priority until the deck is next saved.
+
+### Changed
+- **Behavior change**: "Reviews per day" (`rev.perDay`) is now a deck's combined new+due daily
+  total rather than an independent due-only cap. A deck that already has `rev.perDay` set to a
+  value smaller than its new+due total may now serve fewer cards per day than before, since new
+  cards count against the same budget.
+
 ## [0.2.7] - 2026-08-29
 
 ### Added
