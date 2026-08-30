@@ -18,6 +18,11 @@ import (
 	"github.com/Jolls/enshu/internal/media"
 )
 
+// mediaGCGrace is how long a media file with no media_blobs row must sit untouched before the
+// sweep may reclaim it (#91): bytes are written before the import transaction commits, so a
+// younger file may belong to an import still running. Orders of magnitude above any real import.
+const mediaGCGrace = 24 * time.Hour
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatal(err)
@@ -53,7 +58,10 @@ func run() error {
 	}
 	go authSvc.Run(ctx, time.Hour)
 
-	handler, err := apphttp.NewHandler(pool, authSvc, media.New(mediaRoot))
+	blobs := media.New(mediaRoot)
+	go media.NewGC(pool, blobs, mediaGCGrace).Run(ctx, time.Hour)
+
+	handler, err := apphttp.NewHandler(pool, authSvc, blobs)
 	if err != nil {
 		return fmt.Errorf("build handler: %w", err)
 	}

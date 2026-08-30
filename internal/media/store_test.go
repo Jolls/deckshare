@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 const testSHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -89,5 +90,93 @@ func TestStore_OpenMissingBlob(t *testing.T) {
 	_, err := s.Open(testSHA)
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("Open(missing) err = %v, want os.ErrNotExist", err)
+	}
+}
+
+// Delete has to be idempotent for the GC sweep (gc.go): the sweep unlinks before deleting the row,
+// so a retried sweep meets a file it already removed.
+func TestStore_Delete(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.Put(testSHA, []byte("hello media")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	if err := s.Delete(testSHA); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := s.Open(testSHA); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Open after Delete err = %v, want os.ErrNotExist", err)
+	}
+	if err := s.Delete(testSHA); err != nil {
+		t.Errorf("second Delete: %v, want nil (idempotent)", err)
+	}
+	if err := s.Delete("not-a-digest"); err == nil {
+		t.Error("Delete(malformed digest): want error, got nil")
+	}
+}
+
+func TestStore_Walk(t *testing.T) {
+	s := New(t.TempDir())
+	other := "ffb0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	for _, sha := range []string{testSHA, other} {
+		if err := s.Put(sha, []byte("x")); err != nil {
+			t.Fatalf("Put(%s): %v", sha, err)
+		}
+	}
+
+	// A ".tmp-*" file is a write in flight, not an orphan, and must never be yielded. Neither must
+	// anything else that is not a digest -- the walk is a delete path, so unknown files are left be.
+	shard := filepath.Join(s.Root, testSHA[:2])
+	for _, name := range []string{".tmp-123456", "README", testSHA[:63]} {
+		if err := os.WriteFile(filepath.Join(shard, name), []byte("x"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	seen := map[string]time.Time{}
+	if err := s.Walk(func(sha string, modTime time.Time) error {
+		seen[sha] = modTime
+		return nil
+	}); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+
+	if len(seen) != 2 {
+		t.Fatalf("Walk yielded %d entries (%v), want 2", len(seen), seen)
+	}
+	for _, sha := range []string{testSHA, other} {
+		modTime, ok := seen[sha]
+		if !ok {
+			t.Errorf("Walk did not yield %s", sha)
+			continue
+		}
+		if modTime.IsZero() {
+			t.Errorf("Walk yielded a zero mod time for %s", sha)
+		}
+	}
+}
+
+func TestStore_WalkPropagatesCallbackError(t *testing.T) {
+	s := New(t.TempDir())
+	if err := s.Put(testSHA, []byte("x")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	sentinel := errors.New("stop")
+	if err := s.Walk(func(string, time.Time) error { return sentinel }); !errors.Is(err, sentinel) {
+		t.Errorf("Walk err = %v, want %v", err, sentinel)
+	}
+}
+
+// A store whose root was never written to is an empty store, not a failure -- New creates the
+// directory lazily, so the first sweep on a fresh deployment walks a path that does not exist.
+func TestStore_WalkMissingRoot(t *testing.T) {
+	s := New(filepath.Join(t.TempDir(), "never-written"))
+	calls := 0
+	if err := s.Walk(func(string, time.Time) error { calls++; return nil }); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if calls != 0 {
+		t.Errorf("Walk called fn %d times on a missing root, want 0", calls)
 	}
 }
