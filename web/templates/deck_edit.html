@@ -43,7 +43,7 @@
 </form>
 
 <form method="post" action="/decks/{{.Deck.ID}}/delete">
-    <button type="submit">Delete deck</button>
+    <button type="submit" x-data @click="confirm('Delete this deck and all its notes and cards?') || $event.preventDefault()">Delete deck</button>
 </form>
 
 {{template "backToDeck" .Deck}}

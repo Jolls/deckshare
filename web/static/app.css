@@ -1,0 +1,37 @@
+/* Responsive breakpoints Pico.css doesn't cover -- see docs/plans (issue #166). */
+
+/* Wide tables scroll horizontally instead of overflowing the viewport on phones. */
+.table-scroll {
+    overflow-x: auto;
+}
+
+/* Action-link paragraphs collapse behind a toggle on narrow screens. */
+.action-nav-toggle {
+    display: none;
+}
+
+@media (max-width: 640px) {
+    .action-nav-toggle {
+        display: inline-block;
+    }
+    .action-nav-links {
+        display: none;
+    }
+    .action-nav-links.open {
+        display: block;
+        margin-top: 0.5rem;
+    }
+}
+
+/* Review rating buttons: two per row on narrow screens, four across once there's room. */
+.rating-buttons {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+}
+
+@media (min-width: 480px) {
+    .rating-buttons {
+        grid-template-columns: repeat(4, 1fr);
+    }
+}

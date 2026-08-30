@@ -24,8 +24,11 @@ import "net/http"
 //	                        htmx:evalDisallowedError and refill breaks. This is the one source we
 //	                        want gone and cannot remove yet -- docs/plans/57-csp-reviewer.md, Open
 //	                        question 1. The grade-send POST no longer needs it: #99 moved it off
-//	                        htmx (hx-vals/json-enc) to a direct fetch() in review.js.
-//	style-src 'self'        For a stylesheet vendored under /static/ later.
+//	                        htmx (hx-vals/json-enc) to a direct fetch() in review.js. Alpine.js
+//	                        (#166) also evaluates its x-data/x-show/@click expressions through
+//	                        the Function constructor and would need this same source if it were
+//	                        ever removed.
+//	style-src 'self'        Covers web/static/app.css (#166) alongside the vendored JS.
 //	          'unsafe-inline'  Forced, and a nonce would be strictly worse. Sanitised card HTML
 //	                        carries inline style="" attributes on arbitrary elements
 //	                        (sanitise.go's AllowAttrs("style")), and an attribute cannot take a
