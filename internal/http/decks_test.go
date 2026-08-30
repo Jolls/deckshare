@@ -508,8 +508,8 @@ func TestDeckQueueCounts_LeftRespectsNewPerDayCap(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("GET %s status = %d", deckPath, w.Code)
 	}
-	if body := w.Body.String(); !strings.Contains(body, "New: 3") || !strings.Contains(body, "Left today: 1") {
-		t.Errorf("deck page should show New: 3 and Left today: 1 (capped by new_per_day=1):\n%s", body)
+	if body := w.Body.String(); !strings.Contains(body, "New: 1") || !strings.Contains(body, "Left today: 1") {
+		t.Errorf("deck page should show New: 1 (capped by new_per_day=1, #106) and Left today: 1:\n%s", body)
 	}
 
 	w = doRequest(handler, "GET", "/decks", "", cookie, "")
@@ -517,9 +517,89 @@ func TestDeckQueueCounts_LeftRespectsNewPerDayCap(t *testing.T) {
 		t.Fatalf("GET /decks status = %d", w.Code)
 	}
 	body := w.Body.String()
-	rowRe := regexp.MustCompile(`<td>3</td>\s*<td>3</td>\s*<td>0</td>\s*<td>0</td>\s*<td>1</td>`)
+	rowRe := regexp.MustCompile(`<td>3</td>\s*<td>1</td>\s*<td>0</td>\s*<td>0</td>\s*<td>1</td>`)
 	if !rowRe.MatchString(body) {
-		t.Errorf("/decks body missing expected Cards/New/Learning/Due/Left row (Left capped to 1):\n%s", body)
+		t.Errorf("/decks body missing expected Cards/New/Learning/Due/Left row (New and Left both capped to 1, #106):\n%s", body)
+	}
+}
+
+// #106: once the day's new-card allowance is fully used up, the displayed New count drops to 0
+// -- it must not keep reporting the deck's total unseen-card count -- while Due, which the daily
+// new-card limit never touches, is unaffected.
+func TestDeckQueueCounts_NewCappedToZeroWhenAllowanceExhausted(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	clock := time.Date(2026, 3, 2, 12, 0, 0, 0, time.UTC) // study day: 03-02 04:00Z .. 03-03 04:00Z
+	handler, a := newTestHandler(t, tx, auth.Config{}, func() time.Time { return clock })
+	email := testEmail()
+	cookie := loginCookie(t, tx, a, email, "correct-horse-battery")
+
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	var noteTypeID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+	addNotes(t, handler, cookie, deckPath, noteTypeID, 3)
+
+	rows, err := tx.Query(ctx, `SELECT id FROM cards WHERE deck_id = $1 ORDER BY id`, deckID)
+	if err != nil {
+		t.Fatalf("list cards: %v", err)
+	}
+	var cardIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan card id: %v", err)
+		}
+		cardIDs = append(cardIDs, id)
+	}
+	rows.Close()
+	if len(cardIDs) != 3 {
+		t.Fatalf("got %d cards, want 3", len(cardIDs))
+	}
+	id := userID(t, ctx, tx, email)
+
+	w := doRequest(handler, "POST", deckPath+"/edit", "name=D&description=&new_per_day=1", cookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("POST edit status = %d, want 303: %s", w.Code, w.Body.String())
+	}
+
+	// cardIDs[0] was introduced and answered earlier today, consuming the day's one-card new
+	// allowance -- already studied today, so it drops out of today's queue entirely (same rule
+	// ListDueCardsForStudy applies). cardIDs[1] stays unseen (New, but the allowance is gone).
+	// cardIDs[2] is a review card from yesterday, due now -- Due must be unaffected by the cap.
+	if _, err := tx.Exec(ctx, `INSERT INTO review_log (user_id, card_id, rating, reviewed_at, state_before,
+		learning_steps_before, elapsed_days_before, scheduled_days_after, review_kind)
+		VALUES ($1, $2, 3, $3, 0, 0, 0, 0, 0)`, id, cardIDs[0], clock); err != nil {
+		t.Fatalf("insert review_log row: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO user_card_state (user_id, card_id, due, state, last_review)
+		VALUES ($1, $2, $3, 2, $4)`, id, cardIDs[0], clock, clock); err != nil {
+		t.Fatalf("insert review state for introduced card: %v", err)
+	}
+	yesterday := clock.Add(-24 * time.Hour)
+	if _, err := tx.Exec(ctx, `INSERT INTO user_card_state (user_id, card_id, due, state, last_review)
+		VALUES ($1, $2, $3, 2, $4)`, id, cardIDs[2], clock, yesterday); err != nil {
+		t.Fatalf("insert due review state: %v", err)
+	}
+
+	w = doRequest(handler, "GET", deckPath, "", cookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET %s status = %d", deckPath, w.Code)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "New: 0") || !strings.Contains(body, "Due: 1") {
+		t.Errorf("deck page should show New: 0 (allowance exhausted) and Due: 1 (unaffected):\n%s", body)
+	}
+
+	w = doRequest(handler, "GET", "/decks", "", cookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /decks status = %d", w.Code)
+	}
+	body := w.Body.String()
+	rowRe := regexp.MustCompile(`<td>3</td>\s*<td>0</td>\s*<td>0</td>\s*<td>1</td>\s*<td>1</td>`)
+	if !rowRe.MatchString(body) {
+		t.Errorf("/decks body missing expected Cards/New/Learning/Due/Left row (New: 0, Due: 1):\n%s", body)
 	}
 }
 
