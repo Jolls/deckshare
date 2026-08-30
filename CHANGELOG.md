@@ -3,6 +3,17 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.12] - 2026-08-30
+
+### Changed
+- Removing or reordering an existing field or template on a note type that already has notes no
+  longer 409s. A field remap rewrites every affected note's `fields` array in bulk
+  (`RemapNoteFields`); a template remap keeps a surviving card's identity fixed and only moves
+  its `ordinal` to track the template's new position (`RemapNoteTypeCards`), hard-deleting cards
+  backed by a removed template. Both are gated by a confirmation page (note/deck/other-user
+  counts, what's discarded) while the note type has notes, applying immediately otherwise
+  ([#89](https://github.com/Jolls/enshu/issues/89)).
+
 ## [0.2.11] - 2026-08-29
 
 ### Added

@@ -23,9 +23,6 @@ SELECT n.id, sqlc.arg(template_id), sqlc.arg(ordinal), n.deck_id
 FROM notes n WHERE n.note_type_id = sqlc.arg(note_type_id)
 ON CONFLICT (note_id, ordinal) DO NOTHING;
 
--- name: AppendNoteFieldSlot :execrows
-UPDATE notes SET fields = fields || '""'::jsonb, modified_at = now() WHERE note_type_id = $1;
-
 -- name: UpdateCardTemplate :execrows
 UPDATE cards SET template_id = sqlc.arg(template_id) WHERE id = sqlc.arg(id);
 
@@ -35,3 +32,37 @@ UPDATE cards SET template_id = sqlc.arg(template_id) WHERE id = sqlc.arg(id);
 -- never a correctness problem -- worst case the confirmation copy is one save behind.
 -- name: ListCardsForNote :many
 SELECT ordinal FROM cards WHERE note_id = sqlc.arg(note_id) ORDER BY ordinal;
+
+-- Offsets every card backed by these templates to a negative, per-note-unique ordinal so that a
+-- subsequent finalize (FinalizeCardOrdinalsForTemplates) can permute ordinals -- including cyclic,
+-- not just pairwise -- without transiently violating cards_note_id_ordinal_key. Negative values
+-- never collide with a real (>=0) ordinal, touched or not, and the transform x -> -(x+1) is
+-- injective, so cards that were already distinct per note stay distinct. Never committed in this
+-- shape -- FinalizeCardOrdinalsForTemplates always runs before the transaction commits.
+-- name: OffsetCardOrdinalsForTemplates :execrows
+UPDATE cards SET ordinal = -(ordinal + 1) WHERE template_id = ANY(sqlc.arg(template_ids)::uuid[]);
+
+-- Sets the real final ordinal for cards staged by OffsetCardOrdinalsForTemplates. Safe as one
+-- statement because every affected card is currently negative (from the offset above) and every
+-- target is non-negative and, by construction of the caller's plan, unique per note -- so no row's
+-- new value can collide with another affected row's current (still-negative) value, or with an
+-- untouched card's (already-final, non-negative) value.
+-- name: FinalizeCardOrdinalsForTemplates :execrows
+WITH m AS (
+    SELECT t.template_id, o.new_ordinal
+    FROM unnest(sqlc.arg(template_ids)::uuid[]) WITH ORDINALITY AS t(template_id, ord)
+    JOIN unnest(sqlc.arg(new_ordinals)::int[]) WITH ORDINALITY AS o(new_ordinal, ord)
+      ON t.ord = o.ord
+)
+UPDATE cards c SET ordinal = m.new_ordinal FROM m WHERE c.template_id = m.template_id;
+
+-- A removed template's cards, across every note of the note type, in one statement (#89). Cascades
+-- user_card_state; leaves any review_log rows in place, orphaned but intact -- card_id has no FK
+-- (docs/schema.md's Deletion policy), so this is the same, already-decided convention #138 already
+-- exercises for a single note's card removal, just applied note-type-wide.
+-- name: DeleteCardsForTemplates :execrows
+DELETE FROM cards WHERE template_id = ANY(sqlc.arg(template_ids)::uuid[]);
+
+-- internal/http/notetypes.go's #89 structural-change confirmation preview.
+-- name: CountCardsForTemplates :one
+SELECT count(*) FROM cards WHERE template_id = ANY(sqlc.arg(template_ids)::uuid[]);

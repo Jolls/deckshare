@@ -2,15 +2,12 @@ package http
 
 import (
 	"crypto/rand"
-	"crypto/sha1"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -448,8 +445,6 @@ func desiredCards(nt db.NoteType, templates []db.Template, fieldValues []string)
 
 const maxFieldBytes = 64 * 1024
 
-var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
-
 // validateNoteFields marshals field values to the notes.fields jsonb shape and computes the
 // Anki-style checksum (truncated SHA-1 of the first field with HTML tags stripped). wantCount is
 // the note type's field count: notes.fields is a positional array indexed by fields.ordinal
@@ -472,9 +467,7 @@ func validateNoteFields(fieldValues []string, wantCount int) (fieldsJSON []byte,
 	if err != nil {
 		return nil, 0, err
 	}
-	stripped := htmlTagRe.ReplaceAllString(fieldValues[0], "")
-	sum := sha1.Sum([]byte(stripped)) //nolint:gosec // Anki csum compatibility, not a security use of SHA-1
-	checksum = int64(binary.BigEndian.Uint32(sum[:4]))
+	checksum = db.ComputeNoteChecksum(fieldValues[0])
 	return fieldsJSON, checksum, nil
 }
 

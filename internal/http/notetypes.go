@@ -1,9 +1,12 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"html/template"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -123,6 +126,7 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		if !parseForm(w, r) {
 			return
 		}
+
 		name := strings.TrimSpace(r.PostForm.Get("name"))
 		css := r.PostForm.Get("css")
 		if name == "" {
@@ -130,50 +134,64 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 			return
 		}
 
-		fieldIDs := r.PostForm["field_id[]"]
-		fieldNames := r.PostForm["field_name[]"]
-		if len(fieldIDs) != len(fieldNames) {
-			badRequest(w)
+		fields, ok := parseFieldEdits(w, r)
+		if !ok {
 			return
 		}
-		fields := make([]db.FieldEdit, 0, len(fieldNames))
-		for i, fname := range fieldNames {
-			fname = strings.TrimSpace(fname)
-			if fname == "" {
-				continue
-			}
-			var fieldID pgtype.UUID
-			if fieldIDs[i] != "" {
-				if err := fieldID.Scan(fieldIDs[i]); err != nil {
-					badRequest(w)
-					return
-				}
-			}
-			fields = append(fields, db.FieldEdit{ID: fieldID, Name: fname})
+		if len(fields) == 0 {
+			http.Error(w, "a note type needs at least one field", http.StatusBadRequest)
+			return
 		}
 
-		templateIDs := r.PostForm["template_id[]"]
-		templateNames := r.PostForm["template_name[]"]
-		templateQfmts := r.PostForm["qfmt[]"]
-		templateAfmts := r.PostForm["afmt[]"]
-		if len(templateIDs) != len(templateNames) || len(templateNames) != len(templateQfmts) || len(templateNames) != len(templateAfmts) {
-			badRequest(w)
+		templates, ok := parseTemplateEdits(w, r)
+		if !ok {
 			return
 		}
-		templates := make([]db.TemplateEdit, 0, len(templateNames))
-		for i, tname := range templateNames {
-			tname = strings.TrimSpace(tname)
-			if tname == "" {
-				continue
+		if len(templates) == 0 {
+			http.Error(w, "at least one template is required", http.StatusBadRequest)
+			return
+		}
+
+		q := db.New(store)
+		nt, err := q.GetNoteTypeForOwner(r.Context(), db.GetNoteTypeForOwnerParams{ID: id, OwnerID: user.ID})
+		if handleQueryErr(w, err) {
+			return
+		}
+		if nt.IsCloze && len(templates) != 1 {
+			http.Error(w, "a cloze note type must have exactly one template", http.StatusBadRequest)
+			return
+		}
+
+		existingFields, err := q.ListFieldsForNoteType(r.Context(), id)
+		if err != nil {
+			serverError(w)
+			return
+		}
+		existingTemplates, err := q.ListTemplatesForNoteType(r.Context(), id)
+		if err != nil {
+			serverError(w)
+			return
+		}
+
+		structural := db.FieldOrderChanged(existingFields, fields) || db.TemplateOrderChanged(existingTemplates, templates)
+		noteCount, err := q.CountNotesOfNoteType(r.Context(), id)
+		if err != nil {
+			serverError(w)
+			return
+		}
+
+		if structural && noteCount > 0 && r.PostForm.Get("confirm_structural_change") != "1" {
+			preview, err := buildStructuralChangePreview(r.Context(), q, user.ID, id, existingFields, fields, existingTemplates, templates, noteCount)
+			if err != nil {
+				serverError(w)
+				return
 			}
-			var templateID pgtype.UUID
-			if templateIDs[i] != "" {
-				if err := templateID.Scan(templateIDs[i]); err != nil {
-					badRequest(w)
-					return
-				}
-			}
-			templates = append(templates, db.TemplateEdit{ID: templateID, Name: tname, Qfmt: templateQfmts[i], Afmt: templateAfmts[i]})
+			render(w, pages["notetype_form"], http.StatusOK, map[string]any{
+				"User": user, "NoteType": nt, "Fields": previewFields(fields), "Templates": previewTemplates(templates),
+				"ConfirmStructuralChange": true, "Preview": preview,
+				"Name": name, "Css": css,
+			})
+			return
 		}
 
 		tx, ok := startTx(r.Context(), w, store)
@@ -182,13 +200,11 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		}
 		defer func() { _ = tx.Rollback(r.Context()) }()
 
-		err := db.UpdateNoteType(r.Context(), tx, user.ID, id, name, css, 0, fields, templates)
+		err = db.UpdateNoteType(r.Context(), tx, user.ID, id, name, css, 0, fields, templates)
 		if err != nil {
 			switch {
 			case errors.Is(err, pgx.ErrNoRows):
 				notFound(w)
-			case errors.Is(err, db.ErrNoteTypeStructureLocked):
-				http.Error(w, "remove or reorder fields/templates only while the note type has no notes", http.StatusConflict)
 			case errors.Is(err, db.ErrClozeNoteTypeSingleTemplate):
 				http.Error(w, "a cloze note type must have exactly one template", http.StatusBadRequest)
 			case errors.Is(err, db.ErrFieldNotFound), errors.Is(err, db.ErrTemplateNotFound):
@@ -239,4 +255,213 @@ func trimmedNonEmpty(vals []string) []string {
 		}
 	}
 	return out
+}
+
+// parseFieldEdits parses field_id[]/field_name[]/field_position[] into submission order sorted by
+// position (#89's plain-HTML reorder affordance). A blank name (after trim) is today's "remove via
+// blank" convention -- the row is dropped, not carried forward as an edit. A stable sort means an
+// untouched position value never reorders a row relative to its submission-order siblings.
+func parseFieldEdits(w http.ResponseWriter, r *http.Request) ([]db.FieldEdit, bool) {
+	ids := r.PostForm["field_id[]"]
+	names := r.PostForm["field_name[]"]
+	positions := r.PostForm["field_position[]"]
+	if len(ids) != len(names) || len(names) != len(positions) {
+		badRequest(w)
+		return nil, false
+	}
+
+	type entry struct {
+		edit     db.FieldEdit
+		position int
+	}
+	entries := make([]entry, 0, len(names))
+	for i, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		var fieldID pgtype.UUID
+		if ids[i] != "" {
+			if err := fieldID.Scan(ids[i]); err != nil {
+				badRequest(w)
+				return nil, false
+			}
+		}
+		pos, err := strconv.Atoi(positions[i])
+		if err != nil {
+			badRequest(w)
+			return nil, false
+		}
+		entries = append(entries, entry{edit: db.FieldEdit{ID: fieldID, Name: name}, position: pos})
+	}
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].position < entries[j].position })
+
+	out := make([]db.FieldEdit, len(entries))
+	for i, e := range entries {
+		out[i] = e.edit
+	}
+	return out, true
+}
+
+// parseTemplateEdits is parseFieldEdits's template-side counterpart, over
+// template_id[]/template_name[]/qfmt[]/afmt[]/template_position[].
+func parseTemplateEdits(w http.ResponseWriter, r *http.Request) ([]db.TemplateEdit, bool) {
+	ids := r.PostForm["template_id[]"]
+	names := r.PostForm["template_name[]"]
+	qfmts := r.PostForm["qfmt[]"]
+	afmts := r.PostForm["afmt[]"]
+	positions := r.PostForm["template_position[]"]
+	if len(ids) != len(names) || len(names) != len(qfmts) || len(names) != len(afmts) || len(names) != len(positions) {
+		badRequest(w)
+		return nil, false
+	}
+
+	type entry struct {
+		edit     db.TemplateEdit
+		position int
+	}
+	entries := make([]entry, 0, len(names))
+	for i, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		var templateID pgtype.UUID
+		if ids[i] != "" {
+			if err := templateID.Scan(ids[i]); err != nil {
+				badRequest(w)
+				return nil, false
+			}
+		}
+		pos, err := strconv.Atoi(positions[i])
+		if err != nil {
+			badRequest(w)
+			return nil, false
+		}
+		entries = append(entries, entry{
+			edit:     db.TemplateEdit{ID: templateID, Name: name, Qfmt: qfmts[i], Afmt: afmts[i]},
+			position: pos,
+		})
+	}
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].position < entries[j].position })
+
+	out := make([]db.TemplateEdit, len(entries))
+	for i, e := range entries {
+		out[i] = e.edit
+	}
+	return out, true
+}
+
+// previewFieldRow/previewTemplateRow give the confirmation page (#89) the same {{.ID}}/{{.Name}}/
+// {{.Qfmt}}/{{.Afmt}}/{{.Ordinal}} shape web/templates/notetype_form.html already renders for
+// db.Field/db.Template on the ordinary edit page, but built from the submitted, already-sorted
+// []db.FieldEdit/[]db.TemplateEdit -- .Ordinal here is really "submitted position," not a stored
+// row's ordinal, since these fields/templates have not been written yet.
+type previewFieldRow struct {
+	ID      pgtype.UUID
+	Name    string
+	Ordinal int32
+}
+
+type previewTemplateRow struct {
+	ID      pgtype.UUID
+	Name    string
+	Qfmt    string
+	Afmt    string
+	Ordinal int32
+}
+
+func previewFields(fields []db.FieldEdit) []previewFieldRow {
+	out := make([]previewFieldRow, len(fields))
+	for i, f := range fields {
+		out[i] = previewFieldRow{ID: f.ID, Name: f.Name, Ordinal: int32(i)}
+	}
+	return out
+}
+
+func previewTemplates(templates []db.TemplateEdit) []previewTemplateRow {
+	out := make([]previewTemplateRow, len(templates))
+	for i, t := range templates {
+		out[i] = previewTemplateRow{ID: t.ID, Name: t.Name, Qfmt: t.Qfmt, Afmt: t.Afmt, Ordinal: int32(i)}
+	}
+	return out
+}
+
+// structuralChangePreview is the #89 confirmation page's data: what a structural field/template
+// change will discard or add, computed once before the user confirms.
+type structuralChangePreview struct {
+	NoteCount            int64
+	DeckCount            int64
+	OtherUserCount       int64
+	RemovedFieldNames    []string
+	RemovedTemplateNames []string
+	RemovedCardCount     int64
+	AddedTemplateCount   int
+	AddedCardEstimate    int64
+}
+
+func buildStructuralChangePreview(
+	ctx context.Context, q *db.Queries, ownerID, noteTypeID pgtype.UUID,
+	existingFields []db.Field, fields []db.FieldEdit,
+	existingTemplates []db.Template, templates []db.TemplateEdit,
+	noteCount int64,
+) (structuralChangePreview, error) {
+	summary, err := q.NoteTypeImpactSummary(ctx, db.NoteTypeImpactSummaryParams{NoteTypeID: noteTypeID, OwnerID: ownerID})
+	if err != nil {
+		return structuralChangePreview{}, err
+	}
+
+	submittedFieldIDs := make(map[pgtype.UUID]bool, len(fields))
+	for _, f := range fields {
+		if f.ID.Valid {
+			submittedFieldIDs[f.ID] = true
+		}
+	}
+	var removedFieldNames []string
+	for _, f := range existingFields {
+		if !submittedFieldIDs[f.ID] {
+			removedFieldNames = append(removedFieldNames, f.Name)
+		}
+	}
+
+	submittedTemplateIDs := make(map[pgtype.UUID]bool, len(templates))
+	for _, t := range templates {
+		if t.ID.Valid {
+			submittedTemplateIDs[t.ID] = true
+		}
+	}
+	var removedTemplateNames []string
+	var removedTemplateIDs []pgtype.UUID
+	for _, t := range existingTemplates {
+		if !submittedTemplateIDs[t.ID] {
+			removedTemplateNames = append(removedTemplateNames, t.Name)
+			removedTemplateIDs = append(removedTemplateIDs, t.ID)
+		}
+	}
+
+	var removedCardCount int64
+	if len(removedTemplateIDs) > 0 {
+		removedCardCount, err = q.CountCardsForTemplates(ctx, removedTemplateIDs)
+		if err != nil {
+			return structuralChangePreview{}, err
+		}
+	}
+
+	addedTemplateCount := 0
+	for _, t := range templates {
+		if !t.ID.Valid {
+			addedTemplateCount++
+		}
+	}
+
+	return structuralChangePreview{
+		NoteCount:            noteCount,
+		DeckCount:            summary.DeckCount,
+		OtherUserCount:       summary.OtherUserCount,
+		RemovedFieldNames:    removedFieldNames,
+		RemovedTemplateNames: removedTemplateNames,
+		RemovedCardCount:     removedCardCount,
+		AddedTemplateCount:   addedTemplateCount,
+		AddedCardEstimate:    int64(addedTemplateCount) * noteCount,
+	}, nil
 }

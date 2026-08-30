@@ -621,9 +621,10 @@ func TestNoteRoutes_ClozeWithoutMarkers_400(t *testing.T) {
 	}
 }
 
-// A note type left with zero templates (reachable by a structural edit while it has no notes,
-// since the edit handler -- unlike create -- doesn't require at least one template) must reject
-// a note creation attempt with 400, not 500, matching the edit path's ErrNoCards handling.
+// A note type left with zero templates (no longer reachable through the app since #89 made the
+// edit handler require at least one template, same as create -- so this simulates a data anomaly
+// via a direct SQL delete) must reject a note creation attempt with 400, not 500, matching
+// desiredCards's ErrNoCards-adjacent "cloze note type has no template" handling.
 func TestNoteRoutes_CreateAgainstNoteTypeWithNoTemplates_400(t *testing.T) {
 	tx := beginTx(t)
 	handler, a := newTestHandler(t, tx, auth.Config{})
@@ -636,24 +637,15 @@ func TestNoteRoutes_CreateAgainstNoteTypeWithNoTemplates_400(t *testing.T) {
 		t.Fatalf("lookup note type: %v", err)
 	}
 
-	editBody := url.Values{}
-	editBody.Set("name", "Basic2")
-	editBody.Set("css", "")
-	editBody.Add("field_id[]", "")
-	editBody.Add("field_name[]", "Front")
-	editBody.Add("field_id[]", "")
-	editBody.Add("field_name[]", "Back")
-	// no template_name[]/qfmt[]/afmt[] -- strips the note type down to zero templates
-	w := doRequest(handler, "POST", "/note-types/"+noteTypeID+"/edit", editBody.Encode(), cookie, "http://example.com")
-	if w.Code != http.StatusSeeOther {
-		t.Fatalf("strip templates status = %d, want 303: %s", w.Code, w.Body.String())
+	if _, err := tx.Exec(ctx, `DELETE FROM templates WHERE note_type_id = $1`, noteTypeID); err != nil {
+		t.Fatalf("strip templates: %v", err)
 	}
 
 	noteBody := url.Values{}
 	noteBody.Set("note_type_id", noteTypeID)
 	noteBody.Add("field[]", "Q")
 	noteBody.Add("field[]", "A")
-	w = doRequest(handler, "POST", deckPath+"/notes", noteBody.Encode(), cookie, "http://example.com")
+	w := doRequest(handler, "POST", deckPath+"/notes", noteBody.Encode(), cookie, "http://example.com")
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400: %s", w.Code, w.Body.String())
 	}

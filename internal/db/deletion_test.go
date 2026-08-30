@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -139,6 +140,53 @@ func mustTemplate(t *testing.T, tx pgx.Tx, noteTypeID pgtype.UUID, ordinal int) 
 		t.Fatalf("insert template: %v", err)
 	}
 	return id
+}
+
+func mustField(t *testing.T, tx pgx.Tx, noteTypeID pgtype.UUID, ordinal int, name string) pgtype.UUID {
+	t.Helper()
+	var id pgtype.UUID
+	err := tx.QueryRow(context.Background(),
+		`INSERT INTO fields (note_type_id, ordinal, name) VALUES ($1, $2, $3) RETURNING id`,
+		noteTypeID, ordinal, name,
+	).Scan(&id)
+	if err != nil {
+		t.Fatalf("insert field: %v", err)
+	}
+	return id
+}
+
+// mustNoteWithFields is mustNote with an explicit fields array, for tests that need specific
+// field content to assert a remap's positional rewrite (#89).
+func mustNoteWithFields(t *testing.T, tx pgx.Tx, ownerID, noteTypeID, deckID pgtype.UUID, fields []string) pgtype.UUID {
+	t.Helper()
+	fieldsJSON, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatalf("marshal fields: %v", err)
+	}
+	var id pgtype.UUID
+	guid := fmt.Sprintf("guid-%d", nextSeq())
+	err = tx.QueryRow(context.Background(),
+		`INSERT INTO notes (guid, owner_id, note_type_id, deck_id, fields, checksum) VALUES ($1, $2, $3, $4, $5, 0) RETURNING id`,
+		guid, ownerID, noteTypeID, deckID, fieldsJSON,
+	).Scan(&id)
+	if err != nil {
+		t.Fatalf("insert note: %v", err)
+	}
+	return id
+}
+
+// noteFields reads back a note's fields jsonb array for assertion.
+func noteFields(t *testing.T, tx pgx.Tx, noteID pgtype.UUID) []string {
+	t.Helper()
+	var raw []byte
+	if err := tx.QueryRow(context.Background(), `SELECT fields FROM notes WHERE id = $1`, noteID).Scan(&raw); err != nil {
+		t.Fatalf("select fields: %v", err)
+	}
+	var vals []string
+	if err := json.Unmarshal(raw, &vals); err != nil {
+		t.Fatalf("unmarshal fields: %v", err)
+	}
+	return vals
 }
 
 func mustNote(t *testing.T, tx pgx.Tx, ownerID, noteTypeID, deckID pgtype.UUID) pgtype.UUID {

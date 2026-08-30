@@ -45,12 +45,20 @@ func (q *Queries) CreateTemplate(ctx context.Context, arg CreateTemplateParams) 
 	return i, err
 }
 
-const deleteTemplatesForNoteType = `-- name: DeleteTemplatesForNoteType :execrows
-DELETE FROM templates WHERE note_type_id = $1
+const deleteTemplatesByIDs = `-- name: DeleteTemplatesByIDs :execrows
+DELETE FROM templates WHERE note_type_id = $1 AND id = ANY($2::uuid[])
 `
 
-func (q *Queries) DeleteTemplatesForNoteType(ctx context.Context, noteTypeID pgtype.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteTemplatesForNoteType, noteTypeID)
+type DeleteTemplatesByIDsParams struct {
+	NoteTypeID pgtype.UUID
+	Ids        []pgtype.UUID
+}
+
+// Only safe to call once every card backed by these templates is already gone --
+// cards.template_id REFERENCES templates ON DELETE RESTRICT (docs/schema.md's Deletion policy).
+// RemapNoteTypeCards (internal/db/cards.go) always calls DeleteCardsForTemplates first.
+func (q *Queries) DeleteTemplatesByIDs(ctx context.Context, arg DeleteTemplatesByIDsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTemplatesByIDs, arg.NoteTypeID, arg.Ids)
 	if err != nil {
 		return 0, err
 	}
@@ -90,24 +98,29 @@ func (q *Queries) ListTemplatesForNoteType(ctx context.Context, noteTypeID pgtyp
 	return items, nil
 }
 
-const updateTemplate = `-- name: UpdateTemplate :execrows
-UPDATE templates SET name = $1, qfmt = $2, afmt = $3
-WHERE id = $4 AND note_type_id = $5
+const updateTemplateContentAndOrdinal = `-- name: UpdateTemplateContentAndOrdinal :execrows
+UPDATE templates SET name = $1, qfmt = $2, afmt = $3,
+                     ordinal = $4
+WHERE id = $5 AND note_type_id = $6
 `
 
-type UpdateTemplateParams struct {
+type UpdateTemplateContentAndOrdinalParams struct {
 	Name       string
 	Qfmt       string
 	Afmt       string
+	Ordinal    int32
 	ID         pgtype.UUID
 	NoteTypeID pgtype.UUID
 }
 
-func (q *Queries) UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) (int64, error) {
-	result, err := q.db.Exec(ctx, updateTemplate,
+// Renames/re-formats AND repositions a kept template in one statement (#89), same reasoning as
+// UpdateFieldNameAndOrdinal -- templates.ordinal is likewise not UNIQUE-constrained.
+func (q *Queries) UpdateTemplateContentAndOrdinal(ctx context.Context, arg UpdateTemplateContentAndOrdinalParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateTemplateContentAndOrdinal,
 		arg.Name,
 		arg.Qfmt,
 		arg.Afmt,
+		arg.Ordinal,
 		arg.ID,
 		arg.NoteTypeID,
 	)

@@ -11,6 +11,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const bulkUpdateNoteChecksums = `-- name: BulkUpdateNoteChecksums :execrows
+WITH v AS (
+    SELECT i.note_id, c.checksum
+    FROM unnest($1::uuid[]) WITH ORDINALITY AS i(note_id, ord)
+    JOIN unnest($2::bigint[]) WITH ORDINALITY AS c(checksum, ord)
+      ON i.ord = c.ord
+)
+UPDATE notes n SET checksum = v.checksum FROM v WHERE n.id = v.note_id
+`
+
+type BulkUpdateNoteChecksumsParams struct {
+	NoteIds   []pgtype.UUID
+	Checksums []int64
+}
+
+func (q *Queries) BulkUpdateNoteChecksums(ctx context.Context, arg BulkUpdateNoteChecksumsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, bulkUpdateNoteChecksums, arg.NoteIds, arg.Checksums)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createNote = `-- name: CreateNote :one
 INSERT INTO notes (guid, owner_id, note_type_id, deck_id, fields, tags, checksum)
 SELECT $1, d.owner_id, nt.id, d.id, $2, $3, $4
@@ -146,6 +169,37 @@ func (q *Queries) GetNoteForNoteTypeChange(ctx context.Context, arg GetNoteForNo
 		&i.AnkiID,
 	)
 	return i, err
+}
+
+const listNoteFieldsForNoteType = `-- name: ListNoteFieldsForNoteType :many
+SELECT id, fields FROM notes WHERE note_type_id = $1
+`
+
+type ListNoteFieldsForNoteTypeRow struct {
+	ID     pgtype.UUID
+	Fields []byte
+}
+
+// Non-locking read used only to recompute checksum after a field remap that changes which field is
+// now first (notes.checksum is sha1-of-stripped-html of field 0 -- see db.ComputeNoteChecksum).
+func (q *Queries) ListNoteFieldsForNoteType(ctx context.Context, noteTypeID pgtype.UUID) ([]ListNoteFieldsForNoteTypeRow, error) {
+	rows, err := q.db.Query(ctx, listNoteFieldsForNoteType, noteTypeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNoteFieldsForNoteTypeRow
+	for rows.Next() {
+		var i ListNoteFieldsForNoteTypeRow
+		if err := rows.Scan(&i.ID, &i.Fields); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listNoteIDsOfNoteType = `-- name: ListNoteIDsOfNoteType :many
@@ -301,6 +355,36 @@ type MoveNoteToDeckParams struct {
 // makes a drifted pair fail loudly instead of silently breaking the import key.
 func (q *Queries) MoveNoteToDeck(ctx context.Context, arg MoveNoteToDeckParams) (int64, error) {
 	result, err := q.db.Exec(ctx, moveNoteToDeck, arg.NoteID, arg.TargetDeckID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const remapNoteFields = `-- name: RemapNoteFields :execrows
+UPDATE notes n
+SET fields = (
+    SELECT jsonb_agg(CASE WHEN t.old_ordinal < 0 THEN '""'::jsonb ELSE n.fields -> t.old_ordinal END
+                     ORDER BY t.pos)
+    FROM unnest($1::int[]) WITH ORDINALITY AS t(old_ordinal, pos)
+),
+    modified_at = now()
+WHERE n.note_type_id = $2
+`
+
+type RemapNoteFieldsParams struct {
+	OldOrdinals []int32
+	NoteTypeID  pgtype.UUID
+}
+
+// Rewrites every note of note_type_id's fields array positionally, in one statement (#89): new
+// position i takes its value from OLD ordinal old_ordinals[i], or an empty string when
+// old_ordinals[i] is -1 (a field newly added by this same edit, which no note has ever held a
+// value for -- same '""'::jsonb sentinel AppendNoteFieldSlot used). old_ordinals encodes the full
+// old->new permutation and/or subset (a removed field simply has no entry) in one array, so this
+// costs one UPDATE regardless of note count -- it scales in rows touched, not round trips.
+func (q *Queries) RemapNoteFields(ctx context.Context, arg RemapNoteFieldsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, remapNoteFields, arg.OldOrdinals, arg.NoteTypeID)
 	if err != nil {
 		return 0, err
 	}
