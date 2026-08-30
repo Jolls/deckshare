@@ -72,7 +72,7 @@ its owner's decks.
 | GET | `/note-types/new` | — | New note-type form (fields + templates builder) |
 | POST | `/note-types` | — | Create |
 | GET | `/note-types/{id}/edit` | owns row | Edit form |
-| POST | `/note-types/{id}/edit` | owns row | Update name/css/field-and-template renames, append new fields/templates. **Removing or reordering an existing field or template is refused with 409 while the note type has any notes** — `notes.fields` is a positional array, and a template removal would delete cards. Free while the note type has zero notes. Follow-up issue: field/template removal-and-reorder with positional note remap |
+| POST | `/note-types/{id}/edit` | owns row | Update name/css and remap fields/templates: rename, reorder, remove, and add, in any combination (#89). **A removal or reorder while the note type has any notes shows a confirmation page** (note/deck/other-user counts, what's discarded) before applying — a field removal permanently discards that field's content from every note; a template removal hard-deletes its cards (`user_card_state` cascades, `review_log` survives orphaned). Applies immediately, no confirmation, for a pure rename/append or for any change while the note type has zero notes |
 | POST | `/note-types/{id}/delete` | owns row | Delete — blocked while any note references it, enforced by `notes.note_type_id ON DELETE RESTRICT`; `fields` and `templates` cascade |
 
 **Open question — not a route table decision, needs a call before Milestone 2's deck sharing:**

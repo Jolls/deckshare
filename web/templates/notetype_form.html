@@ -1,5 +1,46 @@
 {{define "content"}}
-{{if .IsNew}}
+{{if .ConfirmStructuralChange}}
+<h1>Confirm note type change</h1>
+<p>This note type has {{.Preview.NoteCount}} note(s) across {{.Preview.DeckCount}} deck(s)
+   {{if gt .Preview.OtherUserCount 0}}, {{.Preview.OtherUserCount}} of them shared with other users
+   whose scheduling progress will also be affected{{end}}.</p>
+
+{{if .Preview.RemovedFieldNames}}
+<p><strong>Removing field(s) {{range .Preview.RemovedFieldNames}}"{{.}}" {{end}}will permanently
+   discard that field's content from every note above. This cannot be undone.</strong></p>
+{{end}}
+
+{{if .Preview.RemovedTemplateNames}}
+<p>Removing template(s) {{range .Preview.RemovedTemplateNames}}"{{.}}" {{end}}will permanently
+   delete {{.Preview.RemovedCardCount}} card(s). Each card's review history is kept (orphaned, not
+   deleted) but its scheduling progress is discarded.</p>
+{{end}}
+
+{{if gt .Preview.AddedTemplateCount 0}}
+<p>Adding {{.Preview.AddedTemplateCount}} template(s) will generate up to
+   {{.Preview.AddedCardEstimate}} new card(s), starting fresh.</p>
+{{end}}
+
+<form method="post" action="/note-types/{{.NoteType.ID}}/edit">
+    <input type="hidden" name="name" value="{{.Name}}">
+    <input type="hidden" name="css" value="{{.Css}}">
+    {{range .Fields}}
+    <input type="hidden" name="field_id[]" value="{{.ID}}">
+    <input type="hidden" name="field_name[]" value="{{.Name}}">
+    <input type="hidden" name="field_position[]" value="{{.Ordinal}}">
+    {{end}}
+    {{range .Templates}}
+    <input type="hidden" name="template_id[]" value="{{.ID}}">
+    <input type="hidden" name="template_name[]" value="{{.Name}}">
+    <input type="hidden" name="qfmt[]" value="{{.Qfmt}}">
+    <input type="hidden" name="afmt[]" value="{{.Afmt}}">
+    <input type="hidden" name="template_position[]" value="{{.Ordinal}}">
+    {{end}}
+    <input type="hidden" name="confirm_structural_change" value="1">
+    <button type="submit">Confirm change</button>
+</form>
+<p><a href="/note-types/{{.NoteType.ID}}/edit">Cancel</a></p>
+{{else if .IsNew}}
 <h1>New note type</h1>
 <form method="post" action="/note-types">
     <label for="name">Name</label>
@@ -50,11 +91,15 @@
         <div>
             <input type="hidden" name="field_id[]" value="{{.ID}}">
             <input type="text" name="field_name[]" value="{{.Name}}" required>
+            <label>Position</label>
+            <input type="number" name="field_position[]" value="{{.Ordinal}}" min="0">
         </div>
         {{end}}
         <div>
             <input type="hidden" name="field_id[]" value="">
             <input type="text" name="field_name[]" placeholder="New field">
+            <label>Position</label>
+            <input type="number" name="field_position[]" value="{{len .Fields}}" min="0">
         </div>
     </fieldset>
 
@@ -68,6 +113,8 @@
             <textarea name="qfmt[]">{{.Qfmt}}</textarea>
             <label>Answer format</label>
             <textarea name="afmt[]">{{.Afmt}}</textarea>
+            <label>Position</label>
+            <input type="number" name="template_position[]" value="{{.Ordinal}}" min="0">
         </div>
         {{end}}
         {{if not .NoteType.IsCloze}}
@@ -78,6 +125,8 @@
             <textarea name="qfmt[]"></textarea>
             <label>Answer format</label>
             <textarea name="afmt[]"></textarea>
+            <label>Position</label>
+            <input type="number" name="template_position[]" value="{{len .Templates}}" min="0">
         </div>
         {{end}}
     </fieldset>

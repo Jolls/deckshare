@@ -238,6 +238,34 @@ func (q *Queries) LockNoteTypeForOwner(ctx context.Context, arg LockNoteTypeForO
 	return i, err
 }
 
+const noteTypeImpactSummary = `-- name: NoteTypeImpactSummary :one
+SELECT
+  (SELECT count(DISTINCT n.deck_id) FROM notes n WHERE n.note_type_id = $1) AS deck_count,
+  (SELECT count(DISTINCT da.user_id) FROM notes n
+     JOIN deck_access da ON da.deck_id = n.deck_id
+     WHERE n.note_type_id = $1 AND da.user_id != $2) AS other_user_count
+`
+
+type NoteTypeImpactSummaryParams struct {
+	NoteTypeID pgtype.UUID
+	OwnerID    pgtype.UUID
+}
+
+type NoteTypeImpactSummaryRow struct {
+	DeckCount      int64
+	OtherUserCount int64
+}
+
+// Non-locking preview reads for the #89 structural-change confirmation page. Same tolerance as
+// #138's ListCardsForNote: a stale preview here is never a correctness problem, since the actual
+// mutation re-reads everything fresh under LockNoteTypeForOwner's row lock.
+func (q *Queries) NoteTypeImpactSummary(ctx context.Context, arg NoteTypeImpactSummaryParams) (NoteTypeImpactSummaryRow, error) {
+	row := q.db.QueryRow(ctx, noteTypeImpactSummary, arg.NoteTypeID, arg.OwnerID)
+	var i NoteTypeImpactSummaryRow
+	err := row.Scan(&i.DeckCount, &i.OtherUserCount)
+	return i, err
+}
+
 const updateNoteTypeRow = `-- name: UpdateNoteTypeRow :execrows
 UPDATE note_types SET name = $1, css = $2,
                       sort_field_idx = $3

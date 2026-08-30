@@ -104,3 +104,90 @@ func SyncNoteCards(ctx context.Context, tx pgx.Tx, noteID, homeDeckID pgtype.UUI
 
 	return nil
 }
+
+// TemplateOrdinalChange is a kept template whose ordinal moved (#89's reorder case).
+type TemplateOrdinalChange struct {
+	TemplateID pgtype.UUID
+	NewOrdinal int32
+}
+
+// AddedTemplate is a template created by this same note-type edit.
+type AddedTemplate struct {
+	TemplateID pgtype.UUID
+	Ordinal    int32
+}
+
+// RemapNoteTypeCards reconciles cards.ordinal/existence for every note of a note type against a
+// structural change to that note type's templates (#89). Unlike SyncNoteCards (per-note, called on
+// an ordinary note edit), this is note-type-scoped: it costs a small, fixed number of SQL
+// statements -- bounded by how many templates changed, never by how many notes the note type has --
+// not one round trip per note.
+//
+// A kept template whose ordinal moved keeps its id and its cards' template_id (card content
+// identity must not change on a reorder -- flipping template_id on a swap would silently render a
+// different template on every existing card, mid-schedule); only cards.ordinal moves, in two
+// phases (stage to negative, then finalize) because cards carries a genuine UNIQUE (note_id,
+// ordinal) constraint a same-statement permutation could otherwise violate mid-write. A removed
+// template's cards are hard-deleted -- cascading user_card_state, orphaning but not deleting
+// review_log, per the #51/#138 precedent -- before the now-cardless template row itself is deleted
+// (cards.template_id is ON DELETE RESTRICT). An added template's cards are created via the
+// existing CreateCardsForNewTemplate, one call per added template.
+//
+// Ordering is load-bearing: offset -> delete-cards-then-templates -> add -> finalize. Offset must
+// precede finalize (that's the whole point of staging). Offset and delete must precede add, in
+// case an added template's target ordinal coincides with a changed-kept template's old ordinal
+// (still occupied until offset runs) or a just-removed template's ordinal (occupied until delete
+// runs) -- both are guaranteed vacated by the time add runs. Finalize must be last, once every
+// other phase has settled which ordinals are actually free.
+//
+// Must be called inside a transaction that already holds LockNoteTypeForOwner's row lock on the
+// note type. The caller commits.
+func RemapNoteTypeCards(ctx context.Context, tx pgx.Tx, noteTypeID pgtype.UUID, changed []TemplateOrdinalChange, removed []pgtype.UUID, added []AddedTemplate) error {
+	q := New(tx)
+
+	if len(changed) > 0 {
+		ids := make([]pgtype.UUID, len(changed))
+		for i, c := range changed {
+			ids[i] = c.TemplateID
+		}
+		if _, err := q.OffsetCardOrdinalsForTemplates(ctx, ids); err != nil {
+			return err
+		}
+	}
+
+	if len(removed) > 0 {
+		if _, err := q.DeleteCardsForTemplates(ctx, removed); err != nil {
+			return err
+		}
+		if _, err := q.DeleteTemplatesByIDs(ctx, DeleteTemplatesByIDsParams{NoteTypeID: noteTypeID, Ids: removed}); err != nil {
+			return err
+		}
+	}
+
+	for _, a := range added {
+		if _, err := q.CreateCardsForNewTemplate(ctx, CreateCardsForNewTemplateParams{
+			TemplateID: a.TemplateID,
+			Ordinal:    a.Ordinal,
+			NoteTypeID: noteTypeID,
+		}); err != nil {
+			return err
+		}
+	}
+
+	if len(changed) > 0 {
+		ids := make([]pgtype.UUID, len(changed))
+		ords := make([]int32, len(changed))
+		for i, c := range changed {
+			ids[i] = c.TemplateID
+			ords[i] = c.NewOrdinal
+		}
+		if _, err := q.FinalizeCardOrdinalsForTemplates(ctx, FinalizeCardOrdinalsForTemplatesParams{
+			TemplateIds: ids,
+			NewOrdinals: ords,
+		}); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}

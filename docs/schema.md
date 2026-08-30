@@ -154,6 +154,17 @@ ordinal that doesn't survive the change (e.g. dropping "Basic (and reversed card
 cascades away with it, and any `review_log` rows are left in place, orphaned but intact, per the
 no-FK decision below (Deletion policy).
 
+Editing a note *type's* own fields/templates while it has notes (#89) extends the same
+"diff, don't drop-and-recreate" principle one level up, in bulk rather than per-note. A field
+remap rewrites every affected note's `fields` array in one `UPDATE` (`RemapNoteFields`), keyed by
+an old-ordinal → new-position permutation, instead of looping per note. A template remap keeps a
+surviving card's `template_id` fixed — a reorder must not change *which* template a card renders,
+only *where* it sits — and moves `cards.ordinal` to track the template's new position instead
+(`RemapNoteTypeCards`); letting `cards.ordinal` drift out of sync with `templates.ordinal` would
+make the *next*, unrelated note edit's `SyncNoteCards` see a stale ordinal as "not desired" and
+silently delete-then-recreate the card. A removed template's cards are hard-deleted the same way
+an #138 note-type change already deletes a dropped-ordinal's card.
+
 **Deferred:** full-text search over notes. The intended shape is a generated `tsvector`
 column over the concatenated fields, but nothing queries it yet and it is not implemented.
 Add it with the search feature, not before.

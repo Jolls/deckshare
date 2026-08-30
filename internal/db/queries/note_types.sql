@@ -33,6 +33,16 @@ SELECT count(*) FROM notes WHERE note_type_id = $1;
 -- name: DeleteNoteType :execrows
 DELETE FROM note_types WHERE id = sqlc.arg(id) AND owner_id = sqlc.arg(owner_id);
 
+-- Non-locking preview reads for the #89 structural-change confirmation page. Same tolerance as
+-- #138's ListCardsForNote: a stale preview here is never a correctness problem, since the actual
+-- mutation re-reads everything fresh under LockNoteTypeForOwner's row lock.
+-- name: NoteTypeImpactSummary :one
+SELECT
+  (SELECT count(DISTINCT n.deck_id) FROM notes n WHERE n.note_type_id = sqlc.arg(note_type_id)) AS deck_count,
+  (SELECT count(DISTINCT da.user_id) FROM notes n
+     JOIN deck_access da ON da.deck_id = n.deck_id
+     WHERE n.note_type_id = sqlc.arg(note_type_id) AND da.user_id != sqlc.arg(owner_id)) AS other_user_count;
+
 -- Note types owned by owner_id that a note currently on current_note_type_id could switch to
 -- without cross-field-set remapping (#138 v1): same is_cloze flag, and the same field names in
 -- the same ordinal order. Deliberately includes current_note_type_id itself (harmless no-op

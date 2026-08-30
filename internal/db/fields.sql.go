@@ -37,12 +37,17 @@ func (q *Queries) CreateField(ctx context.Context, arg CreateFieldParams) (Field
 	return i, err
 }
 
-const deleteFieldsForNoteType = `-- name: DeleteFieldsForNoteType :execrows
-DELETE FROM fields WHERE note_type_id = $1
+const deleteField = `-- name: DeleteField :execrows
+DELETE FROM fields WHERE id = $1 AND note_type_id = $2
 `
 
-func (q *Queries) DeleteFieldsForNoteType(ctx context.Context, noteTypeID pgtype.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteFieldsForNoteType, noteTypeID)
+type DeleteFieldParams struct {
+	ID         pgtype.UUID
+	NoteTypeID pgtype.UUID
+}
+
+func (q *Queries) DeleteField(ctx context.Context, arg DeleteFieldParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteField, arg.ID, arg.NoteTypeID)
 	if err != nil {
 		return 0, err
 	}
@@ -114,18 +119,28 @@ func (q *Queries) ListFieldsForNoteTypes(ctx context.Context, noteTypeIds []pgty
 	return items, nil
 }
 
-const renameField = `-- name: RenameField :execrows
-UPDATE fields SET name = $1 WHERE id = $2 AND note_type_id = $3
+const updateFieldNameAndOrdinal = `-- name: UpdateFieldNameAndOrdinal :execrows
+UPDATE fields SET name = $1, ordinal = $2
+WHERE id = $3 AND note_type_id = $4
 `
 
-type RenameFieldParams struct {
+type UpdateFieldNameAndOrdinalParams struct {
 	Name       string
+	Ordinal    int32
 	ID         pgtype.UUID
 	NoteTypeID pgtype.UUID
 }
 
-func (q *Queries) RenameField(ctx context.Context, arg RenameFieldParams) (int64, error) {
-	result, err := q.db.Exec(ctx, renameField, arg.Name, arg.ID, arg.NoteTypeID)
+// Renames AND repositions a kept field in one statement (#89): fields.ordinal has no UNIQUE
+// constraint (migrations/00004_fields.sql -- deliberately, for exactly this reason), so an
+// in-place ordinal reassignment, including a full permutation, is always collision-free.
+func (q *Queries) UpdateFieldNameAndOrdinal(ctx context.Context, arg UpdateFieldNameAndOrdinalParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateFieldNameAndOrdinal,
+		arg.Name,
+		arg.Ordinal,
+		arg.ID,
+		arg.NoteTypeID,
+	)
 	if err != nil {
 		return 0, err
 	}

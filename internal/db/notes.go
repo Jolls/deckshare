@@ -2,10 +2,25 @@ package db
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/binary"
+	"regexp"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
+
+// ComputeNoteChecksum is Anki's own csum algorithm: truncated SHA-1 of a note's first field with
+// HTML tags stripped. Shared by internal/http/notes.go's validateNoteFields (ordinary note
+// create/edit) and UpdateNoteType's bulk recompute (#89, when a field remap changes which field is
+// now first).
+func ComputeNoteChecksum(firstField string) int64 {
+	stripped := htmlTagRe.ReplaceAllString(firstField, "")
+	sum := sha1.Sum([]byte(stripped)) //nolint:gosec // Anki csum compatibility, not a security use of SHA-1
+	return int64(binary.BigEndian.Uint32(sum[:4]))
+}
 
 // CreateNoteWithCards creates a note and generates its cards in one transaction. Must be called
 // inside a transaction it does not own; the caller commits.

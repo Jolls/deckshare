@@ -82,3 +82,33 @@ WHERE n.id = sqlc.arg(note_id) AND da.deck_id = n.deck_id AND da.user_id = sqlc.
 
 -- name: ListNoteIDsOfNoteType :many
 SELECT id FROM notes WHERE note_type_id = $1;
+
+-- Rewrites every note of note_type_id's fields array positionally, in one statement (#89): new
+-- position i takes its value from OLD ordinal old_ordinals[i], or an empty string when
+-- old_ordinals[i] is -1 (a field newly added by this same edit, which no note has ever held a
+-- value for -- same '""'::jsonb sentinel AppendNoteFieldSlot used). old_ordinals encodes the full
+-- old->new permutation and/or subset (a removed field simply has no entry) in one array, so this
+-- costs one UPDATE regardless of note count -- it scales in rows touched, not round trips.
+-- name: RemapNoteFields :execrows
+UPDATE notes n
+SET fields = (
+    SELECT jsonb_agg(CASE WHEN t.old_ordinal < 0 THEN '""'::jsonb ELSE n.fields -> t.old_ordinal END
+                     ORDER BY t.pos)
+    FROM unnest(sqlc.arg(old_ordinals)::int[]) WITH ORDINALITY AS t(old_ordinal, pos)
+),
+    modified_at = now()
+WHERE n.note_type_id = sqlc.arg(note_type_id);
+
+-- Non-locking read used only to recompute checksum after a field remap that changes which field is
+-- now first (notes.checksum is sha1-of-stripped-html of field 0 -- see db.ComputeNoteChecksum).
+-- name: ListNoteFieldsForNoteType :many
+SELECT id, fields FROM notes WHERE note_type_id = sqlc.arg(note_type_id);
+
+-- name: BulkUpdateNoteChecksums :execrows
+WITH v AS (
+    SELECT i.note_id, c.checksum
+    FROM unnest(sqlc.arg(note_ids)::uuid[]) WITH ORDINALITY AS i(note_id, ord)
+    JOIN unnest(sqlc.arg(checksums)::bigint[]) WITH ORDINALITY AS c(checksum, ord)
+      ON i.ord = c.ord
+)
+UPDATE notes n SET checksum = v.checksum FROM v WHERE n.id = v.note_id;
