@@ -3,6 +3,17 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.11] - 2026-08-29
+
+### Added
+- Orphaned media is now collected by an hourly in-process sweep (`internal/media/gc.go`, beside
+  auth's existing session ticker): `media_blobs` rows left with no `media_refs` after a deck
+  delete, and files a rolled-back import left under `MEDIA_ROOT` with no row at all — the latter
+  found only by walking the store, and only past a 24-hour grace period so an import still in
+  flight is never mistaken for an orphan. The sweep unlinks each file before deleting its row and
+  treats the `RESTRICT` foreign key's violation as "re-referenced mid-sweep, skip"
+  ([#91](https://github.com/Jolls/enshu/issues/91)).
+
 ## [0.2.10] - 2026-08-29
 
 ### Fixed

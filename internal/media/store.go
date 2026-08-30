@@ -5,11 +5,14 @@
 package media
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"time"
 )
 
 // sha256Hex matches a lowercase hex sha256 digest -- the only shape ever used to address a blob.
@@ -63,6 +66,48 @@ func (s *Store) Put(sha256Hex string, data []byte) error {
 		return fmt.Errorf("media: renaming %s to %s: %w", tmpName, path, err)
 	}
 	return nil
+}
+
+// Delete removes the blob addressed by sha256Hex. Idempotent: a blob already gone is success, not
+// an error -- the GC sweep (gc.go) can legitimately meet a file another sweep, or a manual clean-up,
+// already removed, and there is nothing left to do about it either way.
+func (s *Store) Delete(sha256Hex string) error {
+	path, err := s.path(sha256Hex)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("media: removing %s: %w", path, err)
+	}
+	return nil
+}
+
+// Walk calls fn for every blob in the store, with its digest and last-modified time. Anything whose
+// name is not a digest is skipped rather than reported -- which is what excludes Put's in-flight
+// ".tmp-*" scratch files, and equally anything else that finds its way under Root.
+func (s *Store) Walk(fn func(sha256Hex string, modTime time.Time) error) error {
+	return filepath.WalkDir(s.Root, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			// A Root that does not exist yet is an empty store, not a failure (New creates it
+			// lazily, on first write), and an entry that vanished mid-walk is one nothing needs
+			// to be told about either.
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		if d.IsDir() || !sha256Hex.MatchString(d.Name()) {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		return fn(d.Name(), info.ModTime())
+	})
 }
 
 // Open returns a reader for the blob addressed by sha256Hex. The caller must Close it.

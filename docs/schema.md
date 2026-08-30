@@ -226,7 +226,7 @@ another user can reach, or that is training data, never cascades.
 | `user_fsrs_params.user_id → users` | RESTRICT | See below. |
 | `user_fsrs_params.deck_id → decks` | CASCADE | A per-deck override for a deleted deck is dead configuration; the global row (`deck_id IS NULL`) is untouched. |
 | `media_refs.deck_id → decks` | CASCADE | `media_refs` is deck-scoped by its own PK. |
-| `media_refs.sha256 → media_blobs` | RESTRICT | A referenced blob is never deletable (blob GC deferred, see Media). |
+| `media_refs.sha256 → media_blobs` | RESTRICT | A referenced blob is never deletable — including by the GC sweep, which relies on this FK as its race check (see Media). |
 
 **User deletion is not a supported operation in Phase 1.** No route deletes a user, and eight
 FKs restrict on `users` so it is impossible rather than silently wrong: cascading
@@ -267,9 +267,9 @@ The post-condition — no note is ever left with zero cards — holds because st
 only delete cards in D, and every note whose cards were *all* in D was already removed in
 step 2.
 
-**Orphaned `media_blobs` cleanup is deferred.** A deck delete cascades its `media_refs` rows
-away and can leave a `media_blobs` row with zero remaining references; nothing collects it —
-see Media, below.
+**Orphaned `media_blobs` rows are collected out of band.** A deck delete cascades its `media_refs`
+rows away and can leave a `media_blobs` row with zero remaining references; the deck-delete
+transaction does not touch it — a periodic sweep does, later. See Media, below.
 
 ---
 
@@ -396,10 +396,22 @@ column. S3-compatible stays a drop-in later — the metadata-row-plus-external-b
 identical, only "external" changes. See architecture.md §12; the store itself is not built yet
 ([#60](https://github.com/Jolls/enshu/issues/60)).
 
-A deck delete cascades its `media_refs` rows away and can leave a `media_blobs` row with zero
-remaining references. Nothing collects it yet — a reference-counted GC needs to delete a row
-and a file with no transaction spanning them, which is a separate feature blocked on #60. See
-the follow-up issue filed alongside #51.
+**Orphaned media is collected by a periodic sweep** ([#91](https://github.com/Jolls/enshu/issues/91),
+`internal/media/gc.go`, hourly ticker in `cmd/enshu/main.go`), covering two classes. A deck delete
+cascades its `media_refs` rows away and can leave a `media_blobs` row with zero remaining
+references; and `Put` writes bytes before the enclosing import transaction commits, so a
+rolled-back import leaves a file on disk with no row at all. The first is found by SQL
+(`ListUnreferencedMediaBlobs`), the second only by walking `MEDIA_ROOT`, and files younger than a
+24-hour grace period are left alone because an import still in flight looks exactly like one.
+
+There is no transaction spanning the row and the file, so ordering carries the correctness: the
+sweep **unlinks the file first, then deletes the row**. A committed row delete would otherwise let
+a concurrent import adopt the still-present file and re-reference it, and the unlink would then
+strand a live row. This way round, that import's `CreateMediaRef` hits the missing parent and rolls
+back instead. The mirror case — a ref committed just before the delete runs — is caught by the
+`RESTRICT` FK as a `restrict_violation`, which the sweep treats as "re-referenced, skip", never as
+an error. Full reasoning, including the residual window this does not close, is in
+[docs/plans/91-orphaned-media-blob-gc.md](plans/91-orphaned-media-blob-gc.md).
 
 ---
 

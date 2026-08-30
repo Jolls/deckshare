@@ -159,6 +159,17 @@ free once the due-side cutoff and the outer `LIMIT` are both driven by the remai
 than an independent due cap — see `internal/review/batch.go`'s `effectiveLimit`. Editable from
 `/decks/{id}/edit` (labelled "Review Deck Prioritization").
 
+**Orphaned media collection has landed** ([#91](https://github.com/Jolls/enshu/issues/91)):
+`internal/media/gc.go` is a second in-process ticker beside auth's hourly session/rate-limit sweep
+(§1 above, `cmd/enshu/main.go`), reclaiming `media_blobs` rows whose last `media_refs` row cascaded
+away with a deleted deck, and — walking `MEDIA_ROOT` directly, since no query can see them — files a
+rolled-back import left behind, `Put` having written the bytes before the import transaction
+committed. It unlinks each file before deleting its row, never the reverse, and reads the `RESTRICT`
+FK's violation as "re-referenced mid-sweep, skip" rather than as an error; a 24-hour grace period
+keeps the filesystem half off imports still in flight. Reasoning in
+[docs/plans/91-orphaned-media-blob-gc.md](plans/91-orphaned-media-blob-gc.md), storage shape in
+[docs/schema.md](schema.md)'s Media section.
+
 ---
 
 ## 3. Stack
