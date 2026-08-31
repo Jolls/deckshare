@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.15] - 2026-08-31
+
+### Added
+- A "Study All" button on the deck list starts one mixed session drawing from every deck the
+  user can study, each deck contributing up to its own daily review cap under its own
+  priority/order settings, merged and shuffled into a single one-shot queue
+  ([#169](https://github.com/Jolls/enshu/issues/169)).
+
 ## [0.2.14] - 2026-08-30
 
 ### Changed

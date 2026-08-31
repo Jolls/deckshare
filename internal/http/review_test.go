@@ -40,7 +40,7 @@ func setupOneCard(t *testing.T, tx pgx.Tx, handler http.Handler, cookie *http.Co
 	deckID = strings.TrimPrefix(deckPath, "/decks/")
 
 	var noteTypeID string
-	if err := tx.QueryRow(context.Background(), `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
+	if err := tx.QueryRow(context.Background(), `SELECT id FROM note_types WHERE name = 'Basic2' ORDER BY id DESC LIMIT 1`).Scan(&noteTypeID); err != nil {
 		t.Fatalf("lookup note type: %v", err)
 	}
 	noteBody := url.Values{}
@@ -897,5 +897,172 @@ func TestGetStudyDayWindow_LateEveningCountsAsPreviousDay(t *testing.T) {
 	}
 	if !window.StudyDayEnd.Time.Equal(wantEnd) {
 		t.Errorf("study_day_end = %v, want %v", window.StudyDayEnd.Time, wantEnd)
+	}
+}
+
+// -- #169: GET /study, the mixed-deck session ------------------------------------------------
+
+// cardIDsForDeck returns every card id belonging to deckID, for asserting which deck a
+// /study response's cards actually came from.
+func cardIDsForDeck(t *testing.T, tx pgx.Tx, deckID string) map[string]bool {
+	t.Helper()
+	rows, err := tx.Query(context.Background(), `SELECT id FROM cards WHERE deck_id = $1`, deckID)
+	if err != nil {
+		t.Fatalf("query cards for deck %s: %v", deckID, err)
+	}
+	defer rows.Close()
+	ids := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan card id: %v", err)
+		}
+		ids[id] = true
+	}
+	return ids
+}
+
+func TestStudyAll_MixesAcrossDecks(t *testing.T) {
+	tx := beginTx(t)
+	clock := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	handler, a := newTestHandler(t, tx, auth.Config{}, func() time.Time { return clock })
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	deckAID, _ := setupOneCard(t, tx, handler, cookie)
+	var noteTypeID string
+	if err := tx.QueryRow(context.Background(), `SELECT id FROM note_types WHERE name = 'Basic2' ORDER BY id DESC LIMIT 1`).Scan(&noteTypeID); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+	addNotes(t, handler, cookie, "/decks/"+deckAID, noteTypeID, 2) // deck A: 3 cards total
+	if w := doRequest(handler, "POST", "/decks/"+deckAID+"/edit", "name=D&description=&rev_per_day=1&priority=new", cookie, "http://example.com"); w.Code != http.StatusSeeOther {
+		t.Fatalf("edit deck A status = %d: %s", w.Code, w.Body.String())
+	}
+
+	w := doRequest(handler, "POST", "/decks", "name=E", cookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("create deck B status = %d: %s", w.Code, w.Body.String())
+	}
+	deckBID := strings.TrimPrefix(w.Header().Get("Location"), "/decks/")
+	addNotes(t, handler, cookie, "/decks/"+deckBID, noteTypeID, 3) // deck B: 3 cards total
+	if w := doRequest(handler, "POST", "/decks/"+deckBID+"/edit", "name=E&description=&rev_per_day=2&priority=due", cookie, "http://example.com"); w.Code != http.StatusSeeOther {
+		t.Fatalf("edit deck B status = %d: %s", w.Code, w.Body.String())
+	}
+
+	resp := doRequest(handler, "GET", "/study", "", cookie, "")
+	if resp.Code != http.StatusOK {
+		t.Fatalf("GET /study status = %d: %s", resp.Code, resp.Body.String())
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, `data-exhausted="true"`) {
+		t.Error("mixed session must always be Exhausted (one-shot, no refill)")
+	}
+
+	gotIDs := extractCardIDs(body)
+	if len(gotIDs) != 3 {
+		t.Fatalf("got %d cards, want 3 (1 from deck A's rev_per_day=1 + 2 from deck B's rev_per_day=2): %v", len(gotIDs), gotIDs)
+	}
+	deckACards := cardIDsForDeck(t, tx, deckAID)
+	deckBCards := cardIDsForDeck(t, tx, deckBID)
+	var fromA, fromB int
+	for _, id := range gotIDs {
+		switch {
+		case deckACards[id]:
+			fromA++
+		case deckBCards[id]:
+			fromB++
+		default:
+			t.Errorf("card %s belongs to neither deck A nor deck B", id)
+		}
+	}
+	if fromA != 1 || fromB != 2 {
+		t.Errorf("got %d from deck A, %d from deck B, want 1 and 2", fromA, fromB)
+	}
+}
+
+func TestStudyAll_ExcludesViewOnlyAccess(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	clock := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	handler, a := newTestHandler(t, tx, auth.Config{}, func() time.Time { return clock })
+	ownerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	ownerDeckID, ownerCardID := setupOneCard(t, tx, handler, ownerCookie)
+
+	viewOnlyEmail := testEmail()
+	viewOnlyCookie := loginCookie(t, tx, a, viewOnlyEmail, "correct-horse-battery")
+	var viewOnlyUserID, ownerDeckUUID pgtype.UUID
+	if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, viewOnlyEmail).Scan(&viewOnlyUserID); err != nil {
+		t.Fatalf("lookup view-only user: %v", err)
+	}
+	if err := ownerDeckUUID.Scan(ownerDeckID); err != nil {
+		t.Fatalf("scan owner deck id: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO deck_access (deck_id, user_id, can_view) VALUES ($1, $2, true)`, ownerDeckUUID, viewOnlyUserID); err != nil {
+		t.Fatalf("grant view-only access: %v", err)
+	}
+	viewOnlyDeckID, viewOnlyCardID := setupOneCard(t, tx, handler, viewOnlyCookie)
+
+	resp := doRequest(handler, "GET", "/study", "", viewOnlyCookie, "")
+	if resp.Code != http.StatusOK {
+		t.Fatalf("GET /study status = %d: %s", resp.Code, resp.Body.String())
+	}
+	gotIDs := extractCardIDs(resp.Body.String())
+	for _, id := range gotIDs {
+		if id == ownerCardID {
+			t.Error("a deck with can_view but not can_study must not contribute cards to the mix")
+		}
+	}
+	if len(gotIDs) != 1 || gotIDs[0] != viewOnlyCardID {
+		t.Errorf("got cards %v, want exactly [%s] (the view-only user's own deck %s)", gotIDs, viewOnlyCardID, viewOnlyDeckID)
+	}
+}
+
+func TestStudyAll_ExhaustedDailyBudgetContributesNothing(t *testing.T) {
+	tx := beginTx(t)
+	clock := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	handler, a := newTestHandler(t, tx, auth.Config{}, func() time.Time { return clock })
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	deckID, cardID := setupOneCard(t, tx, handler, cookie)
+
+	if w := doRequest(handler, "POST", "/decks/"+deckID+"/edit", "name=D&description=&rev_per_day=1", cookie, "http://example.com"); w.Code != http.StatusSeeOther {
+		t.Fatalf("edit deck status = %d: %s", w.Code, w.Body.String())
+	}
+	gradeCard(t, handler, cookie, cardID, 3, clock) // spends the deck's only rev_per_day slot for today
+
+	resp := doRequest(handler, "GET", "/study", "", cookie, "")
+	if resp.Code != http.StatusOK {
+		t.Fatalf("GET /study status = %d: %s", resp.Code, resp.Body.String())
+	}
+	if gotIDs := extractCardIDs(resp.Body.String()); len(gotIDs) != 0 {
+		t.Errorf("got cards %v, want none: today's rev_per_day=1 was already spent grading %s", gotIDs, cardID)
+	}
+}
+
+// TestStudyAll_GradingParity confirms grading a card sourced from the mixed session is the same
+// deck-agnostic path as grading it from the card's own deck page (§2.7: review_log/
+// user_card_state are keyed (user_id, card_id), no deck column).
+func TestStudyAll_GradingParity(t *testing.T) {
+	tx := beginTx(t)
+	clock := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	handler, a := newTestHandler(t, tx, auth.Config{}, func() time.Time { return clock })
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	_, cardID := setupOneCard(t, tx, handler, cookie)
+
+	resp := doRequest(handler, "GET", "/study", "", cookie, "")
+	if resp.Code != http.StatusOK {
+		t.Fatalf("GET /study status = %d: %s", resp.Code, resp.Body.String())
+	}
+	gotIDs := extractCardIDs(resp.Body.String())
+	if len(gotIDs) != 1 || gotIDs[0] != cardID {
+		t.Fatalf("got cards %v, want exactly [%s]", gotIDs, cardID)
+	}
+
+	body := fmt.Sprintf(`{"events":[{"id":%q,"cardId":%q,"rating":3,"reviewedAt":%q}]}`,
+		newTestEventID(), cardID, clock.Format(time.RFC3339Nano))
+	w := doJSON(handler, "POST", "/api/reviews/batch", body, cookie, "http://example.com")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"status":"applied"`) {
+		t.Fatalf("grade status = %d, body = %s, want 200 applied", w.Code, w.Body.String())
+	}
+	if n := countRows(t, tx, `SELECT count(*) FROM review_log WHERE card_id = $1`, cardID); n != 1 {
+		t.Errorf("review_log rows for card %s = %d, want 1", cardID, n)
 	}
 }

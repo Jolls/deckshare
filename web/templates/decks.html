@@ -1,6 +1,7 @@
 {{define "content"}}
 <h1>Decks</h1>
 <nav class="button-nav">
+    {{if .TotalLeft}}<a href="/study" role="button" class="btn-sm">Study All ({{.TotalLeft}})</a>{{end}}
     <a href="/decks/new" role="button" class="outline btn-sm">New deck</a>
     <a href="/note-types" role="button" class="outline btn-sm">Note types</a>
     <a href="/import" role="button" class="outline btn-sm">Import</a>

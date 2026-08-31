@@ -196,6 +196,45 @@ func (q *Queries) ListDecksForUser(ctx context.Context, userID pgtype.UUID) ([]L
 	return items, nil
 }
 
+const listStudyableDecksForUser = `-- name: ListStudyableDecksForUser :many
+SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id
+FROM decks d
+JOIN deck_access da ON da.deck_id = d.id AND da.user_id = $1
+                   AND da.can_view AND da.can_study
+ORDER BY d.name
+`
+
+// #169: the decks a mixed "Study All" session may draw from -- can_study, not just can_view (a
+// deck can be shared read-only, which must not let it contribute cards).
+func (q *Queries) ListStudyableDecksForUser(ctx context.Context, userID pgtype.UUID) ([]Deck, error) {
+	rows, err := q.db.Query(ctx, listStudyableDecksForUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Deck
+	for rows.Next() {
+		var i Deck
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Name,
+			&i.Description,
+			&i.Preset,
+			&i.CreatedAt,
+			&i.ModifiedAt,
+			&i.AnkiID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateDeck = `-- name: UpdateDeck :execrows
 UPDATE decks d
 SET name = $1,

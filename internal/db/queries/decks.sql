@@ -10,6 +10,15 @@ FROM decks d
 JOIN deck_access da ON da.deck_id = d.id AND da.user_id = sqlc.arg(user_id) AND da.can_view
 WHERE d.id = sqlc.arg(deck_id);
 
+-- name: ListStudyableDecksForUser :many
+-- #169: the decks a mixed "Study All" session may draw from -- can_study, not just can_view (a
+-- deck can be shared read-only, which must not let it contribute cards).
+SELECT d.*
+FROM decks d
+JOIN deck_access da ON da.deck_id = d.id AND da.user_id = sqlc.arg(user_id)
+                   AND da.can_view AND da.can_study
+ORDER BY d.name;
+
 -- name: GetDeckForSettingsEdit :one
 SELECT d.*
 FROM decks d
