@@ -16,6 +16,7 @@ import (
 // same card shape.
 var pagePartials = map[string][]string{
 	"review":    {"templates/review_cards.html", "templates/back_to_deck.html"},
+	"study":     {"templates/review_cards.html", "templates/back_to_decks.html"},
 	"deck_edit": {"templates/back_to_deck.html"},
 	"access":    {"templates/messages.html", "templates/back_to_deck.html"},
 	"login":     {"templates/messages.html"},
@@ -33,7 +34,7 @@ func parseTemplates() (map[string]*template.Template, error) {
 		"login", "signup", "settings",
 		"decks", "deck_new", "deck", "deck_edit", "access",
 		"notetypes", "notetype_form", "note_form",
-		"review", "import", "import_ai",
+		"review", "study", "import", "import_ai",
 	} {
 		files := append([]string{"templates/layout.html", "templates/" + name + ".html"}, pagePartials[name]...)
 		t, err := template.ParseFS(web.Templates, files...)

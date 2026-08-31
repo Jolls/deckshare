@@ -6,6 +6,7 @@ import (
 	"errors"
 	"html/template"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"time"
 
@@ -47,7 +48,7 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 			serverError(w)
 			return
 		}
-		css, err := noteTypeCSS(r.Context(), q, user.ID, deckID)
+		css, err := noteTypeCSS(r.Context(), q, user.ID, deckID, nil)
 		if err != nil {
 			serverError(w)
 			return
@@ -55,6 +56,56 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 
 		render(w, pages["review"], http.StatusOK, map[string]any{
 			"User": user, "Deck": deck, "CSS": css, "Batch": toBatchView(batch),
+		})
+	})))
+
+	// GET /study (#169): a one-shot mix across every deck the user can study. Each deck's own
+	// newPerDay/revPerDay still bounds what BuildBatch draws from it (review.RevPerDay is passed
+	// separately, inside buildStudyBatchInWindow) -- initialBatchSize here is only the page-size
+	// limit, kept distinct from that budget so a deck whose budget is exhausted can still surface
+	// its learning/relearning cards, which BuildBatch's effectiveLimit deliberately never caps
+	// (see its doc comment). Deliberately not paginated: the merge point is *after* per-deck Card
+	// rendering, since FSRS params (§2.3) and media resolution are per-deck -- extending this to
+	// refill would need a composite cursor carrying each deck's own sub-cursor, which #169 doesn't
+	// ask for.
+	mux.Handle("GET /study", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, _ := auth.UserFromContext(r.Context())
+		q := db.New(store)
+		decks, err := q.ListStudyableDecksForUser(r.Context(), user.ID)
+		if err != nil {
+			serverError(w)
+			return
+		}
+
+		clock := now()
+		window, err := studyDayWindow(r.Context(), q, user.ID, clock)
+		if err != nil {
+			serverError(w)
+			return
+		}
+		var cards []review.Card
+		var css []template.CSS
+		seenNoteType := make(map[pgtype.UUID]bool)
+		for _, deck := range decks {
+			batch, err := buildStudyBatchInWindow(r.Context(), store, user.ID, deck, window, review.Cursor{AtStart: true}, initialBatchSize, clock)
+			if err != nil {
+				serverError(w)
+				return
+			}
+			cards = append(cards, batch.Cards...)
+
+			deckCSS, err := noteTypeCSS(r.Context(), q, user.ID, deck.ID, seenNoteType)
+			if err != nil {
+				serverError(w)
+				return
+			}
+			css = append(css, deckCSS...)
+		}
+		shuffleCards(cards)
+
+		render(w, pages["study"], http.StatusOK, map[string]any{
+			"User": user, "CSS": css,
+			"Batch": toBatchView(review.Batch{Cards: cards, Exhausted: true}),
 		})
 	})))
 
@@ -139,11 +190,20 @@ func studyDayWindow(ctx context.Context, q *db.Queries, userID pgtype.UUID, now 
 // GET /api/reviews/next, so the two can never fetch a batch under different settings.
 func buildStudyBatch(ctx context.Context, store db.DBTX, userID pgtype.UUID, deck db.Deck,
 	cur review.Cursor, limit int32, clock time.Time) (review.Batch, error) {
-	q := db.New(store)
-	window, err := studyDayWindow(ctx, q, userID, clock)
+	window, err := studyDayWindow(ctx, db.New(store), userID, clock)
 	if err != nil {
 		return review.Batch{}, err
 	}
+	return buildStudyBatchInWindow(ctx, store, userID, deck, window, cur, limit, clock)
+}
+
+// buildStudyBatchInWindow is buildStudyBatch given an already-resolved study-day window. GET
+// /study's per-deck loop (#169) calls this directly instead of buildStudyBatch: the window
+// depends only on the user, not the deck, so resolving it once per request rather than once per
+// contributing deck saves a redundant GetStudyDayWindow round trip per deck.
+func buildStudyBatchInWindow(ctx context.Context, store db.DBTX, userID pgtype.UUID, deck db.Deck,
+	window review.StudyDay, cur review.Cursor, limit int32, clock time.Time) (review.Batch, error) {
+	q := db.New(store)
 	params, err := review.EffectiveParams(ctx, q, userID, deck.ID)
 	if err != nil {
 		return review.Batch{}, err
@@ -158,17 +218,33 @@ func buildStudyBatch(ctx context.Context, store db.DBTX, userID pgtype.UUID, dec
 	return batch, nil
 }
 
+// shuffleCards randomises a mixed session's cross-deck ordering in place (#169). Not the FSRS
+// rev.order='random' seed (hashSeedFor, internal/review/batch.go) -- that shuffles within one
+// deck's own queue and stays stable across a study day; this just interleaves already-selected
+// decks' slices for one page view, so an unseeded PRNG is fine.
+func shuffleCards(cards []review.Card) {
+	rand.Shuffle(len(cards), func(i, j int) { cards[i], cards[j] = cards[j], cards[i] })
+}
+
 // noteTypeCSS sanitises each note type's CSS blob once per page (never per card, #55) so a
-// refilled card can never arrive before its styles.
-func noteTypeCSS(ctx context.Context, q *db.Queries, userID, deckID pgtype.UUID) ([]template.CSS, error) {
+// refilled card can never arrive before its styles. seen, if non-nil, is a cross-call dedup set
+// keyed by note-type id -- GET /study (#169) shares one across its whole per-deck loop so a note
+// type used by several of the user's decks is still only sanitised and emitted once.
+func noteTypeCSS(ctx context.Context, q *db.Queries, userID, deckID pgtype.UUID, seen map[pgtype.UUID]bool) ([]template.CSS, error) {
 	rows, err := q.ListNoteTypeCSSForDeck(ctx, db.ListNoteTypeCSSForDeckParams{UserID: userID, DeckID: deckID})
 	if err != nil {
 		return nil, err
 	}
-	css := make([]template.CSS, len(rows))
-	for i, r := range rows {
+	css := make([]template.CSS, 0, len(rows))
+	for _, r := range rows {
+		if seen != nil {
+			if seen[r.ID] {
+				continue
+			}
+			seen[r.ID] = true
+		}
 		sanitised, _ := cardrender.SanitiseCSS(r.Css)
-		css[i] = sanitised
+		css = append(css, sanitised)
 	}
 	return css, nil
 }

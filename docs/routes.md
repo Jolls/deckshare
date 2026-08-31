@@ -114,6 +114,7 @@ duplicate the pseudocode.
 | Method | Path | Permission | Purpose |
 |---|---|---|---|
 | GET | `/decks/{id}/review` | `can_view` + `can_study` | Reviewer page. First batch (20 cards), the precomputed 4-rating outcome per card, and the user's FSRS params are rendered inline in the response — no separate request for card 1 (§6) |
+| GET | `/study` | `can_view` + `can_study` per contributing deck | "Study All" (#169): a one-shot mix across every deck the user can study, each deck's slice built via the same per-deck batch path as `/decks/{id}/review` (own FSRS params, own priority/order, capped at its own `rev.perDay`), concatenated and shuffled. `Exhausted` is always `true` — no refill, no cursor, no `deck` query param |
 | GET | `/api/reviews/next` | `can_view` + `can_study` | Refill batch, **HTML fragment** (the shared hidden-card partial, not JSON — §6: "not a client-side template driven by JSON"). Opaque keyset cursor + deck id, query params `deck`/`cursor`; the cursor's shape follows the
 deck's `rev.order`/`priority` preset — `(group_bit, sort_key, cardId)` for the single-query
 modes, a pair of independent sub-cursors for `mixed` (§6, `internal/review/types.go`'s `Cursor`);

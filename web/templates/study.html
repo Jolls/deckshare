@@ -1,0 +1,39 @@
+{{define "content"}}
+{{range .CSS}}<style>{{.}}</style>{{end}}
+
+<h1>Study All</h1>
+{{template "backToDecks"}}
+
+<p id="review-error" hidden></p>
+
+<p x-data="{ count: 0 }" @card-graded.window="count++" x-show="count > 0" x-cloak>
+  <small><span x-text="count"></span> reviewed this session</small>
+</p>
+
+<section id="review-stage" hidden class="review-card">
+  <div class="card-question"></div>
+  <div class="card-answer" hidden></div>
+  <p>
+    <button type="button" data-reveal>Show Answer</button>
+  </p>
+  <p class="rating-buttons">
+    <button type="button" data-rating="1">Again <small data-interval-for="1"></small></button>
+    <button type="button" data-rating="2">Hard <small data-interval-for="2"></small></button>
+    <button type="button" data-rating="3">Good <small data-interval-for="3"></small></button>
+    <button type="button" data-rating="4">Easy <small data-interval-for="4"></small></button>
+  </p>
+</section>
+
+<div id="review-queue">{{template "review_cards" .Batch}}</div>
+
+<!-- No #review-refill: the mixed session is always Exhausted (one-shot, #169), and refill is
+     inherently single-deck (/api/reviews/next takes one deck param) -- review.js's exhausted
+     gate means it would never fire anyway, so it's left out rather than wired dead. -->
+
+<section id="review-done" hidden>
+  <p>No more cards due. Nice work.</p>
+  {{template "backToDecks"}}
+</section>
+
+<script src="/static/review.js" defer></script>
+{{end}}

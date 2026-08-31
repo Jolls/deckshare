@@ -87,16 +87,21 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			reviewed[row.DeckID] = row.ReviewedCount
 		}
 		counts := make(map[pgtype.UUID]queueCounts, len(rows))
+		var totalLeft int64
 		for _, row := range rows {
 			preset := presetByDeck[row.DeckID]
 			newRemaining := review.NewRemaining(review.NewPerDay(preset), introduced[row.DeckID])
 			totalRemaining := review.RevRemaining(review.RevPerDay(preset), introduced[row.DeckID]+reviewed[row.DeckID])
+			left := review.LeftToStudy(row.NewCount, row.LearningCount, row.DueCount, review.ParsePriority(preset), newRemaining, totalRemaining)
 			counts[row.DeckID] = queueCounts{
 				New: min(row.NewCount, int64(newRemaining)), Learning: row.LearningCount, Due: row.DueCount,
-				Left: review.LeftToStudy(row.NewCount, row.LearningCount, row.DueCount, review.ParsePriority(preset), newRemaining, totalRemaining),
+				Left: left,
 			}
+			totalLeft += left
 		}
-		render(w, pages["decks"], http.StatusOK, map[string]any{"User": user, "Decks": decks, "Counts": counts})
+		render(w, pages["decks"], http.StatusOK, map[string]any{
+			"User": user, "Decks": decks, "Counts": counts, "TotalLeft": totalLeft,
+		})
 	})))
 
 	mux.Handle("GET /decks/new", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
