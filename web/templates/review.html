@@ -6,7 +6,11 @@
 
 <p id="review-error" hidden></p>
 
-<section id="review-stage" hidden>
+<p x-data="{ count: 0 }" @card-graded.window="count++" x-show="count > 0" x-cloak>
+  <small><span x-text="count"></span> reviewed this session</small>
+</p>
+
+<section id="review-stage" hidden class="review-card">
   <div class="card-question"></div>
   <div class="card-answer" hidden></div>
   <p>

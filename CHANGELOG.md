@@ -3,6 +3,21 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.14] - 2026-08-30
+
+### Changed
+- Deck list and deck view get a quick "Study" button (deck list: leftmost column, before the
+  name; deck view: a full-size button beside the note/card/queue stats) instead of requiring a
+  trip through the deck page to start reviewing.
+- The deck list and deck view's page-level action links (New deck/Note types/Import; Add
+  note/Import via AI/Edit deck/Manage access/Back to decks) are now a horizontal row of small
+  outline buttons instead of text links collapsing behind a "Menu" toggle on narrow screens.
+- The deck view's notes table and retention-target form collapse behind `<details>`/`<summary>`,
+  styled with a bordered header and rotating chevron so the section reads as clickable.
+- The review screen's answer reveal now gets a brief fade/slide-in, its stage looks like an
+  actual card (bordered, centered, larger text) rather than plain flowing text, and a small
+  Alpine-driven "N reviewed this session" counter tracks progress.
+
 ## [0.2.13] - 2026-08-30
 
 ### Added
