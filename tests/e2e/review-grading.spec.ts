@@ -17,12 +17,12 @@ async function signUp(page: Page, email: string) {
 // Basic/Cloze are auto-seeded on signup (internal/auth/notetypes.go); a fresh deck + one Basic
 // note gives the review queue exactly one New card, due immediately.
 async function createDeckWithDueCard(page: Page, deckName: string) {
-  await page.getByRole('link', { name: 'New deck' }).click();
+  await page.getByRole('button', { name: 'New deck' }).click();
   await page.fill('#name', deckName);
   await page.getByRole('button', { name: 'Create deck' }).click();
   await expect(page).toHaveURL(/\/decks\/[0-9a-f-]+$/);
 
-  await page.getByRole('link', { name: 'Add note' }).click();
+  await page.getByRole('button', { name: 'Add note' }).click();
   await page.getByLabel('Note type').selectOption({ label: 'Basic' });
   await page.getByRole('button', { name: 'Continue' }).click();
 
@@ -38,7 +38,7 @@ test('keyboard grading POSTs the batch within the flush debounce window', async 
   await signUp(page, email);
   await createDeckWithDueCard(page, `E2E Deck ${Date.now()}`);
 
-  await page.getByRole('link', { name: 'Study' }).click();
+  await page.getByRole('button', { name: 'Study' }).click();
   await expect(page).toHaveURL(/\/review$/);
 
   const stage = page.locator('#review-stage');
