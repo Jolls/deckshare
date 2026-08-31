@@ -2,53 +2,55 @@
 <h1>{{.Deck.Name}}</h1>
 {{if .Deck.Description}}<p>{{.Deck.Description}}</p>{{end}}
 <p>{{.Counts.NoteCount}} notes, {{.Counts.CardCount}} cards</p>
-<p>New: {{.Queue.New}} · Learning: {{.Queue.Learning}} · Due: {{.Queue.Due}} · Left today: {{.Queue.Left}}</p>
-<nav x-data="{ open: false }" class="action-nav">
-    <button type="button" class="action-nav-toggle" @click="open = !open" :aria-expanded="open">Menu</button>
-    <p class="action-nav-links" :class="{ open: open }">
-        <a href="/decks/{{.Deck.ID}}/review">Study</a> ·
-        <a href="/decks/{{.Deck.ID}}/notes/new">Add note</a> ·
-        <a href="/import/ai?deck_id={{.Deck.ID}}">Import via AI</a> ·
-        <a href="/decks/{{.Deck.ID}}/edit">Edit deck</a> ·
-        <a href="/decks/{{.Deck.ID}}/access">Manage access</a> ·
-        <a href="/decks">Back to decks</a>
-    </p>
+<p class="deck-stats-row">
+    <a href="/decks/{{.Deck.ID}}/review" role="button">Study</a>
+    <span>New: {{.Queue.New}} · Learning: {{.Queue.Learning}} · Due: {{.Queue.Due}} · Left today: {{.Queue.Left}}</span>
+</p>
+<nav class="button-nav">
+    <a href="/decks/{{.Deck.ID}}/notes/new" role="button" class="outline btn-sm">Add note</a>
+    <a href="/import/ai?deck_id={{.Deck.ID}}" role="button" class="outline btn-sm">Import via AI</a>
+    <a href="/decks/{{.Deck.ID}}/edit" role="button" class="outline btn-sm">Edit deck</a>
+    <a href="/decks/{{.Deck.ID}}/access" role="button" class="outline btn-sm">Manage access</a>
+    <a href="/decks" role="button" class="outline btn-sm">Back to decks</a>
 </nav>
 
-{{if .Notes}}
-<div class="table-scroll">
-<table>
-    <thead>
-        <tr><th>Note</th><th>Type</th><th>Cards</th><th></th></tr>
-    </thead>
-    <tbody>
-        {{range .Notes}}
-        <tr>
-            <td>{{.SortText}}</td>
-            <td>{{.NoteTypeName}}</td>
-            <td>{{.CardCount}}</td>
-            <td>
-                <a href="/notes/{{.ID}}/edit">Edit</a>
-                <form method="post" action="/notes/{{.ID}}/delete" style="display:inline">
-                    <button type="submit" x-data @click="confirm('Delete this note?') || $event.preventDefault()">Delete</button>
-                </form>
-            </td>
-        </tr>
-        {{end}}
-    </tbody>
-</table>
-</div>
-{{else}}
-<p>No notes yet.</p>
-{{end}}
+<details>
+    <summary>Notes</summary>
+    {{if .Notes}}
+    <div class="table-scroll">
+    <table>
+        <thead>
+            <tr><th>Note</th><th>Type</th><th>Cards</th><th></th></tr>
+        </thead>
+        <tbody>
+            {{range .Notes}}
+            <tr>
+                <td>{{.SortText}}</td>
+                <td>{{.NoteTypeName}}</td>
+                <td>{{.CardCount}}</td>
+                <td>
+                    <a href="/notes/{{.ID}}/edit">Edit</a>
+                    <form method="post" action="/notes/{{.ID}}/delete" style="display:inline">
+                        <button type="submit" x-data @click="confirm('Delete this note?') || $event.preventDefault()">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    </div>
+    {{else}}
+    <p>No notes yet.</p>
+    {{end}}
+</details>
 
-<section>
-    <h2>Retention target</h2>
+<details>
+    <summary>Retention target</summary>
     <form method="post" action="/decks/{{.Deck.ID}}/settings/fsrs">
         <label for="desired_retention">Desired retention for this deck</label>
         <input type="number" id="desired_retention" name="desired_retention" min="0" max="1" step="0.01" value="{{.DesiredRetention}}" required>
 
         <button type="submit">Update retention target</button>
     </form>
-</section>
+</details>
 {{end}}

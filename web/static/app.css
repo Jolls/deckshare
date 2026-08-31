@@ -5,22 +5,12 @@
     overflow-x: auto;
 }
 
-/* Action-link paragraphs collapse behind a toggle on narrow screens. */
-.action-nav-toggle {
-    display: none;
-}
-
-@media (max-width: 640px) {
-    .action-nav-toggle {
-        display: inline-block;
-    }
-    .action-nav-links {
-        display: none;
-    }
-    .action-nav-links.open {
-        display: block;
-        margin-top: 0.5rem;
-    }
+/* Standard row of page-level action buttons (decks list, deck view) -- wraps to multiple lines
+   on narrow screens instead of collapsing behind a menu toggle. */
+.button-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
 }
 
 /* Review rating buttons: two per row on narrow screens, four across once there's room. */
@@ -34,4 +24,94 @@
     .rating-buttons {
         grid-template-columns: repeat(4, 1fr);
     }
+}
+
+/* The review stage as a distinct card rather than plain flowing text. */
+.review-card {
+    border: 1px solid var(--pico-muted-border-color, #ccc);
+    border-radius: var(--pico-border-radius, 0.25rem);
+    padding: 1.5rem;
+    min-height: 8rem;
+}
+
+.review-card .card-question,
+.review-card .card-answer {
+    font-size: 1.25rem;
+    text-align: center;
+}
+
+.review-card .card-answer {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--pico-muted-border-color, #ccc);
+}
+
+/* Fires whenever the answer's [hidden] attribute is removed -- a browser starts an element's
+   animation fresh each time it goes from display:none to rendered, so no JS/Alpine wiring is
+   needed to replay this on every reveal. */
+@keyframes card-answer-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.review-card .card-answer:not([hidden]) {
+    animation: card-answer-in 200ms ease-out;
+}
+
+/* Alpine hides [x-cloak] elements until it boots; without this rule the attribute is inert. */
+[x-cloak] {
+    display: none !important;
+}
+
+/* Compact button for inline table actions (e.g. the decks-list Study button) -- Pico's default
+   button padding is sized for standalone use, not a table cell. */
+.btn-sm {
+    padding: 0.25rem 0.75rem;
+    font-size: 0.875rem;
+}
+
+/* Pico's default <details>/<summary> styling is too subtle to read as clickable -- a bordered,
+   labelled header with a chevron that flips on open. */
+details {
+    border: 1px solid var(--pico-muted-border-color, #ccc);
+    border-radius: var(--pico-border-radius, 0.25rem);
+    margin-bottom: 1rem;
+}
+
+details > summary {
+    cursor: pointer;
+    font-weight: bold;
+    padding: 0.5rem 0.75rem;
+    list-style: none;
+}
+
+details > summary::-webkit-details-marker {
+    display: none;
+}
+
+details > summary::before {
+    content: "\25b8";
+    display: inline-block;
+    margin-right: 0.5rem;
+    transition: transform 150ms ease;
+}
+
+details[open] > summary::before {
+    transform: rotate(90deg);
+}
+
+details > summary ~ * {
+    padding: 0 0.75rem 0.75rem;
+}
+
+/* Deck view: Study button sits left of the note/card/queue stats instead of stacked above them. */
+.deck-stats-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.deck-stats-row a[role="button"] {
+    flex-shrink: 0;
+    margin-bottom: 0;
 }
