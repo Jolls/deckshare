@@ -135,6 +135,8 @@
     stage.dataset.cardId = card.cardId;
     var revealBtn = stage.querySelector('[data-reveal]');
     if (revealBtn) revealBtn.textContent = 'Show Answer';
+    var ratingButtons = stage.querySelector('.rating-buttons');
+    if (ratingButtons) ratingButtons.hidden = true;
 
     var q = card.el.querySelector('.card-question');
     var a = card.el.querySelector('.card-answer');
@@ -182,6 +184,8 @@
     stage.dataset.revealed = 'true';
     var revealBtn = stage.querySelector('[data-reveal]');
     if (revealBtn) revealBtn.textContent = 'Hide Answer';
+    var ratingButtons = stage.querySelector('.rating-buttons');
+    if (ratingButtons) ratingButtons.hidden = false;
     if (state.revealStart === null) state.revealStart = Date.now();
   }
 
@@ -195,6 +199,8 @@
     stage.dataset.revealed = 'false';
     var revealBtn = stage.querySelector('[data-reveal]');
     if (revealBtn) revealBtn.textContent = 'Show Answer';
+    var ratingButtons = stage.querySelector('.rating-buttons');
+    if (ratingButtons) ratingButtons.hidden = true;
   }
 
   function onStageClick(evt) {
