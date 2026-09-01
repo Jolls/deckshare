@@ -223,9 +223,10 @@
     var stage = document.getElementById('review-stage');
     if (!stage) return;
 
-    if (evt.code === 'Space' && stage.dataset.revealed !== 'true') {
+    if (evt.code === 'Space') {
       evt.preventDefault();
-      reveal();
+      if (stage.dataset.revealed === 'true') hide();
+      else reveal();
       return;
     }
     var digit = { Digit1: 1, Digit2: 2, Digit3: 3, Digit4: 4 }[evt.code];
