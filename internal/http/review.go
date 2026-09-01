@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -24,6 +25,12 @@ const (
 	refillBatchSize  = 20
 	maxBatchBody     = 64 * 1024
 	maxEventsPerPost = 100
+
+	// maxExtraRounds bounds the client-controlled extraRounds query param (#172): the
+	// boundary-validation clamp that keeps newPerDay*(1+extraRounds) well clear of int32
+	// overflow and caps how much a manually-crafted query string can inflate the effective
+	// daily allowance.
+	maxExtraRounds int32 = 20
 )
 
 // registerReviewRoutes wires the reviewer's three routes (architecture.md §6, docs/routes.md).
@@ -43,7 +50,7 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 		}
 
 		clock := now()
-		batch, err := buildStudyBatch(r.Context(), store, user.ID, deck, review.Cursor{AtStart: true}, initialBatchSize, clock)
+		batch, err := buildStudyBatch(r.Context(), store, user.ID, deck, review.Cursor{AtStart: true}, initialBatchSize, clock, 0)
 		if err != nil {
 			serverError(w)
 			return
@@ -87,7 +94,7 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 		var css []template.CSS
 		seenNoteType := make(map[pgtype.UUID]bool)
 		for _, deck := range decks {
-			batch, err := buildStudyBatchInWindow(r.Context(), store, user.ID, deck, window, review.Cursor{AtStart: true}, initialBatchSize, clock)
+			batch, err := buildStudyBatchInWindow(r.Context(), store, user.ID, deck, window, review.Cursor{AtStart: true}, initialBatchSize, clock, 0)
 			if err != nil {
 				serverError(w)
 				return
@@ -128,6 +135,7 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 			badRequest(w)
 			return
 		}
+		extraRounds := parseExtraRounds(r.URL.Query().Get("extraRounds"))
 
 		q := db.New(store)
 		deck, err := q.GetDeckForStudy(r.Context(), db.GetDeckForStudyParams{UserID: user.ID, DeckID: deckID})
@@ -135,7 +143,7 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 			return
 		}
 		clock := now()
-		batch, err := buildStudyBatch(r.Context(), store, user.ID, deck, cur, refillBatchSize, clock)
+		batch, err := buildStudyBatch(r.Context(), store, user.ID, deck, cur, refillBatchSize, clock, extraRounds)
 		if err != nil {
 			serverError(w)
 			return
@@ -185,16 +193,30 @@ func studyDayWindow(ctx context.Context, q *db.Queries, userID pgtype.UUID, now 
 	return review.StudyDay{Start: row.StudyDayStart.Time, End: row.StudyDayEnd.Time}, nil
 }
 
+// parseExtraRounds validates the client-controlled extraRounds query param (#172) at the
+// boundary: empty, unparseable, or negative is treated as 0 -- no 400, matching how an empty
+// cursor is treated as "start" -- and any valid value is clamped to maxExtraRounds.
+func parseExtraRounds(raw string) int32 {
+	n, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || n < 0 {
+		return 0
+	}
+	if int32(n) > maxExtraRounds {
+		return maxExtraRounds
+	}
+	return int32(n)
+}
+
 // buildStudyBatch resolves the study-day window and the caller's effective FSRS params for deck,
 // then builds one batch from it -- the shared tail of GET /decks/{id}/review and
 // GET /api/reviews/next, so the two can never fetch a batch under different settings.
 func buildStudyBatch(ctx context.Context, store db.DBTX, userID pgtype.UUID, deck db.Deck,
-	cur review.Cursor, limit int32, clock time.Time) (review.Batch, error) {
+	cur review.Cursor, limit int32, clock time.Time, extraRounds int32) (review.Batch, error) {
 	window, err := studyDayWindow(ctx, db.New(store), userID, clock)
 	if err != nil {
 		return review.Batch{}, err
 	}
-	return buildStudyBatchInWindow(ctx, store, userID, deck, window, cur, limit, clock)
+	return buildStudyBatchInWindow(ctx, store, userID, deck, window, cur, limit, clock, extraRounds)
 }
 
 // buildStudyBatchInWindow is buildStudyBatch given an already-resolved study-day window. GET
@@ -202,7 +224,7 @@ func buildStudyBatch(ctx context.Context, store db.DBTX, userID pgtype.UUID, dec
 // depends only on the user, not the deck, so resolving it once per request rather than once per
 // contributing deck saves a redundant GetStudyDayWindow round trip per deck.
 func buildStudyBatchInWindow(ctx context.Context, store db.DBTX, userID pgtype.UUID, deck db.Deck,
-	window review.StudyDay, cur review.Cursor, limit int32, clock time.Time) (review.Batch, error) {
+	window review.StudyDay, cur review.Cursor, limit int32, clock time.Time, extraRounds int32) (review.Batch, error) {
 	q := db.New(store)
 	params, err := review.EffectiveParams(ctx, q, userID, deck.ID)
 	if err != nil {
@@ -211,7 +233,7 @@ func buildStudyBatchInWindow(ctx context.Context, store db.DBTX, userID pgtype.U
 	batch, err := review.BuildBatch(ctx, store, params, userID, deck.ID, deck.Name, window,
 		review.NewPerDay(deck.Preset), review.RevPerDay(deck.Preset),
 		review.ParseRevOrder(deck.Preset), review.ParsePriority(deck.Preset), cur, limit, clock,
-		review.DueLookAheadMinutes(deck.Preset))
+		review.DueLookAheadMinutes(deck.Preset), extraRounds)
 	if err != nil {
 		return review.Batch{}, err
 	}

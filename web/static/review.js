@@ -22,6 +22,7 @@
     current: null, // index into state.queue
     cursor: '',
     exhausted: false,
+    extraRounds: 0,
     pending: [], // ReviewEvents not yet sent
     inFlight: null, // ReviewEvents currently in an outstanding request, or null
     refillInFlight: false,
@@ -40,6 +41,8 @@
     document.body.addEventListener('htmx:afterSwap', onAfterSwap);
     var stage = document.getElementById('review-stage');
     if (stage) stage.addEventListener('click', onStageClick);
+    var studyMore = document.getElementById('study-more');
+    if (studyMore) studyMore.addEventListener('click', onStudyMoreClick);
     window.addEventListener('pagehide', flushOnUnload);
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState === 'hidden') flush();
@@ -330,6 +333,22 @@
     }
   }
 
+  // "Keep studying" (#172): re-grants one more full preset round for the rest of this page
+  // session. The cursor resets to '' -- the cards the cap excluded sort before the position the
+  // limited fetch's cursor holds, so carrying that cursor forward would skip exactly the cards
+  // this button exists to reach. Restarting is safe: indexBatch's known[cardId] map already drops
+  // any card already queued or graded this session, and the server still excludes anything with
+  // last_review >= study_day_start.
+  function onStudyMoreClick() {
+    state.extraRounds++;
+    state.exhausted = false;
+    state.cursor = '';
+    var done = document.getElementById('review-done');
+    if (done) done.hidden = true;
+    state.refillInFlight = true;
+    document.body.dispatchEvent(new CustomEvent('refill-needed'));
+  }
+
   // -- Sending, batched with backoff retry --------------------------------
 
   function scheduleFlush() {
@@ -503,6 +522,7 @@
   window.enshuReview = {
     deckId: function () { return state.deckId; },
     cursor: function () { return state.cursor; },
+    extraRounds: function () { return String(state.extraRounds); },
   };
 
   if (document.readyState === 'loading') {

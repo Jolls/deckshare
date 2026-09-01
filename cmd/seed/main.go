@@ -19,6 +19,7 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -39,7 +40,22 @@ const (
 	basicDeckName  = "Test Deck A"
 	clozeDeckName  = "Test Deck B"
 	sharedDeckName = "Test Deck C (Shared)"
+
+	// Small caps so a fresh seed exercises #172's daily-cap / "Keep studying" path without
+	// requiring dozens of reviews first.
+	seedNewPerDay = 2
+	seedRevPerDay = 5
+
+	// seedDueCardCount is how many of each freshly-seeded deck's cards start already in Review
+	// state and due, rather than New.
+	seedDueCardCount = 2
 )
+
+// seedDueDate is a fixed calendar date, not relative to time.Now -- so the "couple of due cards"
+// stay due after every reseed for as long as this stays in the past, rather than only on the day
+// the seed happens to run.
+var seedDueDate = time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+var seedDueLastReview = seedDueDate.AddDate(0, 0, -7)
 
 var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
 
@@ -114,6 +130,9 @@ func run() error {
 			return fmt.Errorf("seed basic notes: %w", err)
 		}
 		log.Printf("seeded sample notes in %s", basicDeckName)
+		if err := seedDueCards(ctx, pool, user.ID, basicDeck.ID, seedDueCardCount); err != nil {
+			return fmt.Errorf("seed due cards in %s: %w", basicDeckName, err)
+		}
 	} else {
 		log.Printf("%s already has cards, skipping note seeding", basicDeckName)
 	}
@@ -123,6 +142,9 @@ func run() error {
 			return fmt.Errorf("seed cloze notes: %w", err)
 		}
 		log.Printf("seeded sample notes in %s", clozeDeckName)
+		if err := seedDueCards(ctx, pool, user.ID, clozeDeck.ID, seedDueCardCount); err != nil {
+			return fmt.Errorf("seed due cards in %s: %w", clozeDeckName, err)
+		}
 	} else {
 		log.Printf("%s already has cards, skipping note seeding", clozeDeckName)
 	}
@@ -136,6 +158,9 @@ func run() error {
 			return fmt.Errorf("seed shared deck notes: %w", err)
 		}
 		log.Printf("seeded sample notes in %s", sharedDeckName)
+		if err := seedDueCards(ctx, pool, user.ID, sharedDeck.ID, seedDueCardCount); err != nil {
+			return fmt.Errorf("seed due cards in %s: %w", sharedDeckName, err)
+		}
 	} else {
 		log.Printf("%s already has cards, skipping note seeding", sharedDeckName)
 	}
@@ -194,17 +219,62 @@ func ensureDeck(ctx context.Context, pool *pgxpool.Pool, ownerID pgtype.UUID, na
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := db.CreateDeckWithAccess(ctx, tx, ownerID, name, ""); err != nil {
+	deck, err := db.CreateDeckWithAccess(ctx, tx, ownerID, name, "")
+	if err != nil {
 		if db.IsUniqueViolation(err, "decks_owner_id_name_key") {
 			log.Printf("deck already exists: %s", name)
 			return nil
 		}
 		return err
 	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE decks SET preset = jsonb_build_object(
+			'new', jsonb_build_object('perDay', $1::int),
+			'rev', jsonb_build_object('perDay', $2::int)
+		) WHERE id = $3`, seedNewPerDay, seedRevPerDay, deck.ID); err != nil {
+		return fmt.Errorf("set preset: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
 	log.Printf("created deck: %s", name)
+	return nil
+}
+
+// seedDueCards puts the first n of deckID's cards into Review state, due on seedDueDate, for
+// userID -- so a fresh deck has a couple of genuinely due cards to review, not just New ones.
+// ON CONFLICT DO NOTHING: never overwrites real progress from manual testing on a deck that
+// already had cards before this seed run.
+func seedDueCards(ctx context.Context, pool *pgxpool.Pool, userID, deckID pgtype.UUID, n int) error {
+	rows, err := pool.Query(ctx, `SELECT id FROM cards WHERE deck_id = $1 ORDER BY id LIMIT $2`, deckID, n)
+	if err != nil {
+		return fmt.Errorf("list cards to mark due: %w", err)
+	}
+	var cardIDs []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		cardIDs = append(cardIDs, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, cardID := range cardIDs {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO user_card_state
+				(user_id, card_id, due, stability, difficulty, state, reps, lapses,
+				 elapsed_days, scheduled_days, learning_steps, last_review)
+			VALUES ($1, $2, $3, 3, 5, 2, 1, 0, 7, 7, 0, $4)
+			ON CONFLICT (user_id, card_id) DO NOTHING`,
+			userID, cardID, seedDueDate, seedDueLastReview); err != nil {
+			return fmt.Errorf("mark card %s due: %w", cardID.String(), err)
+		}
+	}
 	return nil
 }
 
@@ -226,15 +296,60 @@ func findNoteType(noteTypes []db.ListNoteTypesForOwnerRow, name string) (db.List
 	return db.ListNoteTypesForOwnerRow{}, false
 }
 
+// basicSamples has more than DefaultNewPerDay (20, internal/review/preset.go) entries so a fresh
+// seed exercises #172's "Keep studying" past the daily cap without any manual preset editing.
 var basicSamples = [][2]string{
 	{"Capital of France", "Paris"},
 	{"2 + 2", "4"},
 	{"Author of Hamlet", "William Shakespeare"},
+	{"Capital of Japan", "Tokyo"},
+	{"Largest planet in the solar system", "Jupiter"},
+	{"Chemical symbol for gold", "Au"},
+	{"Speed of light (approx, km/s)", "300,000"},
+	{"Author of Pride and Prejudice", "Jane Austen"},
+	{"Capital of Australia", "Canberra"},
+	{"Number of continents", "7"},
+	{"Smallest prime number", "2"},
+	{"Capital of Canada", "Ottawa"},
+	{"Chemical symbol for oxygen", "O"},
+	{"Longest river in the world", "The Nile"},
+	{"Capital of Egypt", "Cairo"},
+	{"Freezing point of water in Fahrenheit", "32"},
+	{"Author of War and Peace", "Leo Tolstoy"},
+	{"Capital of Brazil", "Brasília"},
+	{"Number of strings on a standard guitar", "6"},
+	{"Chemical symbol for sodium", "Na"},
+	{"Capital of Germany", "Berlin"},
+	{"Square root of 144", "12"},
+	{"Capital of Italy", "Rome"},
+	{"Author of The Odyssey", "Homer"},
+	{"Capital of Russia", "Moscow"},
 }
 
+// clozeSamples similarly exceeds the 20/day cap.
 var clozeSamples = [][2]string{
 	{"The mitochondria is the {{c1::powerhouse}} of the cell", ""},
 	{"Water freezes at {{c1::0}} degrees Celsius", ""},
+	{"The human body has {{c1::206}} bones", ""},
+	{"DNA stands for {{c1::deoxyribonucleic acid}}", ""},
+	{"The speed of sound is about {{c1::343}} meters per second", ""},
+	{"Photosynthesis converts {{c1::light energy}} into chemical energy", ""},
+	{"The largest organ in the human body is the {{c1::skin}}", ""},
+	{"A triangle has {{c1::three}} sides", ""},
+	{"The chemical formula for water is {{c1::H2O}}", ""},
+	{"The sun is a {{c1::star}}", ""},
+	{"There are {{c1::seven}} days in a week", ""},
+	{"The Earth orbits the {{c1::Sun}}", ""},
+	{"A hexagon has {{c1::six}} sides", ""},
+	{"The powerhouse of a cell's energy is {{c1::ATP}}", ""},
+	{"Humans have {{c1::23}} pairs of chromosomes", ""},
+	{"The boiling point of water is {{c1::100}} degrees Celsius", ""},
+	{"Light travels faster than {{c1::sound}}", ""},
+	{"The capital of France is {{c1::Paris}}", ""},
+	{"A leap year has {{c1::366}} days", ""},
+	{"The plural of mouse is {{c1::mice}}", ""},
+	{"Gravity pulls objects toward {{c1::Earth}}", ""},
+	{"The freezing point of water is {{c1::0}} degrees Celsius", ""},
 }
 
 func seedSampleNotes(ctx context.Context, pool *pgxpool.Pool, userID, deckID, noteTypeID pgtype.UUID, typeName string, samples [][2]string) error {
