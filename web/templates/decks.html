@@ -17,7 +17,7 @@
         {{range .Decks}}
         {{$counts := index $.Counts .ID}}
         <tr>
-            <td><a href="/decks/{{.ID}}/review" role="button" class="outline btn-sm">Study</a></td>
+            <td><a href="/decks/{{.ID}}/review" role="button" class="btn-sm">Study</a></td>
             <td><a href="/decks/{{.ID}}">{{.Name}}</a></td>
             <td>{{.CardCount}}</td>
             <td>{{$counts.New}}</td>
