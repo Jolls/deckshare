@@ -133,6 +133,10 @@
     stage.hidden = false;
     stage.dataset.revealed = 'false';
     stage.dataset.cardId = card.cardId;
+    var revealBtn = stage.querySelector('[data-reveal]');
+    if (revealBtn) revealBtn.textContent = 'Show Answer';
+    var ratingButtons = stage.querySelector('.rating-buttons');
+    if (ratingButtons) ratingButtons.hidden = true;
 
     var q = card.el.querySelector('.card-question');
     var a = card.el.querySelector('.card-answer');
@@ -178,7 +182,25 @@
     var a = stage.querySelector('.card-answer');
     if (a) a.hidden = false;
     stage.dataset.revealed = 'true';
-    state.revealStart = Date.now();
+    var revealBtn = stage.querySelector('[data-reveal]');
+    if (revealBtn) revealBtn.textContent = 'Hide Answer';
+    var ratingButtons = stage.querySelector('.rating-buttons');
+    if (ratingButtons) ratingButtons.hidden = false;
+    if (state.revealStart === null) state.revealStart = Date.now();
+  }
+
+  // Re-hiding is cosmetic only: revealStart (and thus the graded durationMs) is left untouched,
+  // since it measures time-to-first-reveal, not visibility.
+  function hide() {
+    var stage = document.getElementById('review-stage');
+    if (!stage || stage.dataset.revealed !== 'true') return;
+    var a = stage.querySelector('.card-answer');
+    if (a) a.hidden = true;
+    stage.dataset.revealed = 'false';
+    var revealBtn = stage.querySelector('[data-reveal]');
+    if (revealBtn) revealBtn.textContent = 'Show Answer';
+    var ratingButtons = stage.querySelector('.rating-buttons');
+    if (ratingButtons) ratingButtons.hidden = true;
   }
 
   function onStageClick(evt) {
@@ -187,7 +209,11 @@
       grade(parseInt(ratingBtn.dataset.rating, 10));
       return;
     }
-    if (evt.target.closest('[data-reveal]')) reveal();
+    if (evt.target.closest('[data-reveal]')) {
+      var stage = document.getElementById('review-stage');
+      if (stage && stage.dataset.revealed === 'true') hide();
+      else reveal();
+    }
   }
 
   function onKeydown(evt) {
@@ -197,9 +223,10 @@
     var stage = document.getElementById('review-stage');
     if (!stage) return;
 
-    if (evt.code === 'Space' && stage.dataset.revealed !== 'true') {
+    if (evt.code === 'Space') {
       evt.preventDefault();
-      reveal();
+      if (stage.dataset.revealed === 'true') hide();
+      else reveal();
       return;
     }
     var digit = { Digit1: 1, Digit2: 2, Digit3: 3, Digit4: 4 }[evt.code];

@@ -3,6 +3,17 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.16] - 2026-09-01
+
+### Changed
+- The review/study screen's Show Answer button now toggles to "Hide Answer" once the answer is
+  shown, and clicking it again hides the answer and re-blocks grading until it's revealed once
+  more (also bound to Space, matching the reveal shortcut).
+- The Again/Hard/Good/Easy grading buttons stay hidden until the answer is revealed, instead of
+  being visible (but non-functional) up front.
+- The deck list's per-deck Study button is now solid blue, matching Study All, instead of the
+  more subtle outline style.
+
 ## [0.2.15] - 2026-08-31
 
 ### Added
