@@ -684,6 +684,10 @@ func TestReviewRoutes_AccessControl(t *testing.T) {
 		{"no session GET next", "/api/reviews/next?deck=" + deckID + "&cursor=", nil, http.StatusUnauthorized},
 		{"stranger GET next", "/api/reviews/next?deck=" + deckID + "&cursor=", strangerCookie, http.StatusNotFound},
 		{"owner GET next", "/api/reviews/next?deck=" + deckID + "&cursor=", ownerCookie, http.StatusOK},
+		// #172: extraRounds must not widen what a user can see -- same 404 as the un-flagged
+		// request for a no-access (stranger) or view-only (no can_study) deck (CLAUDE.md §10.5).
+		{"stranger GET next w/ extraRounds", "/api/reviews/next?deck=" + deckID + "&cursor=&extraRounds=1", strangerCookie, http.StatusNotFound},
+		{"view-only (no can_study) GET next w/ extraRounds", "/api/reviews/next?deck=" + deckID + "&cursor=&extraRounds=1", viewOnlyCookie, http.StatusNotFound},
 	}
 	for _, tt := range getTests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1064,5 +1068,187 @@ func TestStudyAll_GradingParity(t *testing.T) {
 	}
 	if n := countRows(t, tx, `SELECT count(*) FROM review_log WHERE card_id = $1`, cardID); n != 1 {
 		t.Errorf("review_log rows for card %s = %d, want 1", cardID, n)
+	}
+}
+
+// -- #172: "Keep studying" -- extraRounds re-grants one more full preset for this fetch only ----
+
+func TestReviewNext_ExtraRoundsGrantsOnePreset(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	clock := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	handler, a := newTestHandler(t, tx, auth.Config{}, func() time.Time { return clock })
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	var noteTypeID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+	addNotes(t, handler, cookie, deckPath, noteTypeID, 10)
+	// A small preset (rather than seeding 200 cards, TestReviewNext_KeysetAndExhaustion's
+	// pattern) so the deck can genuinely be driven to its cap.
+	if _, err := tx.Exec(ctx, `UPDATE decks SET preset = '{"new":{"perDay":2},"rev":{"perDay":2}}' WHERE id = $1`, deckID); err != nil {
+		t.Fatalf("set small preset: %v", err)
+	}
+
+	firstPage := doRequest(handler, "GET", "/api/reviews/next?deck="+deckID+"&cursor=", "", cookie, "")
+	if firstPage.Code != http.StatusOK {
+		t.Fatalf("first fetch status = %d: %s", firstPage.Code, firstPage.Body.String())
+	}
+	firstIDs := extractCardIDs(firstPage.Body.String())
+	if len(firstIDs) != 2 {
+		t.Fatalf("first fetch got %d cards, want 2 (new.perDay)", len(firstIDs))
+	}
+	for _, id := range firstIDs {
+		gradeCard(t, handler, cookie, id, 3, clock) // spends the day's new.perDay=2 allowance
+	}
+
+	atCap := doRequest(handler, "GET", "/api/reviews/next?deck="+deckID+"&cursor=", "", cookie, "")
+	if atCap.Code != http.StatusOK {
+		t.Fatalf("at-cap fetch status = %d: %s", atCap.Code, atCap.Body.String())
+	}
+	if ids := extractCardIDs(atCap.Body.String()); len(ids) != 0 {
+		t.Fatalf("at-cap fetch got %d cards, want 0", len(ids))
+	}
+	if !strings.Contains(atCap.Body.String(), `data-exhausted="true"`) {
+		t.Error("at-cap fetch should be exhausted")
+	}
+
+	extra := doRequest(handler, "GET", "/api/reviews/next?deck="+deckID+"&cursor=&extraRounds=1", "", cookie, "")
+	if extra.Code != http.StatusOK {
+		t.Fatalf("extraRounds=1 fetch status = %d: %s", extra.Code, extra.Body.String())
+	}
+	extraIDs := extractCardIDs(extra.Body.String())
+	if len(extraIDs) != 2 {
+		t.Fatalf("extraRounds=1 fetch got %d cards, want 2 (one more preset's worth)", len(extraIDs))
+	}
+	for _, id := range extraIDs {
+		for _, graded := range firstIDs {
+			if id == graded {
+				t.Errorf("extraRounds=1 re-served already-graded card %s", id)
+			}
+		}
+	}
+}
+
+func TestReviewNext_ExtraRoundsClampedToMax(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	clock := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	handler, a := newTestHandler(t, tx, auth.Config{}, func() time.Time { return clock })
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	var noteTypeID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+	addNotes(t, handler, cookie, deckPath, noteTypeID, 50)
+	if _, err := tx.Exec(ctx, `UPDATE decks SET preset = '{"new":{"perDay":2},"rev":{"perDay":2}}' WHERE id = $1`, deckID); err != nil {
+		t.Fatalf("set small preset: %v", err)
+	}
+
+	atMax := doRequest(handler, "GET", fmt.Sprintf("/api/reviews/next?deck=%s&cursor=&extraRounds=%d", deckID, maxExtraRounds), "", cookie, "")
+	if atMax.Code != http.StatusOK {
+		t.Fatalf("extraRounds=maxExtraRounds status = %d: %s", atMax.Code, atMax.Body.String())
+	}
+	huge := doRequest(handler, "GET", "/api/reviews/next?deck="+deckID+"&cursor=&extraRounds=999999", "", cookie, "")
+	if huge.Code != http.StatusOK {
+		t.Fatalf("extraRounds=999999 status = %d, want 200 (no error, overflow, or panic): %s", huge.Code, huge.Body.String())
+	}
+
+	atMaxIDs, hugeIDs := extractCardIDs(atMax.Body.String()), extractCardIDs(huge.Body.String())
+	if !reflect.DeepEqual(atMaxIDs, hugeIDs) {
+		t.Errorf("extraRounds=999999 got %v, want identical to extraRounds=maxExtraRounds (%d): %v", hugeIDs, maxExtraRounds, atMaxIDs)
+	}
+	// Both requests fetch against the same unconsumed state (neither grades anything), so an
+	// unclamped 999999 would still have to be well clear of int32 overflow -- a mismatch or a
+	// non-200 status here is the failure this test exists to catch.
+	if len(atMaxIDs) == 0 {
+		t.Fatal("test setup: expected at least one card served at the clamped cap")
+	}
+}
+
+func TestReviewNext_ExtraRoundsNegativeOrGarbageIsZero(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	clock := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	handler, a := newTestHandler(t, tx, auth.Config{}, func() time.Time { return clock })
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	var noteTypeID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+	addNotes(t, handler, cookie, deckPath, noteTypeID, 10)
+	if _, err := tx.Exec(ctx, `UPDATE decks SET preset = '{"new":{"perDay":2},"rev":{"perDay":2}}' WHERE id = $1`, deckID); err != nil {
+		t.Fatalf("set small preset: %v", err)
+	}
+
+	omitted := doRequest(handler, "GET", "/api/reviews/next?deck="+deckID+"&cursor=", "", cookie, "")
+	negative := doRequest(handler, "GET", "/api/reviews/next?deck="+deckID+"&cursor=&extraRounds=-5", "", cookie, "")
+	garbage := doRequest(handler, "GET", "/api/reviews/next?deck="+deckID+"&cursor=&extraRounds=abc", "", cookie, "")
+	for _, w := range []*httptest.ResponseRecorder{omitted, negative, garbage} {
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+		}
+	}
+
+	omittedIDs := extractCardIDs(omitted.Body.String())
+	if len(omittedIDs) != 2 {
+		t.Fatalf("omitted got %d cards, want 2 (new.perDay, no extra round)", len(omittedIDs))
+	}
+	if got := extractCardIDs(negative.Body.String()); !reflect.DeepEqual(got, omittedIDs) {
+		t.Errorf("extraRounds=-5 got %v, want identical to omitting the param (%v)", got, omittedIDs)
+	}
+	if got := extractCardIDs(garbage.Body.String()); !reflect.DeepEqual(got, omittedIDs) {
+		t.Errorf("extraRounds=abc got %v, want identical to omitting the param (%v)", got, omittedIDs)
+	}
+}
+
+// TestReviewNext_ExtraRoundsIsSelectionOnly: an extra-round fetch never writes anything -- the
+// deck's user_card_state and review_log row counts for the test's own user are unchanged before
+// any grading happens (Q3, resolved decisions). extraRounds never appears in the grade body at
+// all (§10.1, §2.7), which TestReviewBatch_ClientCannotWriteSchedulingState already proves
+// independently for the wire shape; this test is the read-path half of that guarantee.
+func TestReviewNext_ExtraRoundsIsSelectionOnly(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	clock := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	handler, a := newTestHandler(t, tx, auth.Config{}, func() time.Time { return clock })
+	email := testEmail()
+	cookie := loginCookie(t, tx, a, email, "correct-horse-battery")
+
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	var noteTypeID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+	addNotes(t, handler, cookie, deckPath, noteTypeID, 5)
+
+	var userID pgtype.UUID
+	if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, email).Scan(&userID); err != nil {
+		t.Fatalf("lookup user: %v", err)
+	}
+
+	resp := doRequest(handler, "GET", "/api/reviews/next?deck="+deckID+"&cursor=&extraRounds=5", "", cookie, "")
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", resp.Code, resp.Body.String())
+	}
+	if len(extractCardIDs(resp.Body.String())) == 0 {
+		t.Fatal("test setup: expected at least one card served")
+	}
+
+	if n := countRows(t, tx, `SELECT count(*) FROM user_card_state WHERE user_id = $1`, userID); n != 0 {
+		t.Errorf("user_card_state rows for user = %d, want 0 (an extra-round fetch selects, never writes)", n)
+	}
+	if n := countRows(t, tx, `SELECT count(*) FROM review_log WHERE user_id = $1`, userID); n != 0 {
+		t.Errorf("review_log rows for user = %d, want 0 (an extra-round fetch selects, never writes)", n)
 	}
 }

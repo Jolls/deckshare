@@ -3,6 +3,20 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.17] - 2026-09-01
+
+### Added
+- A "Keep studying" button appears on the review-done screen once a deck's daily new/review cap
+  is reached, granting one more round of the deck's own preset allowance each click (e.g. 5 more
+  due cards if `rev.perDay` is 5) rather than an unlimited bypass
+  ([#172](https://github.com/Jolls/enshu/issues/172)).
+
+### Changed
+- The review-done screen's "Back to deck" link is now a white button, alongside a new blue "Back
+  to home" button to its left ([#173](https://github.com/Jolls/enshu/issues/173)).
+- The deck list's per-deck Study button switches to the subtle white/outline style once that deck
+  has 0 cards left to study today, instead of staying solid blue.
+
 ## [0.2.16] - 2026-09-01
 
 ### Changed

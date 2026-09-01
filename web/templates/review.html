@@ -29,13 +29,17 @@
 <div id="review-refill" hidden
      hx-get="/api/reviews/next"
      hx-trigger="refill-needed from:body"
-     hx-vals='js:{deck: enshuReview.deckId(), cursor: enshuReview.cursor()}'
+     hx-vals='js:{deck: enshuReview.deckId(), cursor: enshuReview.cursor(), extraRounds: enshuReview.extraRounds()}'
      hx-target="#review-queue"
      hx-swap="beforeend"></div>
 
 <section id="review-done" hidden>
   <p>No more cards due. Nice work.</p>
-  {{template "backToDeck" .Deck}}
+  <p><button type="button" id="study-more">Keep studying</button></p>
+  <nav class="button-nav">
+    <a href="/decks" role="button" class="btn-sm">Back to home</a>
+    <a href="/decks/{{.Deck.ID}}" role="button" class="outline btn-sm">Back to deck</a>
+  </nav>
 </section>
 
 <script src="/static/review.js" defer data-deck-id="{{.Deck.ID}}"></script>

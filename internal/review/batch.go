@@ -150,10 +150,14 @@ func hashSeedFor(userID pgtype.UUID, window StudyDay) string {
 // preset rev/order (#116) and priority (#118); priority == PriorityMixed branches to the
 // two-query interleave path, everything else to the single query. lookAheadMinutes is the deck's
 // preset due/lookAheadMinutes (#154): widens the due<=now cutoff by an explicit opt-in amount,
-// zero by default.
+// zero by default. extraRounds lets a caller request that many additional full presets for this
+// fetch (#172, "continue studying past today's cap"); learning/relearning behaviour,
+// suspended/buried filtering, the study-day last_review exclusion, rev.order, priority and
+// lookAheadMinutes are all unaffected, and extraRounds never changes what is written -- it only
+// inflates the two selection ceilings for this fetch.
 func BuildBatch(ctx context.Context, store db.DBTX, p fsrs.Params, userID, deckID pgtype.UUID,
 	deckName string, window StudyDay, newPerDay, revPerDay int32, order RevOrder, priority Priority,
-	cur Cursor, limit int32, now time.Time, lookAheadMinutes int32) (Batch, error) {
+	cur Cursor, limit int32, now time.Time, lookAheadMinutes int32, extraRounds int32) (Batch, error) {
 	q := db.New(store)
 
 	introduced, err := q.CountNewIntroducedToday(ctx, db.CountNewIntroducedTodayParams{
@@ -176,8 +180,11 @@ func BuildBatch(ctx context.Context, store db.DBTX, p fsrs.Params, userID, deckI
 		return Batch{}, fmt.Errorf("review: count reviewed today: %w", err)
 	}
 
-	newRemaining := NewRemaining(newPerDay, introduced)
-	totalRemaining := RevRemaining(revPerDay, introduced+reviewed)
+	effectiveNewPerDay := newPerDay + extraRounds*newPerDay
+	effectiveRevPerDay := revPerDay + extraRounds*revPerDay
+
+	newRemaining := NewRemaining(effectiveNewPerDay, introduced)
+	totalRemaining := RevRemaining(effectiveRevPerDay, introduced+reviewed)
 
 	// effectiveLimit is the day's remaining combined budget, not just the page size -- once it
 	// binds tighter than the page limit, this fetch (and the query's own priority-driven
