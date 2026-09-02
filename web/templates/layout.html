@@ -9,8 +9,9 @@
     <script src="/static/htmx.min.js" defer></script>
     <script src="/static/alpine.min.js" defer></script>
 </head>
-<body>
+<body class="{{.BodyClass}}">
     <main class="container">
+        {{if .User}}{{template "header" .}}{{end}}
         {{template "content" .}}
     </main>
 </body>

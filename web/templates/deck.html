@@ -7,10 +7,12 @@
     <span>New: {{.Queue.New}} · Learning: {{.Queue.Learning}} · Due: {{.Queue.Due}} · Left today: {{.Queue.Left}}</span>
 </p>
 <nav class="button-nav">
+    {{if .Deck.CanEditContent}}
     <a href="/decks/{{.Deck.ID}}/notes/new" role="button" class="outline btn-sm">Add note</a>
     <a href="/import/ai?deck_id={{.Deck.ID}}" role="button" class="outline btn-sm">Import via AI</a>
-    <a href="/decks/{{.Deck.ID}}/edit" role="button" class="outline btn-sm">Edit deck</a>
-    <a href="/decks/{{.Deck.ID}}/access" role="button" class="outline btn-sm">Manage access</a>
+    {{end}}
+    {{if .Deck.CanEditSettings}}<a href="/decks/{{.Deck.ID}}/edit" role="button" class="outline btn-sm">Edit deck</a>{{end}}
+    {{if .Deck.CanManageAccess}}<a href="/decks/{{.Deck.ID}}/access" role="button" class="outline btn-sm">Manage access</a>{{end}}
     <a href="/decks" role="button" class="outline btn-sm">Back to decks</a>
 </nav>
 
@@ -29,10 +31,12 @@
                 <td>{{.NoteTypeName}}</td>
                 <td>{{.CardCount}}</td>
                 <td>
+                    {{if $.Deck.CanEditContent}}
                     <a href="/notes/{{.ID}}/edit">Edit</a>
                     <form method="post" action="/notes/{{.ID}}/delete" style="display:inline">
                         <button type="submit" x-data @click="confirm('Delete this note?') || $event.preventDefault()">Delete</button>
                     </form>
+                    {{end}}
                 </td>
             </tr>
             {{end}}

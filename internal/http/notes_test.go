@@ -677,6 +677,75 @@ func TestNoteRoutes_ViewOnlyCollaborator_CannotAddNote(t *testing.T) {
 	}
 }
 
+// #182: the note-type-change dropdown on note_form.html needs can_manage_access on top of the
+// can_edit_content that already gates reaching the edit page -- a collaborator without it falls
+// back to the hidden fixed note_type_id input, same as a caller with no compatible note types.
+func TestNoteRoutes_NoteTypeDropdownGatedByCanManageAccess(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	ownerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	collabEmail := testEmail()
+	collabCookie := loginCookie(t, tx, a, collabEmail, "correct-horse-battery")
+	ctx := context.Background()
+
+	deckPath := setupDeckAndNoteType(t, handler, ownerCookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	var basicID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&basicID); err != nil {
+		t.Fatalf("lookup Basic2: %v", err)
+	}
+	// A second field-compatible note type so NoteTypeOptions is non-empty -- otherwise the
+	// dropdown would be absent regardless of can_manage_access, and the test would not isolate
+	// the flag.
+	w := doRequest(handler, "POST", "/note-types", newReversedNoteTypeBody("Reversed2"), ownerCookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("create reversed note type status = %d: %s", w.Code, w.Body.String())
+	}
+
+	noteBody := url.Values{}
+	noteBody.Set("note_type_id", basicID)
+	noteBody.Add("field[]", "Q")
+	noteBody.Add("field[]", "A")
+	doRequest(handler, "POST", deckPath+"/notes", noteBody.Encode(), ownerCookie, "http://example.com")
+	var noteID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM notes WHERE note_type_id = $1`, basicID).Scan(&noteID); err != nil {
+		t.Fatalf("lookup note: %v", err)
+	}
+
+	var collabID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, collabEmail).Scan(&collabID); err != nil {
+		t.Fatalf("lookup collaborator: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO deck_access (deck_id, user_id, can_view, can_edit_content) VALUES ($1, $2, true, true)`,
+		deckID, collabID,
+	); err != nil {
+		t.Fatalf("grant collaborator access: %v", err)
+	}
+
+	w = doRequest(handler, "GET", "/notes/"+noteID+"/edit", "", collabCookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("collaborator without can_manage_access GET edit status = %d: %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), `<select id="note_type_id" name="note_type_id">`) {
+		t.Errorf("collaborator without can_manage_access should not see the note-type dropdown:\n%s", w.Body.String())
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE deck_access SET can_manage_access = true WHERE deck_id = $1 AND user_id = $2`,
+		deckID, collabID,
+	); err != nil {
+		t.Fatalf("grant can_manage_access: %v", err)
+	}
+	w = doRequest(handler, "GET", "/notes/"+noteID+"/edit", "", collabCookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("collaborator with can_manage_access GET edit status = %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `<select id="note_type_id" name="note_type_id">`) {
+		t.Errorf("collaborator with can_manage_access should see the note-type dropdown:\n%s", w.Body.String())
+	}
+}
+
 func TestNoteRoutes_AccessControl(t *testing.T) {
 	tx := beginTx(t)
 	handler, a := newTestHandler(t, tx, auth.Config{})
@@ -708,6 +777,8 @@ func TestNoteRoutes_AccessControl(t *testing.T) {
 		{"stranger POST edit", "POST", "/notes/" + noteID + "/edit", "note_type_id=" + noteTypeID + "&field[]=X&field[]=Y", http.StatusNotFound},
 		{"stranger POST delete", "POST", "/notes/" + noteID + "/delete", "", http.StatusNotFound},
 		{"stranger GET new note in owner's deck", "GET", deckPath + "/notes/new", "", http.StatusNotFound},
+		{"stranger POST note preview", "POST", "/notes/" + noteID + "/preview", "note_type_id=" + noteTypeID + "&field[]=X&field[]=Y", http.StatusNotFound},
+		{"stranger POST new-note preview in owner's deck", "POST", deckPath + "/notes/preview", "note_type_id=" + noteTypeID + "&field[]=X&field[]=Y", http.StatusNotFound},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

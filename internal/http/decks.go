@@ -152,12 +152,12 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		user, _ := auth.UserFromContext(r.Context())
 		deckID, ok := pathUUID(r, "id")
 		if !ok {
-			notFound(w)
+			notFoundPage(w, pages, user)
 			return
 		}
 		q := db.New(store)
 		deck, err := q.GetDeckForUser(r.Context(), db.GetDeckForUserParams{UserID: user.ID, DeckID: deckID})
-		if handleQueryErr(w, err) {
+		if handleQueryErrPage(w, pages, user, err) {
 			return
 		}
 		counts, err := q.CountDeckContents(r.Context(), db.CountDeckContentsParams{DeckID: deckID, UserID: user.ID})
@@ -228,11 +228,11 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		user, _ := auth.UserFromContext(r.Context())
 		deckID, ok := pathUUID(r, "id")
 		if !ok {
-			notFound(w)
+			notFoundPage(w, pages, user)
 			return
 		}
 		deck, err := db.New(store).GetDeckForSettingsEdit(r.Context(), db.GetDeckForSettingsEditParams{UserID: user.ID, DeckID: deckID})
-		if handleQueryErr(w, err) {
+		if handleQueryErrPage(w, pages, user, err) {
 			return
 		}
 		render(w, pages["deck_edit"], http.StatusOK, map[string]any{
@@ -247,7 +247,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		user, _ := auth.UserFromContext(r.Context())
 		deckID, ok := pathUUID(r, "id")
 		if !ok {
-			notFound(w)
+			notFoundPage(w, pages, user)
 			return
 		}
 		if !parseForm(w, r) {
@@ -317,7 +317,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			return
 		}
 		if n == 0 {
-			notFound(w)
+			notFoundPage(w, pages, user)
 			return
 		}
 		http.Redirect(w, r, "/decks/"+deckID.String(), http.StatusSeeOther)
@@ -327,10 +327,10 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		user, _ := auth.UserFromContext(r.Context())
 		deckID, ok := pathUUID(r, "id")
 		if !ok {
-			notFound(w)
+			notFoundPage(w, pages, user)
 			return
 		}
-		if handleQueryErr(w, deleteDeck(r.Context(), store, deckID, user.ID)) {
+		if handleQueryErrPage(w, pages, user, deleteDeck(r.Context(), store, deckID, user.ID)) {
 			return
 		}
 		http.Redirect(w, r, "/decks", http.StatusSeeOther)
@@ -340,7 +340,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		user, _ := auth.UserFromContext(r.Context())
 		deckID, ok := pathUUID(r, "id")
 		if !ok {
-			notFound(w)
+			notFoundPage(w, pages, user)
 			return
 		}
 		if !parseForm(w, r) {
@@ -365,7 +365,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			return
 		}
 		if n == 0 {
-			notFound(w)
+			notFoundPage(w, pages, user)
 			return
 		}
 		http.Redirect(w, r, "/decks/"+deckID.String(), http.StatusSeeOther)

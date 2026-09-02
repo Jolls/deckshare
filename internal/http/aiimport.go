@@ -54,7 +54,7 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		}
 
 		deck, err := q.GetDeckForContentEdit(r.Context(), db.GetDeckForContentEditParams{UserID: user.ID, DeckID: deckID})
-		if handleQueryErr(w, err) {
+		if handleQueryErrPage(w, pages, user, err) {
 			return
 		}
 
@@ -68,7 +68,7 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		}
 
 		nt, fields, err := loadNoteType(r.Context(), q, user.ID, noteTypeID)
-		if handleQueryErr(w, err) {
+		if handleQueryErrPage(w, pages, user, err) {
 			return
 		}
 
@@ -102,7 +102,7 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 
 		q := db.New(store)
 		deck, nt, fields, err := loadDeckAndNoteType(r.Context(), q, user.ID, deckID, noteTypeID)
-		if handleQueryErr(w, err) {
+		if handleQueryErrPage(w, pages, user, err) {
 			return
 		}
 		templates, err := q.ListTemplatesForNoteType(r.Context(), noteTypeID)

@@ -105,7 +105,7 @@ func (q *Queries) DeleteNote(ctx context.Context, arg DeleteNoteParams) (int64, 
 }
 
 const getNoteForContentEdit = `-- name: GetNoteForContentEdit :one
-SELECT n.id, n.guid, n.owner_id, n.note_type_id, n.deck_id, n.fields, n.tags, n.checksum, n.created_at, n.modified_at, n.anki_id
+SELECT n.id, n.guid, n.owner_id, n.note_type_id, n.deck_id, n.fields, n.tags, n.checksum, n.created_at, n.modified_at, n.anki_id, da.can_manage_access
 FROM notes n
 JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = $1
                    AND da.can_view AND da.can_edit_content
@@ -117,9 +117,24 @@ type GetNoteForContentEditParams struct {
 	NoteID pgtype.UUID
 }
 
-func (q *Queries) GetNoteForContentEdit(ctx context.Context, arg GetNoteForContentEditParams) (Note, error) {
+type GetNoteForContentEditRow struct {
+	ID              pgtype.UUID
+	Guid            string
+	OwnerID         pgtype.UUID
+	NoteTypeID      pgtype.UUID
+	DeckID          pgtype.UUID
+	Fields          []byte
+	Tags            []string
+	Checksum        int64
+	CreatedAt       pgtype.Timestamptz
+	ModifiedAt      pgtype.Timestamptz
+	AnkiID          pgtype.Int8
+	CanManageAccess bool
+}
+
+func (q *Queries) GetNoteForContentEdit(ctx context.Context, arg GetNoteForContentEditParams) (GetNoteForContentEditRow, error) {
 	row := q.db.QueryRow(ctx, getNoteForContentEdit, arg.UserID, arg.NoteID)
-	var i Note
+	var i GetNoteForContentEditRow
 	err := row.Scan(
 		&i.ID,
 		&i.Guid,
@@ -132,6 +147,7 @@ func (q *Queries) GetNoteForContentEdit(ctx context.Context, arg GetNoteForConte
 		&i.CreatedAt,
 		&i.ModifiedAt,
 		&i.AnkiID,
+		&i.CanManageAccess,
 	)
 	return i, err
 }

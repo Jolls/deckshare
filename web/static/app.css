@@ -119,3 +119,20 @@ details > summary ~ * {
     flex-shrink: 0;
     margin-bottom: 0;
 }
+
+/* Persistent account bar (#177): active user's display name + settings gear, upper right of
+   every authenticated page. */
+.account-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+}
+
+/* Resolved decision (#175 Q4): hidden on the reviewer and study-all pages -- a persistent bar
+   costs vertical space on a phone, and a later issue hangs account-switch/lock controls off this
+   bar, which must not sit one mis-tap from a grading button. layout.html sets this class on
+   <body> only for the review and study pages (internal/http/review.go). */
+body.hide-account-bar .account-bar {
+    display: none;
+}

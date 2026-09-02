@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/Jolls/enshu/internal/db"
 	"github.com/Jolls/enshu/web"
 )
 
@@ -21,11 +22,12 @@ var pagePartials = map[string][]string{
 	"access":    {"templates/messages.html", "templates/back_to_deck.html"},
 	"login":     {"templates/messages.html"},
 	"signup":    {"templates/messages.html"},
-	"settings":  {"templates/messages.html"},
+	"settings":  {"templates/messages.html", "templates/back_to_decks.html"},
 	"deck_new":  {"templates/messages.html", "templates/back_to_decks.html"},
 	"import":    {"templates/messages.html", "templates/back_to_decks.html"},
 	"import_ai": {"templates/back_to_decks.html", "templates/no_note_types.html"},
 	"note_form": {"templates/no_note_types.html"},
+	"not_found": {"templates/back_to_decks.html"},
 }
 
 func parseTemplates() (map[string]*template.Template, error) {
@@ -35,8 +37,9 @@ func parseTemplates() (map[string]*template.Template, error) {
 		"decks", "deck_new", "deck", "deck_edit", "access",
 		"notetypes", "notetype_form", "note_form",
 		"review", "study", "import", "import_ai",
+		"not_found",
 	} {
-		files := append([]string{"templates/layout.html", "templates/" + name + ".html"}, pagePartials[name]...)
+		files := append([]string{"templates/layout.html", "templates/header.html", "templates/" + name + ".html"}, pagePartials[name]...)
 		t, err := template.ParseFS(web.Templates, files...)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s template: %w", name, err)
@@ -50,7 +53,7 @@ func parseTemplates() (map[string]*template.Template, error) {
 // responses (internal/http/review.go).
 func parseFragments() (map[string]*template.Template, error) {
 	fragments := map[string]*template.Template{}
-	for _, name := range []string{"review_cards"} {
+	for _, name := range []string{"review_cards", "note_preview"} {
 		t, err := template.ParseFS(web.Templates, "templates/"+name+".html")
 		if err != nil {
 			return nil, fmt.Errorf("parse %s fragment: %w", name, err)
@@ -58,6 +61,24 @@ func parseFragments() (map[string]*template.Template, error) {
 		fragments[name] = t
 	}
 	return fragments, nil
+}
+
+// notFoundPage renders the styled 404 page for a page route. Same collapsed absent-or-invisible
+// semantics as every other deck route (CLAUDE.md §9, docs/architecture.md §6): the caller cannot
+// distinguish "does not exist" from "exists but you lack the flag".
+//
+// Which of the two 404s a handler calls follows one rule -- what the response body is for:
+//
+//   - Renders an HTML page the user browsed to  -> notFoundPage / handleQueryErrPage.
+//   - Returns JSON, an asset, or an htmx fragment swapped into part of a page
+//     -> the bare-text notFound / handleQueryErr in pathparam.go and respond.go.
+//
+// A full styled page swapped into a fragment container would be wrong, which is why
+// note_preview.go, media.go, and /api/reviews/* deliberately keep the bare pair. Anything else
+// on the bare pair is an oversight -- three page routes were missed on the first pass
+// (docs/plans/182-deck-edit-permission-gating.md) precisely because there was no stated rule.
+func notFoundPage(w http.ResponseWriter, pages map[string]*template.Template, user db.User) {
+	render(w, pages["not_found"], http.StatusNotFound, map[string]any{"User": user})
 }
 
 func render(w http.ResponseWriter, t *template.Template, status int, data any) {

@@ -32,7 +32,7 @@ WHERE n.id = sqlc.arg(note_id)
 FOR UPDATE OF n;
 
 -- name: GetNoteForContentEdit :one
-SELECT n.*
+SELECT n.*, da.can_manage_access
 FROM notes n
 JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = sqlc.arg(user_id)
                    AND da.can_view AND da.can_edit_content

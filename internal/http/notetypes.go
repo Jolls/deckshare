@@ -93,12 +93,12 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		user, _ := auth.UserFromContext(r.Context())
 		id, ok := pathUUID(r, "id")
 		if !ok {
-			notFound(w)
+			notFoundPage(w, pages, user)
 			return
 		}
 		q := db.New(store)
 		nt, err := q.GetNoteTypeForOwner(r.Context(), db.GetNoteTypeForOwnerParams{ID: id, OwnerID: user.ID})
-		if handleQueryErr(w, err) {
+		if handleQueryErrPage(w, pages, user, err) {
 			return
 		}
 		fields, err := q.ListFieldsForNoteType(r.Context(), id)
@@ -120,7 +120,7 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		user, _ := auth.UserFromContext(r.Context())
 		id, ok := pathUUID(r, "id")
 		if !ok {
-			notFound(w)
+			notFoundPage(w, pages, user)
 			return
 		}
 		if !parseForm(w, r) {
@@ -154,7 +154,7 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 
 		q := db.New(store)
 		nt, err := q.GetNoteTypeForOwner(r.Context(), db.GetNoteTypeForOwnerParams{ID: id, OwnerID: user.ID})
-		if handleQueryErr(w, err) {
+		if handleQueryErrPage(w, pages, user, err) {
 			return
 		}
 		if nt.IsCloze && len(templates) != 1 {
@@ -204,7 +204,7 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		if err != nil {
 			switch {
 			case errors.Is(err, pgx.ErrNoRows):
-				notFound(w)
+				notFoundPage(w, pages, user)
 			case errors.Is(err, db.ErrClozeNoteTypeSingleTemplate):
 				http.Error(w, "a cloze note type must have exactly one template", http.StatusBadRequest)
 			case errors.Is(err, db.ErrFieldNotFound), errors.Is(err, db.ErrTemplateNotFound):
@@ -226,7 +226,7 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		user, _ := auth.UserFromContext(r.Context())
 		id, ok := pathUUID(r, "id")
 		if !ok {
-			notFound(w)
+			notFoundPage(w, pages, user)
 			return
 		}
 		n, err := db.New(store).DeleteNoteType(r.Context(), db.DeleteNoteTypeParams{ID: id, OwnerID: user.ID})
@@ -239,7 +239,7 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 			return
 		}
 		if n == 0 {
-			notFound(w)
+			notFoundPage(w, pages, user)
 			return
 		}
 		http.Redirect(w, r, "/note-types", http.StatusSeeOther)
