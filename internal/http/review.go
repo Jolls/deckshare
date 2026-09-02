@@ -63,6 +63,7 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 
 		render(w, pages["review"], http.StatusOK, map[string]any{
 			"User": user, "Deck": deck, "CSS": css, "Batch": toBatchView(batch),
+			"BodyClass": "hide-account-bar",
 		})
 	})))
 
@@ -112,7 +113,8 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 
 		render(w, pages["study"], http.StatusOK, map[string]any{
 			"User": user, "CSS": css,
-			"Batch": toBatchView(review.Batch{Cards: cards, Exhausted: true}),
+			"Batch":     toBatchView(review.Batch{Cards: cards, Exhausted: true}),
+			"BodyClass": "hide-account-bar",
 		})
 	})))
 

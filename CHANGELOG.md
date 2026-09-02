@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.18] - 2026-09-01
+
+### Added
+- A persistent header bar on every authenticated page showing the signed-in account's display
+  name and a settings gear linking to `/settings`, so the active user is visible without opening
+  the settings page. Hidden on the review and study screens
+  ([#177](https://github.com/Jolls/enshu/issues/177)).
+
 ## [0.2.17] - 2026-09-01
 
 ### Added

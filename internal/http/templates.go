@@ -36,7 +36,7 @@ func parseTemplates() (map[string]*template.Template, error) {
 		"notetypes", "notetype_form", "note_form",
 		"review", "study", "import", "import_ai",
 	} {
-		files := append([]string{"templates/layout.html", "templates/" + name + ".html"}, pagePartials[name]...)
+		files := append([]string{"templates/layout.html", "templates/header.html", "templates/" + name + ".html"}, pagePartials[name]...)
 		t, err := template.ParseFS(web.Templates, files...)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s template: %w", name, err)
