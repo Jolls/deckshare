@@ -478,6 +478,14 @@ to assert, and the only fields the server reads. Everything written to `review_l
 `predicted` field on the wire to trust or distrust, because the server is the only place `Repeat`
 ever runs.
 
+The batch POST also carries the acting account id as a `?u=` query parameter (#178). The session
+cookie is browser-wide, so a tab can outlive the account it was opened under; the server compares
+`u` to the session user and answers 409 without writing when they differ, and tolerates its
+absence. It is a staleness check, not an authorisation input — a mismatch can only refuse a write,
+and a match grants exactly what the session already granted, which is why it does not bend §2.7.
+It is deliberately a query parameter rather than a body field (the batch body is fixed by
+CLAUDE.md §10.1) or a header (`navigator.sendBeacon` cannot set headers).
+
 Being the only fields read doesn't make them trusted as sent. Parsing them strictly (reject a
 malformed event rather than coercing it) is necessary but not sufficient — `reviewedAt` in
 particular is a believability check against the server's own clock, not a shape check: a client

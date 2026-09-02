@@ -159,6 +159,13 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 			unauthenticatedJSON(w)
 			return
 		}
+		// #178: the session cookie is browser-wide, so a tab can outlive the account it was
+		// opened under. ?u= is the client asserting which account it *believes* it is grading
+		// as; a mismatch refuses the write and never shapes one (§2.7).
+		if !actingUserMatches(r, user.ID) {
+			sessionChangedJSON(w)
+			return
+		}
 		events, ok := parseBatchRequest(w, r)
 		if !ok {
 			return
@@ -277,6 +284,33 @@ func unauthenticatedJSON(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthenticated"})
+}
+
+// sessionChangedJSON answers a batch whose ?u= names an account other than the session's (#178).
+// The session cookie is browser-wide, so the acting account can change under a tab still holding
+// graded events; without this, a deck shared with the new account would take those grades into the
+// wrong user's user_card_state and review_log -- silent, unrecoverable (CLAUDE.md §2.5). 409 rather
+// than 403: nothing about the request is unauthorised, it is stale, and review.js must not retry it.
+func sessionChangedJSON(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": "session_changed"})
+}
+
+// actingUserMatches reports whether the optional ?u= query parameter names the session user.
+// Empty/absent is tolerated by design so the server side can land ahead of the client side (#178,
+// docs/plans/175-multi-user-session-switching.md §11 issue B step 1). An unparseable value is a
+// mismatch, not a 400: this is a rejection-only staleness check and one failure mode is enough.
+func actingUserMatches(r *http.Request, userID pgtype.UUID) bool {
+	raw := r.URL.Query().Get("u")
+	if raw == "" {
+		return true
+	}
+	var claimed pgtype.UUID
+	if err := claimed.Scan(raw); err != nil {
+		return false
+	}
+	return claimed.Valid && claimed.Bytes == userID.Bytes
 }
 
 // -- Wire parsing [§2.7]: exactly these five fields; nothing else is ever read into an Event. --

@@ -133,6 +133,7 @@ type User struct {
 	Timezone     string
 	DayStartHour int16
 	CreatedAt    pgtype.Timestamptz
+	AvatarSha256 pgtype.Text
 }
 
 type UserCardState struct {

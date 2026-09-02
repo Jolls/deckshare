@@ -41,6 +41,7 @@ erDiagram
     CARDS ||--o{ REVIEW_LOG : "reviewed as"
 
     MEDIA_BLOBS ||--o{ MEDIA_REFS : "stored as"
+    MEDIA_BLOBS ||--o{ USERS : "avatar"
 
     USERS {
         uuid id PK
@@ -49,6 +50,7 @@ erDiagram
         text display_name
         text timezone
         smallint day_start_hour
+        text avatar_sha256 FK "NULL = no avatar"
         timestamptz created_at
     }
 
@@ -428,6 +430,7 @@ alone.
 erDiagram
     DECKS ||--o{ MEDIA_REFS : "references"
     MEDIA_BLOBS ||--o{ MEDIA_REFS : "stored as"
+    MEDIA_BLOBS ||--o{ USERS : "avatar"
     USERS ||--o{ SESSIONS : "has"
 
     DECKS {
@@ -451,6 +454,7 @@ erDiagram
     USERS {
         uuid id PK
         text email
+        text avatar_sha256 FK "NULL = no avatar"
     }
 
     SESSIONS {
@@ -464,3 +468,5 @@ erDiagram
 Media is content-addressed and deduplicated across *all* decks, not just one owner's — two
 decks shipping an identical image share one `MEDIA_BLOBS` row. Sessions store only the
 token's hash; the raw token lives in the cookie and never touches the database.
+`USERS` reaches `MEDIA_BLOBS` directly through `avatar_sha256` rather than through a deck-scoped
+filename, so an avatar dedups against deck media like anything else (#176).

@@ -18,3 +18,9 @@ UPDATE users SET display_name = $2, timezone = $3, day_start_hour = $4 WHERE id 
 
 -- name: UpdateUserPassword :exec
 UPDATE users SET password_hash = $2 WHERE id = $1;
+
+-- Avatar changes are a distinct operation from a profile edit (#176): different input, and it must
+-- be independently clearable -- passing NULL is how an avatar is removed, so there is no separate
+-- clear query. The sha256 must already exist in media_blobs; the FK is what enforces that.
+-- name: UpdateUserAvatar :exec
+UPDATE users SET avatar_sha256 = $2 WHERE id = $1;

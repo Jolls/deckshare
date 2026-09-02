@@ -3,6 +3,19 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.20] - 2026-09-02
+
+### Security
+- Review grades are now refused when the browser's signed-in account changed after the reviewer
+  page was opened: the grade POST carries the acting account id and the server answers 409 and
+  writes nothing on a mismatch, instead of silently attributing the reviews to the new account
+  ([#178](https://github.com/Jolls/enshu/issues/178)).
+
+### Added
+- A `users.avatar_sha256` column referencing `media_blobs`, so a user's avatar is stored as a
+  deduplicated content-addressed blob like any other media. Schema only -- no upload or serving
+  route yet ([#176](https://github.com/Jolls/enshu/issues/176)).
+
 ## [0.2.19] - 2026-09-02
 
 ### Fixed

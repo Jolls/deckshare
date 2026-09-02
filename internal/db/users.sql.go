@@ -15,7 +15,7 @@ const createUser = `-- name: CreateUser :one
 INSERT INTO users (email, password_hash, display_name)
 VALUES ($1, $2, $3)
 ON CONFLICT (lower(email)) DO NOTHING
-RETURNING id, email, password_hash, display_name, timezone, day_start_hour, created_at
+RETURNING id, email, password_hash, display_name, timezone, day_start_hour, created_at, avatar_sha256
 `
 
 type CreateUserParams struct {
@@ -35,6 +35,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Timezone,
 		&i.DayStartHour,
 		&i.CreatedAt,
+		&i.AvatarSha256,
 	)
 	return i, err
 }
@@ -51,7 +52,7 @@ func (q *Queries) EmailExists(ctx context.Context, email string) (bool, error) {
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, email, password_hash, display_name, timezone, day_start_hour, created_at FROM users WHERE id = $1
+SELECT id, email, password_hash, display_name, timezone, day_start_hour, created_at, avatar_sha256 FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id pgtype.UUID) (User, error) {
@@ -65,12 +66,13 @@ func (q *Queries) GetUser(ctx context.Context, id pgtype.UUID) (User, error) {
 		&i.Timezone,
 		&i.DayStartHour,
 		&i.CreatedAt,
+		&i.AvatarSha256,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, display_name, timezone, day_start_hour, created_at FROM users WHERE lower(email) = lower($1)
+SELECT id, email, password_hash, display_name, timezone, day_start_hour, created_at, avatar_sha256 FROM users WHERE lower(email) = lower($1)
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -84,8 +86,26 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.Timezone,
 		&i.DayStartHour,
 		&i.CreatedAt,
+		&i.AvatarSha256,
 	)
 	return i, err
+}
+
+const updateUserAvatar = `-- name: UpdateUserAvatar :exec
+UPDATE users SET avatar_sha256 = $2 WHERE id = $1
+`
+
+type UpdateUserAvatarParams struct {
+	ID           pgtype.UUID
+	AvatarSha256 pgtype.Text
+}
+
+// Avatar changes are a distinct operation from a profile edit (#176): different input, and it must
+// be independently clearable -- passing NULL is how an avatar is removed, so there is no separate
+// clear query. The sha256 must already exist in media_blobs; the FK is what enforces that.
+func (q *Queries) UpdateUserAvatar(ctx context.Context, arg UpdateUserAvatarParams) error {
+	_, err := q.db.Exec(ctx, updateUserAvatar, arg.ID, arg.AvatarSha256)
+	return err
 }
 
 const updateUserPassword = `-- name: UpdateUserPassword :exec

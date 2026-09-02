@@ -233,6 +233,39 @@ func TestListUnreferencedMediaBlobs(t *testing.T) {
 	}
 }
 
+// #176: users.avatar_sha256 is a second RESTRICT reference to a blob. The sweep unlinks bytes
+// before deleting the row, so an avatar's blob missing from the class-1 query would lose its file
+// before the FK could object.
+func TestListUnreferencedMediaBlobs_ExcludesAvatars(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+
+	orphan, avatar := randomSHA(t), randomSHA(t)
+	mustBlobRow(t, tx, orphan)
+	mustBlobRow(t, tx, avatar)
+
+	user := mustUser(t, tx)
+	if _, err := tx.Exec(ctx, `UPDATE users SET avatar_sha256 = $2 WHERE id = $1`, user, avatar); err != nil {
+		t.Fatalf("set avatar: %v", err)
+	}
+
+	shas, err := db.New(tx).ListUnreferencedMediaBlobs(ctx)
+	if err != nil {
+		t.Fatalf("ListUnreferencedMediaBlobs: %v", err)
+	}
+
+	found := map[string]bool{}
+	for _, sha := range shas {
+		found[sha] = true
+	}
+	if !found[orphan] {
+		t.Error("unreferenced blob was not listed")
+	}
+	if found[avatar] {
+		t.Error("avatar-referenced blob was listed as unreferenced")
+	}
+}
+
 // Class 1 end to end: the row and its bytes both go, and a referenced blob beside it is untouched.
 func TestGC_SweepReclaimsUnreferencedBlob(t *testing.T) {
 	tx := beginTx(t)
