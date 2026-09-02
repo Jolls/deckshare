@@ -3,6 +3,27 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.19] - 2026-09-02
+
+### Fixed
+- Deck- and note-editing controls (edit deck, delete deck, manage access, add note, import via
+  AI, edit/delete note, change note type) are now hidden from collaborators who lack the
+  underlying permission, instead of leading to a bare-text 404
+  ([#182](https://github.com/Jolls/enshu/issues/182)).
+- The "Move to deck" and AI-import deck pickers no longer offer decks the caller can only view,
+  which previously led to the same dead-end 404 on submit
+  ([#182](https://github.com/Jolls/enshu/issues/182)).
+
+### Added
+- A styled "not found" page for every HTML page route a caller can't reach -- decks, notes,
+  note types, the reviewer, and the AI import picker -- replacing the bare-text 404 response.
+  JSON, asset, and htmx-fragment endpoints keep the bare response
+  ([#182](https://github.com/Jolls/enshu/issues/182)).
+- A "Back to decks" link on the account settings page.
+- A "Preview" button on the note-editing forms (new note and edit note) that renders the note's
+  card(s) from the currently-typed, unsaved field values in an inline panel, without saving
+  anything ([#181](https://github.com/Jolls/enshu/issues/181)).
+
 ## [0.2.18] - 2026-09-01
 
 ### Added

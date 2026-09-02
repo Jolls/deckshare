@@ -603,6 +603,151 @@ func TestDeckQueueCounts_NewCappedToZeroWhenAllowanceExhausted(t *testing.T) {
 	}
 }
 
+// #182: a 404 from a deck route renders the styled not_found page (header/nav, vague copy) via
+// notFoundPage/handleQueryErrPage, not the bare-text response the pre-#182 notFound wrote. One
+// check is enough to cover the wiring; it does not need repeating per route (docs/plans/
+// 182-deck-edit-permission-gating.md). httptest.ResponseRecorder does not reproduce the real
+// server's Content-Type sniffing here (render calls WriteHeader before Write, so the recorder's
+// own sniff-on-first-Write never fires) -- render body content is the reliable signal instead.
+func TestDeckRoutes_NotFoundRendersStyledPage(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	w := doRequest(handler, "GET", "/decks/00000000-0000-0000-0000-000000000000", "", cookie, "")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", w.Code)
+	}
+	body := w.Body.String()
+	if strings.TrimSpace(body) == "not found" {
+		t.Errorf("body is the old bare-text 404, want the styled not_found page:\n%s", body)
+	}
+	if !strings.Contains(body, "don't have access") || !strings.Contains(body, "Back to decks") {
+		t.Errorf("body should render the styled not_found page:\n%s", body)
+	}
+}
+
+// #182: deck.html and decks.html hide the edit/manage-access/add-note/import-AI controls and the
+// per-note edit/delete controls -- display only, the query-layer check is unchanged -- from a
+// caller who lacks the corresponding deck_access flag.
+func TestDeckRoutes_ControlsGatedByPermission(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	ownerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	deckPath := setupDeckAndNoteType(t, handler, ownerCookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	var noteTypeID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+	addNotes(t, handler, ownerCookie, deckPath, noteTypeID, 1)
+	var noteID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM notes WHERE deck_id = $1`, deckID).Scan(&noteID); err != nil {
+		t.Fatalf("lookup note: %v", err)
+	}
+
+	w := doRequest(handler, "GET", deckPath, "", ownerCookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("owner GET deck status = %d", w.Code)
+	}
+	body := w.Body.String()
+	for _, want := range []string{"Edit deck", "Manage access", "Add note", "Import via AI", "/notes/" + noteID + "/edit"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("owner (all flags) body missing %q:\n%s", want, body)
+		}
+	}
+
+	w = doRequest(handler, "GET", "/decks", "", ownerCookie, "")
+	if !strings.Contains(w.Body.String(), "/decks/"+deckID+"/edit") {
+		t.Errorf("owner /decks body missing edit link for their own deck:\n%s", w.Body.String())
+	}
+
+	viewerEmail := testEmail()
+	viewerCookie := loginCookie(t, tx, a, viewerEmail, "correct-horse-battery")
+	viewerID := userID(t, ctx, tx, viewerEmail)
+	grantViewer(t, tx, deckID, viewerID)
+
+	w = doRequest(handler, "GET", deckPath, "", viewerCookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("viewer GET deck status = %d", w.Code)
+	}
+	body = w.Body.String()
+	for _, unwanted := range []string{deckPath + "/edit", deckPath + "/access", deckPath + "/notes/new", "/notes/" + noteID + "/edit"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("view-only collaborator body should not contain %q:\n%s", unwanted, body)
+		}
+	}
+
+	w = doRequest(handler, "GET", "/decks", "", viewerCookie, "")
+	if strings.Contains(w.Body.String(), "/decks/"+deckID+"/edit") {
+		t.Errorf("view-only collaborator /decks body should not contain edit link:\n%s", w.Body.String())
+	}
+
+	settingsEmail := testEmail()
+	settingsCookie := loginCookie(t, tx, a, settingsEmail, "correct-horse-battery")
+	settingsID := userID(t, ctx, tx, settingsEmail)
+	if _, err := tx.Exec(ctx, `INSERT INTO deck_access (deck_id, user_id, can_view, can_edit_settings) VALUES ($1, $2, true, true)`, deckID, settingsID); err != nil {
+		t.Fatalf("grant can_edit_settings access: %v", err)
+	}
+	w = doRequest(handler, "GET", deckPath, "", settingsCookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("can_edit_settings collaborator GET deck status = %d", w.Code)
+	}
+	body = w.Body.String()
+	if !strings.Contains(body, deckPath+"/edit") {
+		t.Errorf("can_edit_settings collaborator body should contain the edit link:\n%s", body)
+	}
+	for _, unwanted := range []string{deckPath + "/access", deckPath + "/notes/new"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("can_edit_settings-only collaborator body should not contain %q:\n%s", unwanted, body)
+		}
+	}
+}
+
+// #182: deck_edit.html's Delete button needs can_delete on top of the can_edit_settings that
+// already gates reaching the page.
+func TestDeckEditRoute_DeleteButtonGatedByCanDelete(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	ownerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	w := doRequest(handler, "POST", "/decks", "name=Owner Deck", ownerCookie, "http://example.com")
+	deckPath := w.Header().Get("Location")
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	deleteAction := `action="` + deckPath + `/delete"`
+
+	settingsOnlyEmail := testEmail()
+	settingsOnlyCookie := loginCookie(t, tx, a, settingsOnlyEmail, "correct-horse-battery")
+	settingsOnlyID := userID(t, ctx, tx, settingsOnlyEmail)
+	if _, err := tx.Exec(ctx, `INSERT INTO deck_access (deck_id, user_id, can_view, can_edit_settings) VALUES ($1, $2, true, true)`, deckID, settingsOnlyID); err != nil {
+		t.Fatalf("grant can_edit_settings access: %v", err)
+	}
+	w = doRequest(handler, "GET", deckPath+"/edit", "", settingsOnlyCookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("can_edit_settings collaborator GET edit status = %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), deleteAction) {
+		t.Errorf("collaborator without can_delete should not see the delete button:\n%s", w.Body.String())
+	}
+
+	bothEmail := testEmail()
+	bothCookie := loginCookie(t, tx, a, bothEmail, "correct-horse-battery")
+	bothID := userID(t, ctx, tx, bothEmail)
+	if _, err := tx.Exec(ctx, `INSERT INTO deck_access (deck_id, user_id, can_view, can_edit_settings, can_delete) VALUES ($1, $2, true, true, true)`, deckID, bothID); err != nil {
+		t.Fatalf("grant can_edit_settings+can_delete access: %v", err)
+	}
+	w = doRequest(handler, "GET", deckPath+"/edit", "", bothCookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("both-flags collaborator GET edit status = %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), deleteAction) {
+		t.Errorf("collaborator with can_delete should see the delete button:\n%s", w.Body.String())
+	}
+}
+
 func TestDeckRoutes_DuplicateName_409(t *testing.T) {
 	tx := beginTx(t)
 	handler, a := newTestHandler(t, tx, auth.Config{})

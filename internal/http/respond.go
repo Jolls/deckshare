@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"errors"
+	"html/template"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
@@ -36,6 +37,17 @@ func handleQueryErr(w http.ResponseWriter, err error) bool {
 		serverError(w)
 	}
 	return true
+}
+
+// handleQueryErrPage is handleQueryErr for a page route: same pgx.ErrNoRows → 404 collapse, but
+// rendered through notFoundPage instead of the bare-text notFound. Everything else delegates, so
+// the ErrNoRows-else-500 policy stays defined in exactly one place.
+func handleQueryErrPage(w http.ResponseWriter, pages map[string]*template.Template, user db.User, err error) bool {
+	if errors.Is(err, pgx.ErrNoRows) {
+		notFoundPage(w, pages, user)
+		return true
+	}
+	return handleQueryErr(w, err)
 }
 
 // parseForm calls r.ParseForm, writing a 400 and reporting false if the request body is

@@ -100,6 +100,8 @@ as a side effect of note writes.
 | POST | `/notes/{id}/edit` | `can_edit_content` | Update fields/tags; regenerates cards if cloze ordinals changed |
 | POST | `/notes/{id}/delete` | `can_edit_content` | Delete note and its cards — `cards.note_id ON DELETE CASCADE`, a single-statement delete; `review_log` rows for the deleted cards persist |
 | POST | `/notes/{id}/move` | `can_edit_content` | Change `deck_id`; must also update denormalised `owner_id` (schema.md, "must not drift") |
+| POST | `/notes/{id}/preview` | `can_edit_content` | Render the note's card(s) from the posted (possibly unsaved) field values; writes nothing |
+| POST | `/decks/{deckId}/notes/preview` | `can_edit_content` | Same, for the new-note form before the note exists |
 
 The deck-detail notes list (`GET /decks/{id}`, above) is unpaginated — `ORDER BY modified_at
 DESC LIMIT 200`. Follow-up issue: pagination once a deck's note count makes that limit visible.
@@ -216,8 +218,6 @@ Collected from above, so they're visible in one place:
 1. **Note-type read access under sharing** (Notes/note-types section) — a user with only
    `can_view`/`can_study` on a deck has no read path to a note type they don't own that backs
    one of its notes.
-2. **Card preview route** — not included. Add only if template authoring needs a live preview
-   before a note exists to generate one from.
 
 **Explicitly not routed:** no account-deletion route. User deletion is blocked at the FK level
 by design ([#51](https://github.com/Jolls/enshu/issues/51)) — a user's decks, notes, note types,

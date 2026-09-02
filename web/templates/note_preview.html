@@ -1,0 +1,14 @@
+{{define "note_preview"}}
+{{if .Notice}}
+<p class="preview-notice">{{.Notice}}</p>
+{{else}}
+<style>{{.CSS}}</style>
+{{range .Cards}}
+<article class="enshu-card">
+  {{if gt (len $.Cards) 1}}<p><small>Card {{.Number}} of {{len $.Cards}}</small></p>{{end}}
+  <div class="card-question">{{.Question}}</div>
+  <div class="card-answer">{{.Answer}}</div>
+</article>
+{{end}}
+{{end}}
+{{end}}

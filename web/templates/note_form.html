@@ -36,8 +36,11 @@
     {{end}}
     <label for="tags">Tags</label>
     <input type="text" id="tags" name="tags" placeholder="space separated">
+    <button type="button" hx-post="/decks/{{.Deck.ID}}/notes/preview"
+            hx-include="closest form" hx-target="#note-preview" hx-swap="innerHTML">Preview</button>
     <button type="submit">Add note</button>
 </form>
+<div id="note-preview"></div>
 {{else}}
 <h1>Edit note</h1>
 <form method="post" action="/notes/{{.Note.ID}}/edit">
@@ -48,7 +51,7 @@
     {{end}}
     <label for="tags">Tags</label>
     <input type="text" id="tags" name="tags" value="{{range .Note.Tags}}{{.}} {{end}}">
-    {{if .NoteTypeOptions}}
+    {{if and .NoteTypeOptions .Note.CanManageAccess}}
     <label for="note_type_id">Note type</label>
     <select id="note_type_id" name="note_type_id">
         {{range .NoteTypeOptions}}<option value="{{.ID}}" {{if eq .ID $.NoteType.ID}}selected{{end}}>{{.Name}}</option>{{end}}
@@ -56,13 +59,16 @@
     {{else}}
     <input type="hidden" name="note_type_id" value="{{.NoteType.ID}}">
     {{end}}
+    <button type="button" hx-post="/notes/{{.Note.ID}}/preview"
+            hx-include="closest form" hx-target="#note-preview" hx-swap="innerHTML">Preview</button>
     <button type="submit">Save</button>
 </form>
+<div id="note-preview"></div>
 
 <form method="post" action="/notes/{{.Note.ID}}/move">
     <label for="target_deck_id">Move to deck</label>
     <select id="target_deck_id" name="target_deck_id">
-        {{range .Decks}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+        {{range .Decks}}{{if .CanEditContent}}<option value="{{.ID}}">{{.Name}}</option>{{end}}{{end}}
     </select>
     <button type="submit">Move</button>
 </form>

@@ -1,11 +1,11 @@
 -- name: ListDecksForUser :many
-SELECT d.*, (SELECT count(*) FROM cards c WHERE c.deck_id = d.id) AS card_count
+SELECT d.*, (SELECT count(*) FROM cards c WHERE c.deck_id = d.id) AS card_count, da.can_edit_settings, da.can_edit_content
 FROM decks d
 JOIN deck_access da ON da.deck_id = d.id AND da.user_id = sqlc.arg(user_id) AND da.can_view
 ORDER BY d.name;
 
 -- name: GetDeckForUser :one
-SELECT d.*
+SELECT d.*, da.can_edit_content, da.can_edit_settings, da.can_manage_access
 FROM decks d
 JOIN deck_access da ON da.deck_id = d.id AND da.user_id = sqlc.arg(user_id) AND da.can_view
 WHERE d.id = sqlc.arg(deck_id);
@@ -20,7 +20,7 @@ JOIN deck_access da ON da.deck_id = d.id AND da.user_id = sqlc.arg(user_id)
 ORDER BY d.name;
 
 -- name: GetDeckForSettingsEdit :one
-SELECT d.*
+SELECT d.*, da.can_delete
 FROM decks d
 JOIN deck_access da ON da.deck_id = d.id AND da.user_id = sqlc.arg(user_id)
                    AND da.can_view AND da.can_edit_settings

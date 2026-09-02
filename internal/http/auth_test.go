@@ -106,6 +106,7 @@ func newTestHandler(t *testing.T, tx pgx.Tx, cfg auth.Config, clocks ...func() t
 	registerAccessRoutes(mux, tx, pages)
 	registerNoteTypeRoutes(mux, tx, pages)
 	registerNoteRoutes(mux, tx, pages)
+	registerNotePreviewRoutes(mux, tx, fragments)
 	registerReviewRoutes(mux, tx, pages, fragments, clock)
 	blobs := media.New(t.TempDir())
 	registerMediaRoutes(mux, tx, blobs)

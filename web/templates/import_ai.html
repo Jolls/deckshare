@@ -5,7 +5,7 @@
 <form method="get" action="/import/ai">
     <label for="deck_id">Deck</label>
     <select id="deck_id" name="deck_id" required>
-        {{range .Decks}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+        {{range .Decks}}{{if .CanEditContent}}<option value="{{.ID}}">{{.Name}}</option>{{end}}{{end}}
     </select>
     {{template "noteTypeAndDepthFields" .}}
     <button type="submit">Continue</button>

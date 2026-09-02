@@ -24,7 +24,7 @@
             <td>{{$counts.Learning}}</td>
             <td>{{$counts.Due}}</td>
             <td>{{$counts.Left}}</td>
-            <td><a href="/decks/{{.ID}}/edit">Edit</a></td>
+            <td>{{if .CanEditSettings}}<a href="/decks/{{.ID}}/edit">Edit</a>{{end}}</td>
         </tr>
         {{end}}
     </tbody>

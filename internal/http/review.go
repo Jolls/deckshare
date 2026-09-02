@@ -40,12 +40,12 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 		user, _ := auth.UserFromContext(r.Context())
 		deckID, ok := pathUUID(r, "id")
 		if !ok {
-			notFound(w)
+			notFoundPage(w, pages, user)
 			return
 		}
 		q := db.New(store)
 		deck, err := q.GetDeckForStudy(r.Context(), db.GetDeckForStudyParams{UserID: user.ID, DeckID: deckID})
-		if handleQueryErr(w, err) {
+		if handleQueryErrPage(w, pages, user, err) {
 			return
 		}
 

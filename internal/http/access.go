@@ -43,12 +43,12 @@ func registerAccessRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 		user, _ := auth.UserFromContext(r.Context())
 		deckID, ok := pathUUID(r, "id")
 		if !ok {
-			notFound(w)
+			notFoundPage(w, pages, user)
 			return
 		}
 		q := db.New(store)
 		deck, err := q.GetDeckForAccessManage(r.Context(), db.GetDeckForAccessManageParams{UserID: user.ID, DeckID: deckID})
-		if handleQueryErr(w, err) {
+		if handleQueryErrPage(w, pages, user, err) {
 			return
 		}
 		renderAccess(r.Context(), w, pages, q, user, deck, http.StatusOK, "")
@@ -58,7 +58,7 @@ func registerAccessRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 		user, _ := auth.UserFromContext(r.Context())
 		deckID, ok := pathUUID(r, "id")
 		if !ok {
-			notFound(w)
+			notFoundPage(w, pages, user)
 			return
 		}
 		if !parseForm(w, r) {
@@ -66,7 +66,7 @@ func registerAccessRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 		}
 		q := db.New(store)
 		deck, err := q.GetDeckForAccessManage(r.Context(), db.GetDeckForAccessManageParams{UserID: user.ID, DeckID: deckID})
-		if handleQueryErr(w, err) {
+		if handleQueryErrPage(w, pages, user, err) {
 			return
 		}
 
@@ -103,7 +103,7 @@ func registerAccessRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 			// The caller's can_view/can_manage_access was revoked between the GetDeckForAccessManage
 			// read above and this insert -- GrantDeckAccess re-checks it atomically, so treat the
 			// race the same as any other loss of access.
-			notFound(w)
+			notFoundPage(w, pages, user)
 			return
 		}
 		http.Redirect(w, r, "/decks/"+deckID.String()+"/access", http.StatusSeeOther)
@@ -113,12 +113,12 @@ func registerAccessRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 		user, _ := auth.UserFromContext(r.Context())
 		deckID, ok := pathUUID(r, "id")
 		if !ok {
-			notFound(w)
+			notFoundPage(w, pages, user)
 			return
 		}
 		targetUserID, ok := pathUUID(r, "userId")
 		if !ok {
-			notFound(w)
+			notFoundPage(w, pages, user)
 			return
 		}
 		if !parseForm(w, r) {
@@ -141,7 +141,7 @@ func registerAccessRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 			CanEditSettings: flags.CanEditSettings, CanManageAccess: flags.CanManageAccess,
 			CanDelete: flags.CanDelete,
 		})
-		if !handleAccessChangeErr(w, err) {
+		if !handleAccessChangeErr(w, pages, user, err) {
 			return
 		}
 		if !commitTx(r.Context(), w, tx) {
@@ -154,12 +154,12 @@ func registerAccessRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 		user, _ := auth.UserFromContext(r.Context())
 		deckID, ok := pathUUID(r, "id")
 		if !ok {
-			notFound(w)
+			notFoundPage(w, pages, user)
 			return
 		}
 		targetUserID, ok := pathUUID(r, "userId")
 		if !ok {
-			notFound(w)
+			notFoundPage(w, pages, user)
 			return
 		}
 
@@ -169,7 +169,7 @@ func registerAccessRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 		}
 		defer func() { _ = tx.Rollback(r.Context()) }()
 
-		if !handleAccessChangeErr(w, db.RevokeDeckAccess(r.Context(), tx, deckID, user.ID, targetUserID)) {
+		if !handleAccessChangeErr(w, pages, user, db.RevokeDeckAccess(r.Context(), tx, deckID, user.ID, targetUserID)) {
 			return
 		}
 		if !commitTx(r.Context(), w, tx) {
@@ -205,12 +205,12 @@ func grantDeckAccess(ctx context.Context, store db.Beginner, arg db.GrantDeckAcc
 // reports whether the caller may continue. pgx.ErrNoRows covers both "the caller lacks
 // can_manage_access on this deck" and "the target has no row" -- collapsed to 404 by the same
 // rule as every other deck route (docs/schema.md).
-func handleAccessChangeErr(w http.ResponseWriter, err error) (ok bool) {
+func handleAccessChangeErr(w http.ResponseWriter, pages map[string]*template.Template, user db.User, err error) (ok bool) {
 	switch {
 	case err == nil:
 		return true
 	case errors.Is(err, pgx.ErrNoRows):
-		notFound(w)
+		notFoundPage(w, pages, user)
 	case errors.Is(err, db.ErrLastAccessHolder):
 		http.Error(w, "a deck must keep at least one member who can manage access and one who can delete it", http.StatusConflict)
 	default:

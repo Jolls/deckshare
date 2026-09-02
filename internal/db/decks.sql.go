@@ -91,7 +91,7 @@ func (q *Queries) GetDeckForContentEdit(ctx context.Context, arg GetDeckForConte
 }
 
 const getDeckForSettingsEdit = `-- name: GetDeckForSettingsEdit :one
-SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id
+SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id, da.can_delete
 FROM decks d
 JOIN deck_access da ON da.deck_id = d.id AND da.user_id = $1
                    AND da.can_view AND da.can_edit_settings
@@ -103,9 +103,21 @@ type GetDeckForSettingsEditParams struct {
 	DeckID pgtype.UUID
 }
 
-func (q *Queries) GetDeckForSettingsEdit(ctx context.Context, arg GetDeckForSettingsEditParams) (Deck, error) {
+type GetDeckForSettingsEditRow struct {
+	ID          pgtype.UUID
+	OwnerID     pgtype.UUID
+	Name        string
+	Description string
+	Preset      []byte
+	CreatedAt   pgtype.Timestamptz
+	ModifiedAt  pgtype.Timestamptz
+	AnkiID      pgtype.Int8
+	CanDelete   bool
+}
+
+func (q *Queries) GetDeckForSettingsEdit(ctx context.Context, arg GetDeckForSettingsEditParams) (GetDeckForSettingsEditRow, error) {
 	row := q.db.QueryRow(ctx, getDeckForSettingsEdit, arg.UserID, arg.DeckID)
-	var i Deck
+	var i GetDeckForSettingsEditRow
 	err := row.Scan(
 		&i.ID,
 		&i.OwnerID,
@@ -115,12 +127,13 @@ func (q *Queries) GetDeckForSettingsEdit(ctx context.Context, arg GetDeckForSett
 		&i.CreatedAt,
 		&i.ModifiedAt,
 		&i.AnkiID,
+		&i.CanDelete,
 	)
 	return i, err
 }
 
 const getDeckForUser = `-- name: GetDeckForUser :one
-SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id
+SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id, da.can_edit_content, da.can_edit_settings, da.can_manage_access
 FROM decks d
 JOIN deck_access da ON da.deck_id = d.id AND da.user_id = $1 AND da.can_view
 WHERE d.id = $2
@@ -131,9 +144,23 @@ type GetDeckForUserParams struct {
 	DeckID pgtype.UUID
 }
 
-func (q *Queries) GetDeckForUser(ctx context.Context, arg GetDeckForUserParams) (Deck, error) {
+type GetDeckForUserRow struct {
+	ID              pgtype.UUID
+	OwnerID         pgtype.UUID
+	Name            string
+	Description     string
+	Preset          []byte
+	CreatedAt       pgtype.Timestamptz
+	ModifiedAt      pgtype.Timestamptz
+	AnkiID          pgtype.Int8
+	CanEditContent  bool
+	CanEditSettings bool
+	CanManageAccess bool
+}
+
+func (q *Queries) GetDeckForUser(ctx context.Context, arg GetDeckForUserParams) (GetDeckForUserRow, error) {
 	row := q.db.QueryRow(ctx, getDeckForUser, arg.UserID, arg.DeckID)
-	var i Deck
+	var i GetDeckForUserRow
 	err := row.Scan(
 		&i.ID,
 		&i.OwnerID,
@@ -143,27 +170,32 @@ func (q *Queries) GetDeckForUser(ctx context.Context, arg GetDeckForUserParams) 
 		&i.CreatedAt,
 		&i.ModifiedAt,
 		&i.AnkiID,
+		&i.CanEditContent,
+		&i.CanEditSettings,
+		&i.CanManageAccess,
 	)
 	return i, err
 }
 
 const listDecksForUser = `-- name: ListDecksForUser :many
-SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id, (SELECT count(*) FROM cards c WHERE c.deck_id = d.id) AS card_count
+SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id, (SELECT count(*) FROM cards c WHERE c.deck_id = d.id) AS card_count, da.can_edit_settings, da.can_edit_content
 FROM decks d
 JOIN deck_access da ON da.deck_id = d.id AND da.user_id = $1 AND da.can_view
 ORDER BY d.name
 `
 
 type ListDecksForUserRow struct {
-	ID          pgtype.UUID
-	OwnerID     pgtype.UUID
-	Name        string
-	Description string
-	Preset      []byte
-	CreatedAt   pgtype.Timestamptz
-	ModifiedAt  pgtype.Timestamptz
-	AnkiID      pgtype.Int8
-	CardCount   int64
+	ID              pgtype.UUID
+	OwnerID         pgtype.UUID
+	Name            string
+	Description     string
+	Preset          []byte
+	CreatedAt       pgtype.Timestamptz
+	ModifiedAt      pgtype.Timestamptz
+	AnkiID          pgtype.Int8
+	CardCount       int64
+	CanEditSettings bool
+	CanEditContent  bool
 }
 
 func (q *Queries) ListDecksForUser(ctx context.Context, userID pgtype.UUID) ([]ListDecksForUserRow, error) {
@@ -185,6 +217,8 @@ func (q *Queries) ListDecksForUser(ctx context.Context, userID pgtype.UUID) ([]L
 			&i.ModifiedAt,
 			&i.AnkiID,
 			&i.CardCount,
+			&i.CanEditSettings,
+			&i.CanEditContent,
 		); err != nil {
 			return nil, err
 		}
