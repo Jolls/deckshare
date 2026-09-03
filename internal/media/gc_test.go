@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Jolls/enshu/internal/db"
+	"github.com/Jolls/deckshare/internal/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"

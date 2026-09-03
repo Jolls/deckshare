@@ -9,8 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/Jolls/enshu/internal/auth"
-	"github.com/Jolls/enshu/internal/media"
+	"github.com/Jolls/deckshare/internal/auth"
+	"github.com/Jolls/deckshare/internal/media"
 )
 
 // testSHA is a well-formed (but never-written) sha256 hex digest, used by tests that only need a

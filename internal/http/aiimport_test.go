@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Jolls/enshu/internal/auth"
+	"github.com/Jolls/deckshare/internal/auth"
 )
 
 func TestAIImportRoutes_GoldenPath(t *testing.T) {

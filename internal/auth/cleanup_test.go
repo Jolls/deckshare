@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Jolls/enshu/internal/db"
+	"github.com/Jolls/deckshare/internal/db"
 )
 
 func TestDeleteExpiredSessions(t *testing.T) {

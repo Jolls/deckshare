@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Jolls/enshu/internal/apkg"
-	"github.com/Jolls/enshu/internal/auth"
-	"github.com/Jolls/enshu/internal/db"
+	"github.com/Jolls/deckshare/internal/apkg"
+	"github.com/Jolls/deckshare/internal/auth"
+	"github.com/Jolls/deckshare/internal/db"
 )
 
 // registerExportRoutes wires GET /decks/{id}/export (docs/routes.md): one deck's content plus the

@@ -2,7 +2,7 @@
 tags: [project, software, spaced-repetition, education]
 ---
 
-# Enshu
+# DeckShare
 
 Multiuser, web-based, Anki-compatible spaced repetition app for classrooms and teams.
 
@@ -20,14 +20,14 @@ carries both the content pointer and the scheduling state. There is no seam betw
 deck" and "my progress on this deck." That's why teacher/student assignment, co-authored
 decks, and shared decks with private progress don't exist in the Anki ecosystem.
 
-AnkiWeb is multiuser only in the sense of hosting many separate collections. Enshu targets
+AnkiWeb is multiuser only in the sense of hosting many separate collections. DeckShare targets
 the other meaning — users actually sharing things.
 
 ## Decisions made
 
 | Decision | Choice |
 |---|---|
-| Name | **Enshu** (演習, "seminar / practice drill") — see [[#Naming]] |
+| Name | **DeckShare** — see [[#Naming]] |
 | Stack | Go + PostgreSQL (`sqlc`), server-rendered HTML — see [[#Stack reconsidered]] |
 | Scheduling | FSRS via `go-fsrs`, server-side only, no client implementation — see [[fsrs-spaced-repetition]] |
 | Anki compatibility | `.apkg` / `.colpkg` import/export only |
@@ -56,7 +56,7 @@ writeup and the alternatives considered: `docs/plans/architecture-reconsidered.m
 
 ### Why sync was dropped
 
-Sync exists to reconcile independent offline copies across devices. Enshu is a server — you
+Sync exists to reconcile independent offline copies across devices. DeckShare is a server — you
 are already connected to it in order to use it. The problem sync solves doesn't exist here.
 
 Implementing it would have meant reverse-engineering an undocumented protocol, forking a
@@ -96,19 +96,20 @@ state by replaying it.
 
 ### Naming
 
+> [!warning]
+> **DRAFT — placeholder pending your review.** Renamed from Enshu; see
+> `docs/plans/rename-enshu-to-deckshare.md` in the repo for the original section and the
+> reasoning behind the rename. This paragraph needs your real writeup, not an invented one.
+
+DeckShare is plain and descriptive: the product shares decks between users. Informal collision
+check found only a dormant ~2011 Alfresco plugin of the same name (different domain,
+presentation hosting, no active trademark) — do a real USPTO/domain check before the name is
+load-bearing.
+
 `ANKI` is a registered trademark of Ankitects Pty Ltd and is actively enforced (Anki Pro was
 compelled to rebrand to Noji in June 2025). Descriptive use — "imports Anki decks" — is
 nominative fair use and fine. A product *branded* `anki-something` is closer to the risky end.
 Findability is handled via GitHub description and topics, which are indexed heavily.
-
-Rejected: **Kioku** (taken — a vocabulary app plus Kiokuhub, an edtech firm), **Terakoya**
-(taken — Terakoya.AI), **Doki** 同期 (great double meaning of "cohort" and "sync", but the sync
-pun died with the feature, and the romanisation reads cutesy), **Fukushu** (homophone with
-"revenge"), `ankiweb-multiuser` (appropriates the official service name).
-
-> [!warning]
-> The Japanese has not been checked by a native speaker. Worth doing before the name is
-> load-bearing.
 
 ## Roadmap
 
@@ -133,8 +134,7 @@ progress is keyed to the old ones, so it doesn't survive the trip.
 
 - Licence: AGPLv3 vs MIT/Apache-2.0. AGPL suits the ecosystem and blocks closed hosted forks,
   but institutional AGPL bans could hurt school adoption. Settle before outside contributions.
-- Native-speaker check on "Enshu".
-- ~~Deck-content licensing~~ — closed with the public directory. Enshu never redistributes deck
+- ~~Deck-content licensing~~ — closed with the public directory. DeckShare never redistributes deck
   content, so there's no catalogue to attach per-deck licence metadata to. Reopen if any
   deck-sharing surface ever crosses instances.
 

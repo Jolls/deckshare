@@ -12,7 +12,7 @@ import (
 // ScopeClass is the class the caller MUST put on the element wrapping a card's rendered HTML.
 // Every selector SanitiseCSS emits is scoped to it, so one deck's note-type CSS cannot restyle
 // the application around it.
-const ScopeClass = "enshu-card"
+const ScopeClass = "deckshare-card"
 
 // allowedCSSProperties is shared between the note-type CSS blob (SanitiseCSS) and inline
 // style="" attributes on card HTML (sanitise.go) -- one allowlist, one place it can drift.

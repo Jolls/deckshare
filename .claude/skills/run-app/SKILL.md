@@ -1,6 +1,6 @@
 ---
 name: run-app
-description: Use when explicitly asked to run, start, or test the enshu app locally (or to shut it down afterward). Brings up Postgres via compose, applies goose migrations, builds and runs the Go server, smoke-tests it, and tears everything back down. Triggers on "run the app", "start the server", "test this locally", "shut it all down". Per CLAUDE.md §16, only start the dev server when explicitly asked — never as a verification step for routine changes (use build/vet/lint/test for that).
+description: Use when explicitly asked to run, start, or test the deckshare app locally (or to shut it down afterward). Brings up Postgres via compose, applies goose migrations, builds and runs the Go server, smoke-tests it, and tears everything back down. Triggers on "run the app", "start the server", "test this locally", "shut it all down". Per CLAUDE.md §16, only start the dev server when explicitly asked — never as a verification step for routine changes (use build/vet/lint/test for that).
 ---
 
 Run `go run ./scripts/run-app {start|stop|status}` from the repo root.

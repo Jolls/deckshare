@@ -142,7 +142,7 @@ func typeFilter(fieldName, rawValue string, ctx *context) (string, error) {
 	if _, err := rand.Read(buf[:]); err != nil {
 		return "", fmt.Errorf("render: generating type-answer token: %w", err)
 	}
-	placeholder := "ENSHUTYPEANSWER" + hex.EncodeToString(buf[:]) + "ENSHUEND"
+	placeholder := "DECKSHARETYPEANSWER" + hex.EncodeToString(buf[:]) + "DECKSHAREEND"
 	ctx.typeAnswer = &TypeAnswer{Field: fieldName, Expected: expected, Placeholder: placeholder}
 	return placeholder, nil
 }

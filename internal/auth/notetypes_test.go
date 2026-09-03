@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Jolls/enshu/internal/db"
+	"github.com/Jolls/deckshare/internal/db"
 )
 
 func TestSignup_SeedsDefaultNoteTypes(t *testing.T) {

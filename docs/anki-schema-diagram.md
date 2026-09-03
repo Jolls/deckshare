@@ -1,7 +1,7 @@
 # Anki schema diagram
 
 Visual companion to [anki-schema.md](anki-schema.md), which is the source of truth for
-column-level detail and verification status. This is Anki's own schema, not Enshu's — see
+column-level detail and verification status. This is Anki's own schema, not DeckShare's — see
 [schema-diagram.md](schema-diagram.md) for ours. Regenerate by hand if `anki-schema.md`'s
 shape changes.
 

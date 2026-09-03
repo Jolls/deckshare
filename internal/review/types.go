@@ -11,7 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/Jolls/enshu/internal/fsrs"
+	"github.com/Jolls/deckshare/internal/fsrs"
 )
 
 // Status is the per-event outcome of a graded review (architecture.md §6, plan §0.7).

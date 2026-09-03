@@ -27,9 +27,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/Jolls/enshu/internal/auth"
-	"github.com/Jolls/enshu/internal/db"
-	"github.com/Jolls/enshu/internal/media"
+	"github.com/Jolls/deckshare/internal/auth"
+	"github.com/Jolls/deckshare/internal/db"
+	"github.com/Jolls/deckshare/internal/media"
 )
 
 // seedAvatarJPEG is a real (manually tested via the upload UI) avatar image, so a fresh seed
@@ -62,7 +62,7 @@ const (
 
 	// baseCardCSS/clozeBoldCSS: signup seeds the test user's Basic/Cloze note types with empty
 	// CSS (internal/auth/notetypes.go), so a reseed has nothing to visually check note-type
-	// CSS against (e.g. #194: the reviewer's visible card missing the enshu-card scope class,
+	// CSS against (e.g. #194: the reviewer's visible card missing the deckshare-card scope class,
 	// which silently drops every note-type CSS rule). Backfilled here rather than by changing
 	// what signup seeds, since this is test-fixture content, not a product default.
 	baseCardCSS = ".card {\n" +
@@ -255,7 +255,7 @@ func ensureDeckAccess(ctx context.Context, pool *pgxpool.Pool, arg db.GrantDeckA
 // avatar_sha256 at it, using the same single-transaction shape as POST /settings/avatar
 // (internal/http/settings.go) so the media GC sweep never observes the blob row committed but
 // not yet referenced. MEDIA_ROOT defaults to "./media" (matching .env.example) rather than
-// failing like cmd/enshu's requirement, since a missing avatar is not fatal to seeding decks/notes.
+// failing like cmd/deckshare's requirement, since a missing avatar is not fatal to seeding decks/notes.
 func ensureAvatar(ctx context.Context, pool *pgxpool.Pool, userID pgtype.UUID) error {
 	mediaRoot := os.Getenv("MEDIA_ROOT")
 	if mediaRoot == "" {

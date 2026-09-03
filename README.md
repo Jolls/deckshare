@@ -1,4 +1,4 @@
-# Enshu
+# DeckShare
 
 > Multiuser, web-based, Anki-compatible spaced repetition — built for classrooms and teams.
 
@@ -9,17 +9,16 @@ entirely (see [docs/plans/architecture-reconsidered.md](docs/plans/architecture-
 No Go code has been written yet. There are no users. Interfaces and storage may still change
 without a migration path.
 
-Enshu is a self-hostable spaced repetition server and web reviewer. It imports and exports
+DeckShare is a self-hostable spaced repetition server and web reviewer. It imports and exports
 Anki deck files, uses the same FSRS scheduling algorithm, and — unlike Anki — is multiuser
 from the ground up: many independent accounts, shared decks with per-user progress, and a
 teacher/student layer on top.
 
-The name is 演習 *enshū*, Japanese for a seminar or practice drill — the small-group class
-where you work through exercises together. It's a sibling of 暗記 *anki* ("memorisation"),
-built on 習 *shū*, "to learn through repeated practice."
+The name describes what the product does: sharing decks between users. See
+["Why DeckShare"](#why-deckshare) below — that section is a draft pending your review.
 
 > [!note]
-> Enshu is an independent project. It is not affiliated with, endorsed by, or derived from
+> DeckShare is an independent project. It is not affiliated with, endorsed by, or derived from
 > Ankitects Pty Ltd. "Anki" is a registered trademark of Ankitects Pty Ltd and is used here
 > only to describe file-format compatibility.
 
@@ -39,7 +38,7 @@ That single design fact is why the following don't exist in the Anki ecosystem:
 - A shared deck that receives corrections upstream without blowing away your scheduling
 
 AnkiWeb is web-based and multiuser in the sense of *hosting many separate collections*. It is
-not multiuser in the sense of *users sharing anything*. Enshu targets the second meaning.
+not multiuser in the sense of *users sharing anything*. DeckShare targets the second meaning.
 
 ### Non-goals
 
@@ -52,7 +51,7 @@ not multiuser in the sense of *users sharing anything*. Enshu targets the second
 
 ## Compatibility model
 
-**Enshu speaks Anki's file format, not Anki's sync protocol.**
+**DeckShare speaks Anki's file format, not Anki's sync protocol.**
 
 You import `.apkg` and `.colpkg` files, including scheduling state, so an existing collection
 arrives intact with review history preserved. You can export back out at any time, so nobody
@@ -64,7 +63,7 @@ reader/writer.
 
 ### Why not implement sync
 
-Sync exists to reconcile independent offline copies of a collection across devices. Enshu is
+Sync exists to reconcile independent offline copies of a collection across devices. DeckShare is
 a server. You are already connected to it in order to use it, and the browser holds the only
 client-side state there is. **The problem sync solves does not exist here.** Attempting it
 would mean:
@@ -73,13 +72,13 @@ would mean:
 - Forking a large Rust codebase and tracking its changes forever
 - Inheriting AGPL obligations across the project
 - Building a per-user projection layer to fake an Anki-shaped collection out of our schema
-- ...to deliver a *degraded* experience, since none of Enshu's actual features — classroom
+- ...to deliver a *degraded* experience, since none of DeckShare's actual features — classroom
   assignment, shared decks, progress reporting — can traverse that protocol anyway
 
 The migration case that sync would have served is covered by one-way import. Someone brings
 their collection in once and is done.
 
-**What this costs us:** offline study on a phone via AnkiDroid. Enshu is a server, and
+**What this costs us:** offline study on a phone via AnkiDroid. DeckShare is a server, and
 studying against it needs a connection — see below.
 
 ### Offline vs. network-independent
@@ -120,7 +119,7 @@ built then, against a foundation that didn't compromise for it.
 
 ## Scheduling: FSRS
 
-Enshu schedules with **FSRS** (Free Spaced Repetition Scheduler), the open-source algorithm
+DeckShare schedules with **FSRS** (Free Spaced Repetition Scheduler), the open-source algorithm
 developed by Jarrett Ye and the [open-spaced-repetition](https://github.com/open-spaced-repetition)
 group and integrated into Anki since 23.10. We use it as-is via
 [`go-fsrs`](https://github.com/open-spaced-repetition/go-fsrs), server-side only.
@@ -264,7 +263,7 @@ Each of these is a decision rather than a backlog item:
 
 - **Anki sync protocol** — see above.
 - **Full offline study** (deck + media pre-caching, IndexedDB, multi-device conflict
-  resolution). Enshu is a server. Local grading is a latency property, not a step toward this.
+  resolution). DeckShare is a server. Local grading is a latency property, not a step toward this.
 - **Deck forking** and a **public deck directory**. `deck_access` already covers co-authoring
   and the classroom, and anyone wanting an outside deck can import its `.apkg`. Worth being
   precise: export-then-reimport is *not* forking — reimport creates new cards, and your
@@ -281,19 +280,19 @@ Each of these is a decision rather than a backlog item:
 
 **AGPL-3.0-or-later.**
 
-Because Enshu contains no Anki-derived code, we inherit no licence — Anki is AGPLv3-or-later,
+Because DeckShare contains no Anki-derived code, we inherit no licence — Anki is AGPLv3-or-later,
 and forking its sync server would have made AGPL permanent and irreversible for this project
 (hundreds of contributors, no CLA, nobody able to grant an exception). Dropping sync means
 that constraint simply doesn't apply, which is why the choice was ours to make freely rather
 than inherited.
 
-We chose AGPLv3-or-later anyway: it's consistent with the ecosystem Enshu sits in, and it
+We chose AGPLv3-or-later anyway: it's consistent with the ecosystem DeckShare sits in, and it
 prevents someone running a closed proprietary fork as a hosted service. The trade-off is that
 some organisations have blanket policies against AGPL, which can limit institutional
 adoption — a real consideration for something aimed at schools, and a cost we accepted
 knowingly rather than one we missed.
 
-Deck content is a separate matter from code, and Enshu never redistributes any. Publicly
+Deck content is a separate matter from code, and DeckShare never redistributes any. Publicly
 shared decks carry their own licence terms, and redistributing them without permission is
 something Ankitects has publicly objected to — so there is no deck catalogue, no directory,
 and no republication. A deck reaches a second person through a `deck_access` row on the
@@ -314,7 +313,7 @@ considers to be trading on the brand.
 
 The distinction that matters is **descriptive use versus brand use**:
 
-- ✅ *"Enshu imports Anki decks"* — nominative fair use. Standard, low risk.
+- ✅ *"DeckShare imports Anki decks"* — nominative fair use. Standard, low risk.
 - ⚠️ *A product branded* `AnkiMultiuser` *with a domain and marketing* — this is what got Anki
   Pro renamed. Being FOSS reduces the commercial-confusion argument but does not eliminate it.
 - ❌ Anything containing `AnkiWeb` — the name of the official service. Direct implication of
@@ -322,53 +321,37 @@ The distinction that matters is **descriptive use versus brand use**:
 
 Community repos using an `anki-` prefix as a plain descriptor (`anki-sync-server-rs`,
 `anki-connect`, the `ankicommunity` org) have not been targeted, because they are obviously
-tools rather than competing products. Enshu is a competing product, which puts it closer to
+tools rather than competing products. DeckShare is a competing product, which puts it closer to
 the risky end. Hence a distinct name, with compatibility carried in the description and
 topics — GitHub indexes both heavily, and the `anki` topic page is where the target audience
 browses. Findability does not require the name.
 
 ```
-Repo:        enshu
+Repo:        deckshare
 Description: Multiuser, web-based spaced repetition for classrooms and teams.
              FSRS scheduling, Anki deck import/export.
 Topics:      anki, spaced-repetition, fsrs, flashcards, srs, self-hosted,
              education, classroom, go
 ```
 
-### Why Enshu, and what was rejected
-
-演習 *enshū* means a seminar or practice drill — group study plus repetition, which is the
-product in one word. It shares the 習 root with 復習 *fukushū* (review), 学習 *gakushū*
-(learning), and 自習 *jishū* (self-study), and sits alongside 暗記 *anki* without borrowing
-from it.
-
-| Candidate | Outcome |
-|---|---|
-| **enshu** 演習 | **Chosen.** No software or edtech collision found. |
-| kioku 記憶 | **Rejected — taken.** A vocabulary-memorisation app on both app stores, plus Kiokuhub, an edtech company serving "learners, teachers, and institutions." Direct collision. |
-| terakoya 寺子屋 | **Rejected — taken.** Terakoya.AI ships an education app. |
-| doki 同期 | **Fallback.** Real word meaning both "cohort" and "synchronisation" — though the sync half of the pun is moot now. Rejected on romanisation: "Doki" reads cutesy in English (ドキドキ), "Douki" is worse. |
-| fukushu 復習 | Rejected. Homophone with 復讐, "revenge." |
-| rinko 輪講 | Rejected. Perfect meaning (a study group taking turns presenting) but obscure even in Japan, and a common given name. |
-| juku 塾 | Rejected. Short and memorable, but connotes rote cram-school grinding. |
-| `anki-multiuser` | Rejected. Findable, but reads as an Anki add-on rather than a product, and carries the trademark question. |
-| `ankiweb-multiuser` | Rejected outright. Appropriates the official service name. |
-
-**Known adjacencies, accepted:**
-
-- [Renshuu](https://renshuu.org) — an established Japanese-learning SRS site. 練習 *renshū*
-  ("practice") is one letter and one kanji away from 演習 *enshū*, and it's in the adjacent
-  space. Different scope (Japanese-language-specific vs general-purpose), but worth knowing.
-- Enshu Limited (TSE 6218) — a Japanese CNC machine-tool manufacturer since 1920. Different
-  trademark class entirely; no realistic conflict with software.
-- Kobori Enshū (1579–1647) — tea master and garden designer. Harmless, arguably a nice
-  association.
+### Why DeckShare
 
 > [!warning]
-> The Japanese here has not been checked by a native speaker. Connotation is exactly where
-> non-native judgement is least reliable — get it sanity-checked before the name is
-> load-bearing. Renaming a GitHub repo is cheap (redirects are automatic); renaming a product
-> with users, a domain, and inbound links is not.
+> **DRAFT — placeholder pending your review.** This replaces the old "Why DeckShare, and what was
+> rejected" section (see git history / [docs/plans/rename-enshu-to-deckshare.md](docs/plans/rename-enshu-to-deckshare.md)
+> for the original). The naming rationale is a statement of intent, not a mechanical fact, so
+> it needs a real writeup from you rather than an invented one — this stands in until then.
+
+DeckShare is a plain, descriptive name for what the product does: sharing decks between users.
+It trades the wordplay of the old name for straightforward searchability, and sidesteps the
+"is this an Anki add-on?" ambiguity that `deckshare` (opaque to non-Japanese speakers) didn't fully
+avoid either.
+
+Naming collision check (informal — see [docs/plans/rename-enshu-to-deckshare.md](docs/plans/rename-enshu-to-deckshare.md)
+§1): the only notable prior use is *Alfresco DeckShare*, a dormant ~2011 presentation-hosting
+plugin, different domain, no active trademark found. Do a proper USPTO/domain check before
+this name is load-bearing (before a real launch, domain purchase, etc.) — the same caution the
+old section gave itself.
 
 ---
 

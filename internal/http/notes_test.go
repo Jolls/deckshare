@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Jolls/enshu/internal/auth"
+	"github.com/Jolls/deckshare/internal/auth"
 )
 
 func setupDeckAndNoteType(t *testing.T, handler http.Handler, cookie *http.Cookie) (deckPath string) {

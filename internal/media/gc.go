@@ -7,7 +7,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/Jolls/enshu/internal/db"
+	"github.com/Jolls/deckshare/internal/db"
 )
 
 // The constraints that make a referenced blob undeletable, and so the ones whose violation the

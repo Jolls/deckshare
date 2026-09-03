@@ -1,11 +1,11 @@
-# CLAUDE.md — Enshu foundation
+# CLAUDE.md — DeckShare foundation
 
 Working context for agent sessions on this repo. **This file is how to work here** — the rules,
 the invariants you must not break, and the process. [docs/architecture.md](docs/architecture.md)
 is what the system *is*: state, stack, layout, protocols, roadmap, glossary. Read it when you
 need the shape of the thing; read this before you touch it.
 
-[README.md](README.md) is the public rationale ("why these decisions"); [enshu.md](enshu.md) is
+[README.md](README.md) is the public rationale ("why these decisions"); [deckshare.md](deckshare.md) is
 the personal-notes digest of it. If a decision here contradicts the README, the README wins on
 *rationale* and this file wins on *mechanics*. If you change a decision, update both.
 
@@ -222,13 +222,13 @@ any user-facing copy, docs, or repo metadata:
 
 The line is **descriptive use versus brand use**, not the presence of the word:
 
-- ✅ Descriptive: "Enshu imports Anki decks." Nominative fair use.
+- ✅ Descriptive: "DeckShare imports Anki decks." Nominative fair use.
 - ⚠️ Never brand anything `Anki<something>`.
 - ❌ Never put `AnkiWeb` in anything that *names us* — repo, product, package, domain, GitHub
   topics, headings. It is the official service's name, so wearing it implies affiliation
   outright. `ankiweb-multiuser` was rejected as a project name for exactly this reason.
 - ✅ But naming the service in prose is fine, and sometimes required: contrasting it with
-  Enshu ("AnkiWeb hosts many separate collections; Enshu targets sharing between them"),
+  DeckShare ("AnkiWeb hosts many separate collections; DeckShare targets sharing between them"),
   listing it under prior art, or stating this very rule. That is the same nominative use as
   "imports Anki decks" — and a rule that forbade it would forbid the README's own trademark
   section from naming what it is about.
@@ -278,7 +278,7 @@ version entry, grouped under `### Added` / `### Changed` / `### Fixed` / `### Re
 ```
 ## [0.1.X] - YYYY-MM-DD
 ### Added
-- <one-line summary> ([#NNN](https://github.com/<owner>/enshu/issues/NNN))
+- <one-line summary> ([#NNN](https://github.com/<owner>/deckshare/issues/NNN))
 ```
 
 Link is a pointer to the issue; omit only if no issue. No comparison links in the footer.

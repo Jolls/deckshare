@@ -1,6 +1,6 @@
 # Anki's own schema (reference)
 
-This is Anki's SQLite schema, table by table — not Enshu's. Companion to
+This is Anki's SQLite schema, table by table — not DeckShare's. Companion to
 [schema.md](schema.md), which is *our* schema and the one to edit when adding a table or
 column here. This file exists so a reader can answer "what column holds X in a real
 `.anki2`/`.anki21` file" without re-deriving it from [apkg-format.md](apkg-format.md)'s
@@ -94,7 +94,7 @@ One row per note (the field values; card generation happens via `cards`).
 ### `cards`
 
 One row per generated card. Content addressing plus **current** scheduling state — the thing
-Enshu invariant §2.1 splits into `cards` (content) and `user_card_state` (per-user state).
+DeckShare invariant §2.1 splits into `cards` (content) and `user_card_state` (per-user state).
 
 | Column | Type | Meaning |
 |---|---|---|
@@ -136,7 +136,7 @@ row per answer, never rolled up.
 
 ### `graves`
 
-Tombstones for sync-propagated deletion — irrelevant to Enshu's import path (we don't sync)
+Tombstones for sync-propagated deletion — irrelevant to DeckShare's import path (we don't sync)
 but present in every collection.
 
 | Column | Type | Meaning |

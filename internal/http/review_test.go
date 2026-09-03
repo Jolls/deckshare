@@ -17,10 +17,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/Jolls/enshu/internal/auth"
-	"github.com/Jolls/enshu/internal/db"
-	"github.com/Jolls/enshu/internal/fsrs"
-	"github.com/Jolls/enshu/internal/review"
+	"github.com/Jolls/deckshare/internal/auth"
+	"github.com/Jolls/deckshare/internal/db"
+	"github.com/Jolls/deckshare/internal/fsrs"
+	"github.com/Jolls/deckshare/internal/review"
 )
 
 // -- fixtures and helpers --------------------------------------------------
@@ -819,14 +819,14 @@ func TestReviewPage_HiddenCardShape(t *testing.T) {
 	if pageResp.Code != http.StatusOK {
 		t.Fatalf("page status = %d: %s", pageResp.Code, pageResp.Body.String())
 	}
-	if !strings.Contains(pageResp.Body.String(), `class="enshu-card card"`) {
-		t.Error("card wrapper missing the enshu-card scope class")
+	if !strings.Contains(pageResp.Body.String(), `class="deckshare-card card"`) {
+		t.Error("card wrapper missing the deckshare-card scope class")
 	}
 	// #194: #review-stage is what review.js actually copies revealed card HTML into -- if it
-	// isn't also scoped to enshu-card, every note-type CSS rule matches nothing once a card is
+	// isn't also scoped to deckshare-card, every note-type CSS rule matches nothing once a card is
 	// shown, even though the rule and the markup both look correct in isolation.
-	if !strings.Contains(pageResp.Body.String(), `id="review-stage" hidden class="review-card enshu-card"`) {
-		t.Error("#review-stage missing the enshu-card scope class (#194)")
+	if !strings.Contains(pageResp.Body.String(), `id="review-stage" hidden class="review-card deckshare-card"`) {
+		t.Error("#review-stage missing the deckshare-card scope class (#194)")
 	}
 	// #178: review.js reads the acting account id off its own script tag and sends it as ?u=.
 	if !strings.Contains(pageResp.Body.String(), `data-user-id="`) {
@@ -1057,8 +1057,8 @@ func TestStudyAll_MixesAcrossDecks(t *testing.T) {
 		t.Error("study page must render the acting user id onto the review.js script tag (#178)")
 	}
 	// #194: see the matching assertion in TestReviewPage_HiddenCardShape.
-	if !strings.Contains(body, `id="review-stage" hidden class="review-card enshu-card"`) {
-		t.Error("#review-stage missing the enshu-card scope class (#194)")
+	if !strings.Contains(body, `id="review-stage" hidden class="review-card deckshare-card"`) {
+		t.Error("#review-stage missing the deckshare-card scope class (#194)")
 	}
 
 	gotIDs := extractCardIDs(body)

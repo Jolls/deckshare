@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Jolls/enshu/internal/auth"
+	"github.com/Jolls/deckshare/internal/auth"
 )
 
 // mathFixture is the real schema-18 export used to close #61 -- see

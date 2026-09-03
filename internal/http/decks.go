@@ -10,10 +10,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/Jolls/enshu/internal/auth"
-	"github.com/Jolls/enshu/internal/db"
-	"github.com/Jolls/enshu/internal/fsrs"
-	"github.com/Jolls/enshu/internal/review"
+	"github.com/Jolls/deckshare/internal/auth"
+	"github.com/Jolls/deckshare/internal/db"
+	"github.com/Jolls/deckshare/internal/fsrs"
+	"github.com/Jolls/deckshare/internal/review"
 )
 
 // queueCounts is the New/Learning/Due summary shown on the decks list and the deck page (#80).

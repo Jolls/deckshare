@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"regexp"
 
-	"github.com/Jolls/enshu/internal/auth"
-	"github.com/Jolls/enshu/internal/db"
-	"github.com/Jolls/enshu/internal/media"
+	"github.com/Jolls/deckshare/internal/auth"
+	"github.com/Jolls/deckshare/internal/db"
+	"github.com/Jolls/deckshare/internal/media"
 )
 
 // sha256HexPath matches the {sha256} path segment. The value is untrusted (straight off the URL),

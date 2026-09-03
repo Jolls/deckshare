@@ -15,9 +15,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/Jolls/enshu/internal/auth"
-	"github.com/Jolls/enshu/internal/db"
-	"github.com/Jolls/enshu/internal/media"
+	"github.com/Jolls/deckshare/internal/auth"
+	"github.com/Jolls/deckshare/internal/db"
+	"github.com/Jolls/deckshare/internal/media"
 )
 
 // DB-backed tests: skipped unless DATABASE_URL is set. Every test runs inside a pgx.Tx that is

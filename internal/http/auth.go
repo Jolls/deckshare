@@ -6,7 +6,7 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/Jolls/enshu/internal/auth"
+	"github.com/Jolls/deckshare/internal/auth"
 )
 
 func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*template.Template) {

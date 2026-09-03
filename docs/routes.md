@@ -192,7 +192,7 @@ Milestone 2 scope (architecture.md §11).
 | GET | `/import/ai` | session | No `deck_id`/`note_type_id` query params: pick a deck + note type. Both present (and owned): show the generated prompt for that note type |
 | POST | `/import/ai` | session | Parse the pasted NDJSON reply (`internal/textimport.Parse`); on any parse or field-validation error, re-render the prompt step with every line's error and nothing written. Otherwise create all notes + cards in one transaction (`notes.go`'s `validateNoteFields`/`desiredCards`/`randomGuid`/`db.CreateNoteWithCards`, no `internal/apkg` involvement) and redirect to the deck |
 
-No API key, no model call from Enshu itself (architecture.md §11) — the user runs the generated
+No API key, no model call from DeckShare itself (architecture.md §11) — the user runs the generated
 prompt through whatever AI they already have and pastes the reply back in. All-or-nothing per
 paste, synchronous, capped at `maxAIImportNotes` — the same "no job queue for MVP" call as
 `/import` above.

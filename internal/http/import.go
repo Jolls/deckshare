@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Jolls/enshu/internal/apkg"
-	"github.com/Jolls/enshu/internal/auth"
-	"github.com/Jolls/enshu/internal/db"
-	"github.com/Jolls/enshu/internal/media"
+	"github.com/Jolls/deckshare/internal/apkg"
+	"github.com/Jolls/deckshare/internal/auth"
+	"github.com/Jolls/deckshare/internal/db"
+	"github.com/Jolls/deckshare/internal/media"
 )
 
 // maxUploadBytes bounds the raw multipart request body -- ahead of apkg.DefaultArchiveLimits,

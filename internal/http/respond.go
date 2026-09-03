@@ -8,7 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/Jolls/enshu/internal/db"
+	"github.com/Jolls/deckshare/internal/db"
 )
 
 // serverError writes the generic 500 response for an unexpected error, without leaking it to
