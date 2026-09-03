@@ -99,6 +99,29 @@ func SetDeckAccess(ctx context.Context, tx pgx.Tx, userID pgtype.UUID, arg Updat
 	return assertDeckStillManageable(ctx, q, arg.DeckID)
 }
 
+// ResetDeckProgress deletes targetUserID's user_card_state rows for deckID's cards on behalf of
+// userID. Same authorize-and-lock contract as RevokeDeckAccess/SetDeckAccess, but resetting
+// progress can never strand a deck, so there is no assertDeckStillManageable check and no error
+// for zero rows deleted -- a collaborator who never studied this deck resets to a no-op.
+// review_log is untouched (#189, CLAUDE.md §2.5).
+func ResetDeckProgress(ctx context.Context, tx pgx.Tx, deckID, userID, targetUserID pgtype.UUID) error {
+	q := New(tx)
+
+	if _, err := q.LockDeckForAccessChange(ctx, LockDeckForAccessChangeParams{
+		DeckID: deckID,
+		UserID: userID,
+	}); err != nil {
+		return err
+	}
+	if _, err := q.DeleteUserCardStateForDeck(ctx, DeleteUserCardStateForDeckParams{
+		DeckID:       deckID,
+		TargetUserID: targetUserID,
+	}); err != nil {
+		return fmt.Errorf("reset deck progress: %w", err)
+	}
+	return nil
+}
+
 // assertDeckStillManageable runs after the mutation rather than before it: one check then covers
 // revocation, downgrade, and any path added later, and there is no check-then-act window. The deck
 // row lock taken by the callers is what makes it race-free -- without it two concurrent revocations

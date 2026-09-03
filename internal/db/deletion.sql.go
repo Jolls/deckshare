@@ -85,6 +85,29 @@ func (q *Queries) DeleteNotesOrphanedByDeckDelete(ctx context.Context, deckID pg
 	return result.RowsAffected(), nil
 }
 
+const deleteUserCardStateForDeck = `-- name: DeleteUserCardStateForDeck :execrows
+DELETE FROM user_card_state ucs
+USING cards c
+WHERE ucs.card_id = c.id AND c.deck_id = $1 AND ucs.user_id = $2
+`
+
+type DeleteUserCardStateForDeckParams struct {
+	DeckID       pgtype.UUID
+	TargetUserID pgtype.UUID
+}
+
+// Resets target_user_id's scheduling progress on one deck. review_log is untouched (#189,
+// CLAUDE.md §2.5) -- the next review for a reset card starts fresh because gradeEvent treats a
+// missing user_card_state row as FSRS's zero-value New state (internal/review/grade.go), not as
+// a signal to replay history.
+func (q *Queries) DeleteUserCardStateForDeck(ctx context.Context, arg DeleteUserCardStateForDeckParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteUserCardStateForDeck, arg.DeckID, arg.TargetUserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const lockDeckForAccessChange = `-- name: LockDeckForAccessChange :one
 SELECT d.id
 FROM decks d
