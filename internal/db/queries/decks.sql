@@ -1,5 +1,8 @@
 -- name: ListDecksForUser :many
-SELECT d.*, (SELECT count(*) FROM cards c WHERE c.deck_id = d.id) AS card_count, da.can_edit_settings, da.can_edit_content
+-- #190: is_shared drives the shared-vs-private icon on /decks/ -- a deck is shared once more
+-- than one user has a deck_access row on it (the owner's own row is auto-inserted on create).
+SELECT d.*, (SELECT count(*) FROM cards c WHERE c.deck_id = d.id) AS card_count, da.can_edit_settings, da.can_edit_content,
+       (SELECT count(*) FROM deck_access da2 WHERE da2.deck_id = d.id) > 1 AS is_shared
 FROM decks d
 JOIN deck_access da ON da.deck_id = d.id AND da.user_id = sqlc.arg(user_id) AND da.can_view
 ORDER BY d.name;

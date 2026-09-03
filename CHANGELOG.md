@@ -3,6 +3,12 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.22] - 2026-09-03
+
+### Added
+- The decks list shows a 1-person icon for private decks and a 2-person icon for decks shared
+  with another user ([#190](https://github.com/Jolls/enshu/issues/190)).
+
 ## [0.2.21] - 2026-09-02
 
 ### Added

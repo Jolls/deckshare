@@ -5,6 +5,9 @@ description: Use when kicking off a GitHub issue evaluation (typically in a chea
 
 # Evaluate issue → recommend the manager session
 
+> Source: [Jolls/claude-skills](https://github.com/Jolls/claude-skills) (`skills/evaluate-issue`)
+> — specialize downstream copies per-project; sync generic fixes both ways.
+
 Your job: scope a GitHub issue and tell the user what model + reasoning level to run the **manager** (implementation) session at, and whether sub-agents would help. **Do not write code, branches, or a plan** — read, assess, recommend. Keep it cheap.
 
 ## Steps
@@ -42,6 +45,7 @@ Recommend **yes** when the work splits into independent parallel parts (broad se
 
 ## Guardrails
 
+- This step runs directly in the current session — never delegate the read/evaluation to a sub-agent.
 - Recommend; don't implement. No edits, no branch, no commits from this session.
 - Base the call on evidence from the issue and code, not the issue title alone.
 - When genuinely on the fence between two levels, name both and say which you'd pick.

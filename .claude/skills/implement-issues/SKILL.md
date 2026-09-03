@@ -5,6 +5,9 @@ description: Use when the user hands you a batch of GitHub issues (or a PR-slate
 
 # Implement a batch of issues on one branch, one combined PR
 
+> Source: [Jolls/claude-skills](https://github.com/Jolls/claude-skills) (`skills/implement-issues`)
+> — specialize downstream copies per-project; sync generic fixes both ways.
+
 The user gives a list of issues, optionally pre-grouped into PR units. Each
 **group** gets its own plan. Planning is the expensive part; implementation is
 sequential in **one working tree on one branch** — apply group 1's edits, then

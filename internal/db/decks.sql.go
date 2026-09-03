@@ -178,7 +178,8 @@ func (q *Queries) GetDeckForUser(ctx context.Context, arg GetDeckForUserParams) 
 }
 
 const listDecksForUser = `-- name: ListDecksForUser :many
-SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id, (SELECT count(*) FROM cards c WHERE c.deck_id = d.id) AS card_count, da.can_edit_settings, da.can_edit_content
+SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id, (SELECT count(*) FROM cards c WHERE c.deck_id = d.id) AS card_count, da.can_edit_settings, da.can_edit_content,
+       (SELECT count(*) FROM deck_access da2 WHERE da2.deck_id = d.id) > 1 AS is_shared
 FROM decks d
 JOIN deck_access da ON da.deck_id = d.id AND da.user_id = $1 AND da.can_view
 ORDER BY d.name
@@ -196,8 +197,11 @@ type ListDecksForUserRow struct {
 	CardCount       int64
 	CanEditSettings bool
 	CanEditContent  bool
+	IsShared        bool
 }
 
+// #190: is_shared drives the shared-vs-private icon on /decks/ -- a deck is shared once more
+// than one user has a deck_access row on it (the owner's own row is auto-inserted on create).
 func (q *Queries) ListDecksForUser(ctx context.Context, userID pgtype.UUID) ([]ListDecksForUserRow, error) {
 	rows, err := q.db.Query(ctx, listDecksForUser, userID)
 	if err != nil {
@@ -219,6 +223,7 @@ func (q *Queries) ListDecksForUser(ctx context.Context, userID pgtype.UUID) ([]L
 			&i.CardCount,
 			&i.CanEditSettings,
 			&i.CanEditContent,
+			&i.IsShared,
 		); err != nil {
 			return nil, err
 		}
