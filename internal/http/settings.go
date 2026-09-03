@@ -33,6 +33,9 @@ const maxAvatarUploadBytes = 5 << 20
 // of the client-side canvas resize -- which a request can skip entirely.
 const maxAvatarDimension = 2048
 
+// appVersion is bumped by hand alongside each CHANGELOG.md entry -- see CLAUDE.md §14.
+const appVersion = "0.2.20"
+
 // currentRetention looks up the user's global desired-retention setting, falling back to the
 // package default when none has been set yet (ErrNoRows). Shared by every settings render that
 // needs to show the FSRS section's current value alongside some other section's result.
@@ -55,7 +58,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 			serverError(w)
 			return
 		}
-		render(w, pages["settings"], http.StatusOK, map[string]any{"User": user, "DesiredRetention": retention})
+		render(w, pages["settings"], http.StatusOK, map[string]any{"User": user, "DesiredRetention": retention, "Version": appVersion})
 	})))
 
 	mux.Handle("POST /settings", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -81,6 +84,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 			// 0-23 business rule is enforced once, downstream in a.UpdateProfile.
 			render(w, pages["settings"], http.StatusBadRequest, map[string]any{
 				"User":         user,
+				"Version":      appVersion,
 				"ProfileError": "Day start hour must be a valid number",
 			})
 			return
@@ -94,6 +98,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 			}
 			render(w, pages["settings"], status, map[string]any{
 				"User":         user,
+				"Version":      appVersion,
 				"ProfileError": msg,
 			})
 			return
@@ -101,6 +106,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 
 		render(w, pages["settings"], http.StatusOK, map[string]any{
 			"User":           user,
+			"Version":        appVersion,
 			"ProfileSuccess": "Profile updated",
 		})
 	})))
@@ -117,6 +123,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		if newPassword != confirmPassword {
 			render(w, pages["settings"], http.StatusBadRequest, map[string]any{
 				"User":          user,
+				"Version":       appVersion,
 				"PasswordError": "Passwords do not match",
 			})
 			return
@@ -139,6 +146,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 			}
 			render(w, pages["settings"], status, map[string]any{
 				"User":          user,
+				"Version":       appVersion,
 				"PasswordError": msg,
 			})
 			return
@@ -148,6 +156,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		auth.SetSessionCookie(w, token)
 		render(w, pages["settings"], http.StatusOK, map[string]any{
 			"User":            user,
+			"Version":         appVersion,
 			"PasswordSuccess": "Password changed",
 		})
 	})))
@@ -160,7 +169,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		retention, atoiErr := strconv.ParseFloat(r.PostForm.Get("desired_retention"), 64)
 		if atoiErr != nil {
 			render(w, pages["settings"], http.StatusBadRequest, map[string]any{
-				"User": user, "DesiredRetention": retention,
+				"User": user, "DesiredRetention": retention, "Version": appVersion,
 				"FsrsError": "Desired retention must be a number",
 			})
 			return
@@ -169,7 +178,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		params, err := fsrs.NewDefaultParams(retention)
 		if err != nil {
 			render(w, pages["settings"], http.StatusBadRequest, map[string]any{
-				"User": user, "DesiredRetention": retention,
+				"User": user, "DesiredRetention": retention, "Version": appVersion,
 				"FsrsError": "Desired retention must be between 0 and 1",
 			})
 			return
@@ -184,7 +193,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		}
 
 		render(w, pages["settings"], http.StatusOK, map[string]any{
-			"User": user, "DesiredRetention": retention,
+			"User": user, "DesiredRetention": retention, "Version": appVersion,
 			"FsrsSuccess": "Retention target updated",
 		})
 	})))
