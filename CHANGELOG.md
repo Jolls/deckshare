@@ -19,6 +19,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   decoded dimensions, and the account header shows the uploaded avatar next to the display name.
   Visible only to the account owner for now -- no cross-user visibility rule exists yet
   ([#176](https://github.com/Jolls/enshu/issues/176)).
+  
+### Fixed
+- Pressing Enter in a note field editor now inserts a `<br>` instead of a raw newline, so line
+  breaks actually render on the card instead of silently collapsing to a space
+  ([#185](https://github.com/Jolls/enshu/issues/185)).
 
 ## [0.2.19] - 2026-09-02
 
