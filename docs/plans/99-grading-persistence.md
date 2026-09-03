@@ -268,7 +268,7 @@ is `[0.1.20]`):
   shown to the user in the reviewer instead of only logged to the browser console, and CSRF/Origin
   rejections are now logged server-side — a session's worth of grades could previously be lost
   with no visible failure and no server-side trace to diagnose it from
-  ([#99](https://github.com/Jolls/enshu/issues/99))
+  ([#99](https://github.com/Jolls/deckshare/issues/99))
 ```
 
 ## Resolved decisions

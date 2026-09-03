@@ -340,9 +340,9 @@ version entry). Next version is `## [0.2.17]` — do not write it until the work
 approved.
 
 - `### Added` — #172, one line, linking
-  `https://github.com/Jolls/enshu/issues/172`.
+  `https://github.com/Jolls/deckshare/issues/172`.
 - `### Changed` — #173, one line, linking
-  `https://github.com/Jolls/enshu/issues/173`.
+  `https://github.com/Jolls/deckshare/issues/173`.
 
 PR description must repeat the close keyword per issue:
 

@@ -326,7 +326,7 @@ Both assertions fail loudly with a message pointing at `security.go`'s `style-sr
 
 ### 5.1 `docs/architecture.md` §1 — new paragraph after the #56 paragraph
 
-> **Build order step 7's security layer has landed** ([#57](https://github.com/Jolls/enshu/issues/57)): a global `Content-Security-Policy` set by `internal/http/security.go`'s `securityHeaders` middleware, wrapping outside `auth.Service.Middleware` so it covers rejected requests too. It is the browser-enforced bound behind §8's sanitisation, not a replacement for it: `script-src` refuses inline and remote script outright, `img-src 'self'` refuses remote card images (§20), and `frame-ancestors 'none'` closes the outer half of the clickjacking threat `internal/render/css.go`'s property allowlist closes from the inside. Two sources are concessions with recorded expiry conditions — `'unsafe-eval'`, forced by htmx's `hx-vals="js:…"` on the reviewer's two network-touching elements, and `https://cdn.jsdelivr.net`, forced by `layout.html`'s un-vendored Pico CSS. `style-src 'unsafe-inline'` is not a concession but a structural fact: sanitised card HTML carries inline `style=""` attributes, which cannot take a nonce, and a nonce in `style-src` makes CSP ignore `'unsafe-inline'` entirely. See [docs/plans/57-csp-reviewer.md](plans/57-csp-reviewer.md).
+> **Build order step 7's security layer has landed** ([#57](https://github.com/Jolls/deckshare/issues/57)): a global `Content-Security-Policy` set by `internal/http/security.go`'s `securityHeaders` middleware, wrapping outside `auth.Service.Middleware` so it covers rejected requests too. It is the browser-enforced bound behind §8's sanitisation, not a replacement for it: `script-src` refuses inline and remote script outright, `img-src 'self'` refuses remote card images (§20), and `frame-ancestors 'none'` closes the outer half of the clickjacking threat `internal/render/css.go`'s property allowlist closes from the inside. Two sources are concessions with recorded expiry conditions — `'unsafe-eval'`, forced by htmx's `hx-vals="js:…"` on the reviewer's two network-touching elements, and `https://cdn.jsdelivr.net`, forced by `layout.html`'s un-vendored Pico CSS. `style-src 'unsafe-inline'` is not a concession but a structural fact: sanitised card HTML carries inline `style=""` attributes, which cannot take a nonce, and a nonce in `style-src` makes CSP ignore `'unsafe-inline'` entirely. See [docs/plans/57-csp-reviewer.md](plans/57-csp-reviewer.md).
 
 ### 5.2 `docs/architecture.md` §20 — new row under "Forced by multiuser"
 
@@ -352,7 +352,7 @@ New entry above `## [0.1.10]`, dated the merge date:
   belongs to another user: `script-src` refuses inline and remote script, `img-src 'self'`
   refuses remote card images (a tracking beacon in the multiuser model — architecture.md §20),
   `frame-ancestors 'none'` refuses framing, and `base-uri 'none'` refuses a `<base>` rewrite of
-  relative card media ([#57](https://github.com/Jolls/enshu/issues/57))
+  relative card media ([#57](https://github.com/Jolls/deckshare/issues/57))
 ```
 
 Then `git tag v0.1.11` per CLAUDE.md §14.

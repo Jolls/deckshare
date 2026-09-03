@@ -1,6 +1,6 @@
 # #175 — Multi-user login: signed-in account switching, lock, and the account header
 
-> Issue: [#175](https://github.com/Jolls/enshu/issues/175) — *"Add multi-user login where you can
+> Issue: [#175](https://github.com/Jolls/deckshare/issues/175) — *"Add multi-user login where you can
 > 'switch user' and 'logged in users' can swap around without re-entering username. Need to make
 > the active user very obvious so add a username and user settings 'gear' icon in the upper right."*
 
@@ -638,10 +638,10 @@ Filed as #177, #178, #179, #180.
 
 | | Issue | Labels | Depends on | Notes |
 |---|---|---|---|---|
-| **A** | [#177](https://github.com/Jolls/enshu/issues/177) — Account name and settings gear in a persistent header | `area: refactor` | — | Pure UI, ~1 template + ~1 CSS block. Ships value alone: today there is no way to see who you are without opening `/settings`. Also the only piece with no security surface. |
-| **B** | [#178](https://github.com/Jolls/enshu/issues/178) — Reject review grades sent under a switched-away session | `sev: high`, `area: fsrs`, `area: security` | — | Q2. Must merge before C. Written as a standalone defect: it is *latent* today (one session per browser) and becomes reachable the moment C lands. |
-| **C** | [#179](https://github.com/Jolls/enshu/issues/179) — Session sets: switch between signed-in accounts without re-authenticating | `area: security`, `area: db` | #177, #178 | The core of #175. Migration `00017`, the `auth` methods, the account routes, the dropdown. |
-| **D** | [#180](https://github.com/Jolls/enshu/issues/180) — Lock the browser without signing out | `area: security` | #179 | Migration `00018`, the §6 middleware rule, the tile unlock screen. |
+| **A** | [#177](https://github.com/Jolls/deckshare/issues/177) — Account name and settings gear in a persistent header | `area: refactor` | — | Pure UI, ~1 template + ~1 CSS block. Ships value alone: today there is no way to see who you are without opening `/settings`. Also the only piece with no security surface. |
+| **B** | [#178](https://github.com/Jolls/deckshare/issues/178) — Reject review grades sent under a switched-away session | `sev: high`, `area: fsrs`, `area: security` | — | Q2. Must merge before C. Written as a standalone defect: it is *latent* today (one session per browser) and becomes reachable the moment C lands. |
+| **C** | [#179](https://github.com/Jolls/deckshare/issues/179) — Session sets: switch between signed-in accounts without re-authenticating | `area: security`, `area: db` | #177, #178 | The core of #175. Migration `00017`, the `auth` methods, the account routes, the dropdown. |
+| **D** | [#180](https://github.com/Jolls/deckshare/issues/180) — Lock the browser without signing out | `area: security` | #179 | Migration `00018`, the §6 middleware rule, the tile unlock screen. |
 
 **#175 itself** stays open as the tracking issue and closes when #180 merges; the four get
 `closes #NNN` for themselves and reference #175 in the body.

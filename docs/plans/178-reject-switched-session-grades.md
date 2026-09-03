@@ -1,7 +1,7 @@
 # #178 — Reject review grades sent under a switched-away session
 
-> Issue: [#178](https://github.com/Jolls/enshu/issues/178) — part of
-> [#175](https://github.com/Jolls/enshu/issues/175). Design context:
+> Issue: [#178](https://github.com/Jolls/deckshare/issues/178) — part of
+> [#175](https://github.com/Jolls/deckshare/issues/175). Design context:
 > [docs/plans/175-multi-user-session-switching.md](175-multi-user-session-switching.md) §7.4
 > (which exists; #175's issues C/D — session sets and lock — are **not** implemented yet).
 
@@ -410,7 +410,7 @@ description cell, before the closing `|`:
 - Review grades are now refused when the browser's signed-in account changed after the reviewer
   page was opened: the grade POST carries the acting account id and the server answers 409 and
   writes nothing on a mismatch, instead of silently attributing the reviews to the new account
-  ([#178](https://github.com/Jolls/enshu/issues/178)).
+  ([#178](https://github.com/Jolls/deckshare/issues/178)).
 ```
 
 Tag `v0.2.20` after the version-bump commit (CLAUDE.md §14).

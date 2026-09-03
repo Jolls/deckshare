@@ -839,7 +839,7 @@ All open questions below were resolved with the user before implementation.
 6. **`serverError(w)` helper.** Skip — its natural home is next to `notFound()` in `pathparam.go`,
    zone #128's surface. Do not add it in #126.
 7. **`sort` → `slices` modernisation.** Skip in this zone. Tracked repo-wide in
-   [#139](https://github.com/Jolls/enshu/issues/139) (filed during this audit) rather than done
+   [#139](https://github.com/Jolls/deckshare/issues/139) (filed during this audit) rather than done
    piecemeal per zone.
 8. **`BuildBatch`'s 13 parameters.** No change — left as direct parameters, not wrapped in a
    `BuildBatchParams` struct.

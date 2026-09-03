@@ -1,6 +1,6 @@
 # #176 — Add avatar blob reference to `users` (schema only)
 
-**Issue:** [#176](https://github.com/Jolls/enshu/issues/176) "Add blob in users for avatar or photo."
+**Issue:** [#176](https://github.com/Jolls/deckshare/issues/176) "Add blob in users for avatar or photo."
 
 **Update:** the scope line below described the schema-only first commit on this branch. A
 follow-up commit on the same branch/PR added the upload route (`POST /settings/avatar`), the
@@ -313,7 +313,7 @@ One entry under a new `## [0.2.20] - <today>` heading in `CHANGELOG.md`:
 ### Added
 - A `users.avatar_sha256` column referencing `media_blobs`, so a user's avatar is stored as a
   deduplicated content-addressed blob like any other media. Schema only -- no upload or serving
-  route yet ([#176](https://github.com/Jolls/enshu/issues/176)).
+  route yet ([#176](https://github.com/Jolls/deckshare/issues/176)).
 ```
 
 Tag `v0.2.20` after committing the bump.

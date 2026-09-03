@@ -175,11 +175,11 @@ live in its own deck. People use this.
 `IrNote.primaryDeckAnkiId` (`src/lib/server/apkg/ir.ts`, §1) collapsed a note's cards to one
 deck — the home deck of its lowest-numbered card — and justified it by
 `UNIQUE (deck_id, guid)`, which required a note to have exactly one deck or its identity was
-undefined. [#32](https://github.com/Jolls/enshu/issues/32) replaced that key with
+undefined. [#32](https://github.com/Jolls/deckshare/issues/32) replaced that key with
 `UNIQUE (owner_id, guid)` (§2.2), so the constraint that forced the flattening stopped existing;
 the multiuser argument is what *removed* it, not what created it.
 
-**The Go importer never inherited it** ([#58](https://github.com/Jolls/enshu/issues/58)). The
+**The Go importer never inherited it** ([#58](https://github.com/Jolls/deckshare/issues/58)). The
 rule, and where it is enforced:
 
 - `IrCard.DeckAnkiID` (`internal/apkg/ir.go`) is each card's own home deck — `odid` when
@@ -192,7 +192,7 @@ rule, and where it is enforced:
 - Guarded by `TestImport_FilesCardDeckFromCardsOwnDeck` and `TestImport_ReimportDoesNotMoveNotes`
   (`internal/apkg/dbwrite_test.go`). A change that reintroduces the flattening fails the first.
 
-One consequence, settled in [#51](https://github.com/Jolls/enshu/issues/51): deleting a deck
+One consequence, settled in [#51](https://github.com/Jolls/deckshare/issues/51): deleting a deck
 deletes the cards filed in it, and a note goes only when it has **no cards left anywhere** — so a
 note whose cards span decks survives its home deck's deletion and is re-homed to the deck of its
 lowest-ordinal surviving card. That is not expressible as a static FK cascade, so `cards.deck_id`
@@ -1513,25 +1513,25 @@ Per CLAUDE.md §14, one entry for the PR, next patch version after 0.1.32:
 - Audited `internal/apkg/` for simplification: split the 172-line schema-18 reader into four
   table readers, deduplicated the protobuf field accessors and the container read-then-decompress
   path, and collapsed three parallel note-type maps in the importer into one
-  ([#124](https://github.com/Jolls/enshu/issues/124)).
+  ([#124](https://github.com/Jolls/deckshare/issues/124)).
 - A malformed `.apkg` now reports the underlying SQLite or decode failure instead of only
   "collection is missing a required table or column"; `errors.Is` behaviour is unchanged
-  ([#124](https://github.com/Jolls/enshu/issues/124)).
+  ([#124](https://github.com/Jolls/deckshare/issues/124)).
 - Import warnings and the `/import` redirect are now deterministic for a given package — both
   previously depended on Go's randomised map iteration
-  ([#124](https://github.com/Jolls/enshu/issues/124)).
+  ([#124](https://github.com/Jolls/deckshare/issues/124)).
 - Recorded the `IrNote.primaryDeckAnkiId` flattening in architecture.md §20 as resolved: the Go
   importer files `cards.deck_id` from each card's own home deck and has since #58
-  ([#124](https://github.com/Jolls/enshu/issues/124)).
+  ([#124](https://github.com/Jolls/deckshare/issues/124)).
 
 ### Fixed
 - Importing a collection with review history no longer issues two redundant queries per reviewed
   card, and writing a package no longer commits once per row
-  ([#124](https://github.com/Jolls/enshu/issues/124)).
+  ([#124](https://github.com/Jolls/deckshare/issues/124)).
 
 ### Removed
 - Deleted `GetCard`, the last unscoped `SELECT * WHERE id = $1` getter — the importer no longer
-  needs it, continuing #122's §9 cleanup ([#124](https://github.com/Jolls/enshu/issues/124)).
+  needs it, continuing #122's §9 cleanup ([#124](https://github.com/Jolls/deckshare/issues/124)).
 ```
 
 ---
@@ -1547,7 +1547,7 @@ All open questions below were resolved with the user before implementation.
 4. **`ErrSchema18Config`'s name.** Leave as-is — no rename. Cosmetic mismatch only, not worth the
    API churn in a cleanup-only audit.
 5. **Export is unreachable.** Filed as a follow-up issue:
-   [#140](https://github.com/Jolls/enshu/issues/140) (wire `GET /decks/{id}/export`). No code
+   [#140](https://github.com/Jolls/deckshare/issues/140) (wire `GET /decks/{id}/export`). No code
    change in this plan.
 6. **Three export losses with no column.** Accept permanently and document in `docs/apkg-format.md`
    as a named list, rather than filing a schema-change issue. New edit **E33** below.

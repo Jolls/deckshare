@@ -1,6 +1,6 @@
 # 102 — Add Version to Settings
 
-Plan for [#102](https://github.com/Jolls/enshu/issues/102). Resolved design: hardcoded const,
+Plan for [#102](https://github.com/Jolls/deckshare/issues/102). Resolved design: hardcoded const,
 bumped alongside `CHANGELOG.md`. No other design is in scope.
 
 ## 1. Scope
@@ -71,7 +71,7 @@ Add a new top entry above `## [0.1.23]`:
 ### Added
 - App version now displayed on the Settings page, read from a hardcoded constant bumped
   alongside this changelog on every release, making it easy to tell which version is running
-  ([#102](https://github.com/Jolls/enshu/issues/102))
+  ([#102](https://github.com/Jolls/deckshare/issues/102))
 ```
 
 `appVersion` must match: `"0.1.24"`. After committing, tag `v0.1.24`.

@@ -14,7 +14,7 @@ For each fixture, record here:
 
 | File | Anki version | Schema | Exercises |
 |---|---|---|---|
-| `mathematics-schema18.apkg` | recent Anki, modern zstd container (`meta` version 3) — exact version unconfirmed | 18 | Real notetypes/fields/templates/decks tables; a Basic-family note type plus a real Cloze note with content; 13 media files; the media protobuf list. Closes [#61](https://github.com/Jolls/enshu/issues/61) for kind/css/qfmt/afmt/font/size/media/deck-kind. Does not exercise: RTL/sticky field flags, browser-format template overrides, a deck description, a filtered deck, non-ASCII media filenames, or `revlog` (0 rows). |
+| `mathematics-schema18.apkg` | recent Anki, modern zstd container (`meta` version 3) — exact version unconfirmed | 18 | Real notetypes/fields/templates/decks tables; a Basic-family note type plus a real Cloze note with content; 13 media files; the media protobuf list. Closes [#61](https://github.com/Jolls/deckshare/issues/61) for kind/css/qfmt/afmt/font/size/media/deck-kind. Does not exercise: RTL/sticky field flags, browser-format template overrides, a deck description, a filtered deck, non-ASCII media filenames, or `revlog` (0 rows). |
 
 ### Inspected but not committed
 
@@ -49,7 +49,7 @@ filenames; `.colpkg` as well as `.apkg`) without a combinatorial number of files
      checked** → schema 11 + FSRS + cloze + media + non-ASCII, one file. **Still open** — the
      committed fixture is schema 18 only.
    - `.apkg`, **"Support older Anki versions" unchecked** (schema 18+, modern/zstd container),
-     scheduling checked → the fixture that closes [#61](https://github.com/Jolls/enshu/issues/61)
+     scheduling checked → the fixture that closes [#61](https://github.com/Jolls/deckshare/issues/61)
      (verifying the protobuf field numbers `apkg-format.md` marked ❓). **Done** —
      `mathematics-schema18.apkg`, though it still leaves RTL/sticky field flags, browser-format
      template overrides, a deck description, a filtered deck, non-ASCII filenames, and `revlog`
@@ -71,7 +71,7 @@ same logical collection, plus adversarial cases (out-of-`ord`-order field/templa
 filtered-deck card with `due`/`odue` far enough apart that reading the wrong column can't pass by
 coincidence). It was removed with the rest of that implementation (architecture.md §1).
 
-**Rebuild its equivalent in Go, as test-helper code inside [#58](https://github.com/Jolls/enshu/issues/58)
+**Rebuild its equivalent in Go, as test-helper code inside [#58](https://github.com/Jolls/deckshare/issues/58)
 (`.apkg` import), not as a standalone script producing committed binaries.** A synthetic fixture
 is only as trustworthy as the spec it's built from, and `apkg-format.md` marks most of schema 18
 ❓ — unverified against a real export. Hand-building a synthetic schema-18 fixture ahead of a real

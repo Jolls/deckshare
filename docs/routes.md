@@ -57,7 +57,7 @@ contract for `POST /api/reviews/batch` is pinned down there in full and is not r
 | GET | `/decks/{id}` | `can_view` | Detail: notes list, note/card counts. Due counts deferred to step 7 (the reviewer) — they need `StudyDayStart`/`StudyDayEnd`, which don't exist yet, and there are no `user_card_state` rows at all before step 7 regardless |
 | GET | `/decks/{id}/edit` | `can_edit_settings` | Edit form: name, description, and new-cards-per-day (#101) |
 | POST | `/decks/{id}/edit` | `can_edit_settings` | Update name, description, and new-cards-per-day (#101) |
-| POST | `/decks/{id}/delete` | `can_view`, `can_delete` | Delete deck, its cards, and any note left with no cards anywhere; notes with cards in other decks are re-homed. Query layer: `db.DeleteDeck` requires both flags — `can_view` is normally granted alongside every other flag by convention (schema.md), and requiring it here keeps a caller who somehow holds `can_delete` without `can_view` from learning the deck exists via a different error shape ([#51](https://github.com/Jolls/enshu/issues/51)); handler is Phase 1 step 5 |
+| POST | `/decks/{id}/delete` | `can_view`, `can_delete` | Delete deck, its cards, and any note left with no cards anywhere; notes with cards in other decks are re-homed. Query layer: `db.DeleteDeck` requires both flags — `can_view` is normally granted alongside every other flag by convention (schema.md), and requiring it here keeps a caller who somehow holds `can_delete` without `can_view` from learning the deck exists via a different error shape ([#51](https://github.com/Jolls/deckshare/issues/51)); handler is Phase 1 step 5 |
 
 ---
 
@@ -137,7 +137,7 @@ access until Milestone 2 (architecture.md §11).
 | POST | `/decks/{id}/access` | `can_manage_access` | Grant access (email + choice of the six flags) |
 | POST | `/decks/{id}/access/{userId}/edit` | `can_manage_access` | Change a collaborator's flags |
 | POST | `/decks/{id}/access/{userId}/delete` | `can_manage_access` | Revoke access (delete the row) |
-| POST | `/decks/{id}/access/{userId}/reset` | `can_manage_access` | Reset a collaborator's scheduling progress on this deck (deletes their `user_card_state` rows for it; `review_log` untouched — [#189](https://github.com/Jolls/enshu/issues/189)) |
+| POST | `/decks/{id}/access/{userId}/reset` | `can_manage_access` | Reset a collaborator's scheduling progress on this deck (deletes their `user_card_state` rows for it; `review_log` untouched — [#189](https://github.com/Jolls/deckshare/issues/189)) |
 
 **Reset and the daily cap.** `rev.perDay`'s new/review allowance for the *current* study day is
 computed from `review_log` (`CountNewIntroducedToday`/`CountReviewedToday`, reviews.sql), which a
@@ -148,7 +148,7 @@ rows fall outside the day window.
 
 **Last-holder guard, enforced.** A deck must always retain at least one `can_manage_access`
 holder and one `can_delete` holder. `db.RevokeDeckAccess` and `db.SetDeckAccess`
-([#51](https://github.com/Jolls/enshu/issues/51)) apply the mutation and re-count holders in the
+([#51](https://github.com/Jolls/deckshare/issues/51)) apply the mutation and re-count holders in the
 same transaction, under a deck row lock, returning `ErrLastAccessHolder` when it would strand the
 deck — the handler answers **409**. Two consequences: a deck's sole member cannot revoke their
 own access (they delete the deck instead), and `decks.owner_id` is not a permission source and
@@ -199,7 +199,7 @@ paste, synchronous, capped at `maxAIImportNotes` — the same "no job queue for 
 
 ---
 
-## Media — `media.go` (Phase 1, step 8 — blob store itself is [#60](https://github.com/Jolls/enshu/issues/60))
+## Media — `media.go` (Phase 1, step 8 — blob store itself is [#60](https://github.com/Jolls/deckshare/issues/60))
 
 | Method | Path | Permission | Purpose |
 |---|---|---|---|
@@ -230,6 +230,6 @@ Collected from above, so they're visible in one place:
    one of its notes.
 
 **Explicitly not routed:** no account-deletion route. User deletion is blocked at the FK level
-by design ([#51](https://github.com/Jolls/enshu/issues/51)) — a user's decks, notes, note types,
+by design ([#51](https://github.com/Jolls/deckshare/issues/51)) — a user's decks, notes, note types,
 access grants, scheduling state, and review history all restrict. Account closure needs an
 ownership-transfer decision for shared decks and a written `review_log` decision first.

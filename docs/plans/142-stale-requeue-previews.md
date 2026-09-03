@@ -495,7 +495,7 @@ equality (they use `strings.Contains` on `"status":"…"` and compare DB rows), 
 
    > A requeued card's interval labels are refreshed from the grade response's own four-branch
    > preview, since the ones it was shipped with at batch-fetch time describe its pre-grade state
-   > ([#142](https://github.com/Jolls/enshu/issues/142)); the requeue decision itself still runs
+   > ([#142](https://github.com/Jolls/deckshare/issues/142)); the requeue decision itself still runs
    > locally and still writes nothing.
 3. **`docs/architecture.md` §20 — no new row.** Checked against §2.10's test: this is not a
    divergence from Anki in either direction. Anki is a local app that recomputes a requeued card's
@@ -546,7 +546,7 @@ after `go build ./...` / `go vet ./...` / `golangci-lint run` / `go test ./...` 
     state *before* it was graded: `POST /api/reviews/batch` now returns a `preview` object per
     result — the four rating outcomes recomputed server-side from the state the grade actually
     stored — and the reviewer swaps those into the requeued card's slot
-    ([#142](https://github.com/Jolls/enshu/issues/142)).
+    ([#142](https://github.com/Jolls/deckshare/issues/142)).
   ```
 - Tag `v0.1.39` after the version-bump commit.
 - PR description: `Closes #142`, and carry §4.1's note on why no new `internal/fsrs` test ships.

@@ -1,6 +1,6 @@
 # #140 — Wire `GET /decks/{id}/export`
 
-Issue: [#140](https://github.com/Jolls/enshu/issues/140) — *Wire `GET /decks/{id}/export` using
+Issue: [#140](https://github.com/Jolls/deckshare/issues/140) — *Wire `GET /decks/{id}/export` using
 `internal/apkg`'s Export/Write*. Area: `area: apkg`. No schema change, **no migration**.
 
 `docs/routes.md`'s Import/export table already specifies the target:
@@ -587,7 +587,7 @@ reports `SKIP`.
 - Decks can be exported back out as `.apkg` from the deck page: one deck's notes and cards plus
   the exporting user's own scheduling state and review history, so a collaborator on a shared
   deck exports their progress rather than the owner's
-  ([#140](https://github.com/Jolls/enshu/issues/140)).
+  ([#140](https://github.com/Jolls/deckshare/issues/140)).
 ```
 
 ---

@@ -633,7 +633,7 @@ Plus:
 - `CHANGELOG.md` — new version entry with `### Added` (session auth, signup/login/logout
   routes, first HTML templates, cleanup ticker) and `### Security` (`__Host-` cookie hardening,
   timing-safe login/signup, `Origin` CSRF check, per-key rate limiting), each linking
-  ([#52](https://github.com/Jolls/enshu/issues/52)).
+  ([#52](https://github.com/Jolls/deckshare/issues/52)).
 
 ---
 
