@@ -12,9 +12,13 @@ ON CONFLICT (sha256) DO NOTHING;
 -- outlives the deck that imported it: media_refs cascades away with its deck, media_blobs does not
 -- (FK RESTRICT), so a deck delete is the only thing that strands a row here. No age filter -- an
 -- import racing to re-reference one of these is handled by the FK, not by waiting (DeleteMediaBlob).
+-- Both referencing tables must be checked: users.avatar_sha256 (#176) is a second RESTRICT
+-- reference, and the sweep unlinks bytes before deleting the row, so a blob missing from this
+-- WHERE clause loses its file before the FK can object.
 -- name: ListUnreferencedMediaBlobs :many
 SELECT mb.sha256 FROM media_blobs mb
-WHERE NOT EXISTS (SELECT 1 FROM media_refs mr WHERE mr.sha256 = mb.sha256);
+WHERE NOT EXISTS (SELECT 1 FROM media_refs mr WHERE mr.sha256 = mb.sha256)
+  AND NOT EXISTS (SELECT 1 FROM users u WHERE u.avatar_sha256 = mb.sha256);
 
 -- Deliberately no NOT EXISTS re-check: Postgres's own RESTRICT enforcement is the check, and it is
 -- the only one taken under a lock. A concurrent CreateMediaRef holds FOR KEY SHARE on this row, so

@@ -18,6 +18,7 @@
 
   var state = {
     deckId: null,
+    userId: null, // acting account at page render; sent as ?u= so a switched-away tab is refused (#178)
     queue: [], // {cardId, el, branches, done, repeat}
     current: null, // index into state.queue
     cursor: '',
@@ -34,6 +35,7 @@
 
   function init() {
     state.deckId = scriptTag.dataset.deckId;
+    state.userId = scriptTag.dataset.userId || '';
     indexBatch(document.getElementById('review-queue'));
     showNext();
 
@@ -361,6 +363,17 @@
     }, delay);
   }
 
+  // The acting account is a property of the browser-wide session cookie, not of this tab, so a
+  // switch in another tab would otherwise re-attribute these grades to whoever the session now
+  // names (#178). ?u= is what the server compares against the session user before writing anything;
+  // it is a query parameter and not a header because the pagehide path below uses sendBeacon, which
+  // cannot set headers, and not a body field because the batch body is fixed by CLAUDE.md §10.1.
+  function batchURL() {
+    return state.userId
+      ? '/api/reviews/batch?u=' + encodeURIComponent(state.userId)
+      : '/api/reviews/batch';
+  }
+
   // Sent with a direct fetch(), not through htmx: htmx's json-enc extension re-evaluates
   // hx-vals a second time to recover typed values (its own base parameter pass flattens an
   // array of objects to FormData "[object Object]" entries first), and when that array has 2+
@@ -373,7 +386,7 @@
     state.lastFlushAt = Date.now();
     var events = takePending();
 
-    fetch('/api/reviews/batch', {
+    fetch(batchURL(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ events: events }),
@@ -400,7 +413,7 @@
     var events = takePending();
     if (events.length === 0) return;
     var blob = new Blob([JSON.stringify({ events: events })], { type: 'application/json' });
-    if (!navigator.sendBeacon('/api/reviews/batch', blob)) {
+    if (!navigator.sendBeacon(batchURL(), blob)) {
       state.pending = events.concat(state.pending); // queuing failed; nothing more we can do here
     }
   }
@@ -434,6 +447,14 @@
         }
       }
       if (state.pending.length > 0) scheduleFlush();
+      return;
+    }
+
+    if (status === 409) {
+      // The session now belongs to another account (#178). The events cannot be retried -- retrying
+      // would either be refused again or, worse, land under the wrong user if the tab reloaded.
+      console.error('enshu: batch refused (409, session changed), dropping ' + sent.length + ' event(s)');
+      showDeliveryError('This tab is signed in as a different account now, so these grades were not saved. Reload the page to keep studying.');
       return;
     }
 

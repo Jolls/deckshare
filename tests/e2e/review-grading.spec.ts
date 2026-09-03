@@ -48,7 +48,7 @@ test('keyboard grading POSTs the batch within the flush debounce window', async 
   await expect(stage).toHaveAttribute('data-revealed', 'true');
 
   const batchResponse = page.waitForResponse(
-    (res) => res.url().endsWith('/api/reviews/batch') && res.request().method() === 'POST',
+    (res) => new URL(res.url()).pathname === '/api/reviews/batch' && res.request().method() === 'POST',
     { timeout: 3000 }, // FLUSH_DEBOUNCE_MS (review.js) is 2000ms
   );
   await page.keyboard.press('Digit3'); // grade: Good
@@ -62,4 +62,8 @@ test('keyboard grading POSTs the batch within the flush debounce window', async 
 
   expect(result).toBeTruthy();
   expect(result.status).toBe('applied');
+
+  // #178: the grade POST carries the acting account id, and the server accepted it (200 above).
+  const sentURL = new URL(response.url());
+  expect(sentURL.searchParams.get('u')).toMatch(/^[0-9a-f-]{36}$/);
 });

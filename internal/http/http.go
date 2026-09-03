@@ -30,7 +30,7 @@ func NewHandler(pool *pgxpool.Pool, a *auth.Service, blobs *media.Store) (http.H
 	mux.HandleFunc("GET /healthz", healthHandler(pool))
 	registerStaticRoutes(mux)
 	registerAuthRoutes(mux, a, pages)
-	registerSettingsRoutes(mux, a, pool, pages)
+	registerSettingsRoutes(mux, a, pool, pages, blobs)
 	registerDeckRoutes(mux, pool, pages, time.Now)
 	registerAccessRoutes(mux, pool, pages)
 	registerNoteTypeRoutes(mux, pool, pages)

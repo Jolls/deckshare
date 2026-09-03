@@ -238,6 +238,7 @@ another user can reach, or that is training data, never cascades.
 | `user_fsrs_params.deck_id → decks` | CASCADE | A per-deck override for a deleted deck is dead configuration; the global row (`deck_id IS NULL`) is untouched. |
 | `media_refs.deck_id → decks` | CASCADE | `media_refs` is deck-scoped by its own PK. |
 | `media_refs.sha256 → media_blobs` | RESTRICT | A referenced blob is never deletable — including by the GC sweep, which relies on this FK as its race check (see Media). |
+| `users.avatar_sha256 → media_blobs` | RESTRICT | A referenced blob is never deletable, same as `media_refs` — and `SET NULL` would let the GC sweep silently strip a user's avatar (#176). |
 
 **User deletion is not a supported operation in Phase 1.** No route deletes a user, and eight
 FKs restrict on `users` so it is impossible rather than silently wrong: cascading
@@ -320,9 +321,10 @@ user_fsrs_params id, user_id, deck_id NULL,   -- deck_id NULL = the user's globa
                  -- surrogate `id` PK; the pair above is the real key
 
 users            id, email, password_hash, display_name, timezone,
-                 day_start_hour smallint DEFAULT 4, created_at
+                 day_start_hour smallint DEFAULT 4, avatar_sha256 NULL, created_at
                  -- UNIQUE on lower(email): one account per address, any casing
                  -- password_hash is argon2id (@node-rs/argon2), never a weaker algorithm
+                 -- avatar_sha256 -> media_blobs, ON DELETE RESTRICT; NULL = no avatar (#176)
 
 sessions         id text pk,             -- SHA-256 hex of the session token; the raw token
                                           -- lives only in the cookie, never in the database
@@ -351,6 +353,9 @@ replay path. The `CASCADE` FKs need the same index support and already have it:
 and `fields`/`templates` on `note_type_id`. No new index is required by this change.
 `deck_access.user_id` is `RESTRICT`, not `CASCADE` — see the Deletion policy table above — and
 is backed by `deck_access_user_id_idx`.
+`users.avatar_sha256` is `RESTRICT` and is backed by the partial index
+`users_avatar_sha256_idx` (`WHERE avatar_sha256 IS NOT NULL`) — partial because almost every row is
+NULL, and the RI probe's `avatar_sha256 = $1` implies `IS NOT NULL` so it can still use it (#176).
 
 **`stability` and `difficulty` are `double precision`, not `real`.** FSRS rounds them to
 8 decimal places and clamps stability to 36500; `real` holds ~7 significant digits, so a
@@ -389,7 +394,12 @@ media_refs   deck_id, filename, sha256                  -- PRIMARY KEY (deck_id,
 
 Anki references media by filename inside note fields (`<img src="x.jpg">`), so the
 `(deck_id, filename)` mapping is what rendering resolves against. Two decks shipping an
-identical image store one blob.
+identical image store one blob. A user's avatar is the same mechanism reaching the same table
+from a different direction: `users.avatar_sha256` references a blob directly rather than through
+a deck-scoped filename, so an avatar shares storage with an identical image in any deck (#176).
+Both references are `RESTRICT`, and the GC's `ListUnreferencedMediaBlobs` checks both — the sweep
+unlinks bytes before deleting the row, so a referencing table it does not know about loses that
+blob's file.
 
 **A filename collision within one import — one name, two different contents — is survivable, not
 fatal.** It happens honestly (two source decks that both happen to name a file `image1.jpg`) and

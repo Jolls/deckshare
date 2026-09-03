@@ -120,12 +120,16 @@ func (q *Queries) ListExistingMediaBlobs(ctx context.Context, sha256s []string) 
 const listUnreferencedMediaBlobs = `-- name: ListUnreferencedMediaBlobs :many
 SELECT mb.sha256 FROM media_blobs mb
 WHERE NOT EXISTS (SELECT 1 FROM media_refs mr WHERE mr.sha256 = mb.sha256)
+  AND NOT EXISTS (SELECT 1 FROM users u WHERE u.avatar_sha256 = mb.sha256)
 `
 
 // The zero-ref half of the media GC sweep (#91, docs/plans/91-orphaned-media-blob-gc.md). A blob
 // outlives the deck that imported it: media_refs cascades away with its deck, media_blobs does not
 // (FK RESTRICT), so a deck delete is the only thing that strands a row here. No age filter -- an
 // import racing to re-reference one of these is handled by the FK, not by waiting (DeleteMediaBlob).
+// Both referencing tables must be checked: users.avatar_sha256 (#176) is a second RESTRICT
+// reference, and the sweep unlinks bytes before deleting the row, so a blob missing from this
+// WHERE clause loses its file before the FK can object.
 func (q *Queries) ListUnreferencedMediaBlobs(ctx context.Context) ([]string, error) {
 	rows, err := q.db.Query(ctx, listUnreferencedMediaBlobs)
 	if err != nil {

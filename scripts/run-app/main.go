@@ -270,7 +270,19 @@ func resetDB() error {
 	if err := runWithDatabaseURL("goose", "-dir", "migrations", "postgres", dbURL, "up"); err != nil {
 		return fmt.Errorf("goose up: %w", err)
 	}
-	if err := runWithDatabaseURL("go", "run", "./cmd/seed"); err != nil {
+
+	// Same MEDIA_ROOT the running server uses (start(), above): the seed's avatar step writes a
+	// blob there, and a mismatched directory would leave GET /settings/avatar 404ing against the
+	// server's actual media root.
+	mediaRoot := filepath.Join(skillDir, mediaName)
+	if err := os.MkdirAll(mediaRoot, 0o755); err != nil {
+		return err
+	}
+	seedCmd := exec.Command("go", "run", "./cmd/seed")
+	seedCmd.Env = append(os.Environ(), "DATABASE_URL="+dbURL, "MEDIA_ROOT="+mediaRoot)
+	seedCmd.Stdout = os.Stdout
+	seedCmd.Stderr = os.Stderr
+	if err := seedCmd.Run(); err != nil {
 		return fmt.Errorf("seed: %w", err)
 	}
 

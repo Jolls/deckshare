@@ -10,9 +10,13 @@ import (
 	"github.com/Jolls/enshu/internal/db"
 )
 
-// mediaRefsSha256FK is the constraint that makes a referenced blob undeletable, and so the one
-// whose violation the sweep reads as "re-referenced mid-sweep" rather than as a failure.
-const mediaRefsSha256FK = "media_refs_sha256_fkey"
+// The constraints that make a referenced blob undeletable, and so the ones whose violation the
+// sweep reads as "re-referenced mid-sweep" rather than as a failure: a deck's media_refs row, or a
+// user's avatar (#176).
+const (
+	mediaRefsSha256FK   = "media_refs_sha256_fkey"
+	usersAvatarSha256FK = "users_avatar_sha256_fkey"
+)
 
 // GC reclaims orphaned media (#91, docs/plans/91-orphaned-media-blob-gc.md). Two classes, neither
 // reachable by the other's method: media_blobs rows whose last media_refs row cascaded away with a
@@ -76,7 +80,7 @@ func (g *GC) sweepUnreferencedRows(ctx context.Context) error {
 			continue
 		}
 		if err := g.q.DeleteMediaBlob(ctx, sha); err != nil {
-			if db.IsRestrictViolation(err, mediaRefsSha256FK) {
+			if db.IsRestrictViolation(err, mediaRefsSha256FK) || db.IsRestrictViolation(err, usersAvatarSha256FK) {
 				continue
 			}
 			errs = append(errs, fmt.Errorf("media gc: deleting blob row %s: %w", sha, err))

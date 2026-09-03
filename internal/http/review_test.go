@@ -220,6 +220,88 @@ func TestReviewBatch_ClientCannotWriteSchedulingState(t *testing.T) {
 	}
 }
 
+// -- §10.1 continued (#178): a batch sent under a session that has switched accounts ------------
+
+// The session cookie is browser-wide, so a tab left open as A keeps grading after the browser
+// switches to B. With B holding can_study on the shared deck, GradeBatch would authorise and write
+// those grades into B's user_card_state and review_log -- plausible-looking, unrecoverable (§2.5).
+// The ?u= staleness check must refuse the batch outright; nothing is written for either account.
+func TestReviewBatch_RejectsSwitchedAwaySession(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	clock := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	handler, a := newTestHandler(t, tx, auth.Config{}, func() time.Time { return clock })
+
+	ownerEmail := testEmail()
+	ownerCookie := loginCookie(t, tx, a, ownerEmail, "correct-horse-battery")
+	deckID, cardID := setupOneCard(t, tx, handler, ownerCookie)
+
+	sharedEmail := testEmail()
+	sharedCookie := loginCookie(t, tx, a, sharedEmail, "correct-horse-battery")
+
+	var ownerID, sharedID, deckUUID pgtype.UUID
+	if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, ownerEmail).Scan(&ownerID); err != nil {
+		t.Fatalf("lookup owner: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, sharedEmail).Scan(&sharedID); err != nil {
+		t.Fatalf("lookup shared user: %v", err)
+	}
+	if err := deckUUID.Scan(deckID); err != nil {
+		t.Fatalf("scan deck id: %v", err)
+	}
+	// can_study, deliberately: without it the batch would be answered `forbidden` by the existing
+	// authorisation and this test would pass for the wrong reason.
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO deck_access (deck_id, user_id, can_view, can_study) VALUES ($1, $2, true, true)`,
+		deckUUID, sharedID); err != nil {
+		t.Fatalf("grant can_study: %v", err)
+	}
+
+	body := func() string {
+		return fmt.Sprintf(`{"events":[{"id":%q,"cardId":%q,"rating":3,"reviewedAt":%q}]}`,
+			newTestEventID(), cardID, clock.Format(time.RFC3339Nano))
+	}
+
+	t.Run("mismatched u is refused and writes nothing", func(t *testing.T) {
+		w := doJSON(handler, "POST", "/api/reviews/batch?u="+ownerID.String(), body(), sharedCookie, "http://example.com")
+		if w.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409: %s", w.Code, w.Body.String())
+		}
+		if n := countRows(t, tx, `SELECT count(*) FROM review_log WHERE card_id = $1`, cardID); n != 0 {
+			t.Errorf("review_log rows for this card = %d, want 0 (for either account)", n)
+		}
+		if n := countRows(t, tx, `SELECT count(*) FROM user_card_state WHERE card_id = $1`, cardID); n != 0 {
+			t.Errorf("user_card_state rows for this card = %d, want 0", n)
+		}
+	})
+
+	t.Run("unparseable u is refused", func(t *testing.T) {
+		w := doJSON(handler, "POST", "/api/reviews/batch?u=not-a-uuid", body(), sharedCookie, "http://example.com")
+		if w.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409: %s", w.Code, w.Body.String())
+		}
+		if n := countRows(t, tx, `SELECT count(*) FROM review_log WHERE card_id = $1`, cardID); n != 0 {
+			t.Errorf("review_log rows for this card = %d, want 0", n)
+		}
+	})
+
+	// The two accepting cases: matching u, and no u at all (the server side lands before the client
+	// side, so a missing u must behave exactly as it does today).
+	t.Run("matching u is applied", func(t *testing.T) {
+		w := doJSON(handler, "POST", "/api/reviews/batch?u="+sharedID.String(), body(), sharedCookie, "http://example.com")
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"status":"applied"`) {
+			t.Fatalf("status = %d, body = %s, want 200 applied", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("absent u is applied", func(t *testing.T) {
+		w := doJSON(handler, "POST", "/api/reviews/batch", body(), sharedCookie, "http://example.com")
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"status":"applied"`) {
+			t.Fatalf("status = %d, body = %s, want 200 applied", w.Code, w.Body.String())
+		}
+	})
+}
+
 // -- #142: the grade response's preview is computed from the state the grade stored ------------
 
 func TestReviewBatch_PreviewIsRecomputedFromStoredState(t *testing.T) {
@@ -740,6 +822,10 @@ func TestReviewPage_HiddenCardShape(t *testing.T) {
 	if !strings.Contains(pageResp.Body.String(), `class="enshu-card card"`) {
 		t.Error("card wrapper missing the enshu-card scope class")
 	}
+	// #178: review.js reads the acting account id off its own script tag and sends it as ?u=.
+	if !strings.Contains(pageResp.Body.String(), `data-user-id="`) {
+		t.Error("review page must render the acting user id onto the review.js script tag (#178)")
+	}
 	pageAttrs := extractCardAttrs(t, pageResp.Body.String(), cardID)
 
 	wantKeys := []string{
@@ -959,6 +1045,10 @@ func TestStudyAll_MixesAcrossDecks(t *testing.T) {
 	body := resp.Body.String()
 	if !strings.Contains(body, `data-exhausted="true"`) {
 		t.Error("mixed session must always be Exhausted (one-shot, no refill)")
+	}
+	// #178: review.js reads the acting account id off its own script tag and sends it as ?u=.
+	if !strings.Contains(body, `data-user-id="`) {
+		t.Error("study page must render the acting user id onto the review.js script tag (#178)")
 	}
 
 	gotIDs := extractCardIDs(body)
