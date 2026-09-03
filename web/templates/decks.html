@@ -18,7 +18,14 @@
         {{$counts := index $.Counts .ID}}
         <tr>
             <td><a href="/decks/{{.ID}}/review" role="button" class="btn-sm{{if not $counts.Left}} outline{{end}}">Study</a></td>
-            <td><a href="/decks/{{.ID}}">{{.Name}}</a></td>
+            <td>
+                {{if .IsShared}}
+                <span title="Shared deck" aria-label="Shared deck"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><circle cx="17" cy="9" r="3"/><path d="M2 20c0-3.9 3.1-7 7-7s7 3.1 7 7"/><path d="M13.5 13.3c.6-.2 1.3-.3 2-.3 3.3 0 6 2.5 6 6"/></svg></span>
+                {{else}}
+                <span title="Private deck" aria-label="Private deck"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg></span>
+                {{end}}
+                <a href="/decks/{{.ID}}">{{.Name}}</a>
+            </td>
             <td>{{.CardCount}}</td>
             <td>{{$counts.New}}</td>
             <td>{{$counts.Learning}}</td>
