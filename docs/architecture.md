@@ -40,24 +40,24 @@ that hadn't already made it into the docs — session-cookie hardening, timing-s
 the sanitisation allowlist's XSS-defense rationale, the advisory-lock deadlock-avoidance rule,
 and a card-regeneration data-loss trap among them — and folded in where found.
 
-**Build order step 1 (§11) is scaffolded** ([#49](https://github.com/Jolls/enshu/issues/49)):
+**Build order step 1 (§11) is scaffolded** ([#49](https://github.com/Jolls/deckshare/issues/49)):
 `cmd/deckshare/`, the `internal/` package skeleton (§4), `sqlc`/`goose` wiring, `golangci-lint`,
 a multi-arch `Dockerfile`, and GitHub Actions CI.
 
-**Build order step 2 (§11) has landed** ([#50](https://github.com/Jolls/enshu/issues/50),
-[#51](https://github.com/Jolls/enshu/issues/51)): the full schema as 14 `goose` migrations and
+**Build order step 2 (§11) has landed** ([#50](https://github.com/Jolls/deckshare/issues/50),
+[#51](https://github.com/Jolls/deckshare/issues/51)): the full schema as 14 `goose` migrations and
 `sqlc`-generated Go, with the terminal deletion policy (§20, docs/schema.md) and the deck-delete
 transaction / last-access-holder guard (`internal/db/deletion.go`). Auth, FSRS, and `.apkg` logic
 remain their own build-order steps.
 
-**Build order step 3 (§11) has landed** ([#52](https://github.com/Jolls/enshu/issues/52)):
+**Build order step 3 (§11) has landed** ([#52](https://github.com/Jolls/deckshare/issues/52)):
 `internal/auth/` — signup/login/logout with a `__Host-`-prefixed session cookie, sliding
 expiration, `argon2id` password hashing, an `Origin`-header CSRF check enforced centrally in
 `Service.Middleware`, per-key rate limiting on login and signup, and an in-process ticker that
 sweeps expired sessions and stale rate-limit buckets hourly. Also includes the `/settings`
 profile and password-change routes (docs/routes.md).
 
-**Build order step 5 (§11) has landed** ([#54](https://github.com/Jolls/enshu/issues/54)):
+**Build order step 5 (§11) has landed** ([#54](https://github.com/Jolls/deckshare/issues/54)):
 deck/note-type/note/card CRUD (docs/routes.md). `notes.owner_id = decks.owner_id` is now a
 database-enforced composite foreign key (migration `00015`), not just a query-layer convention.
 Card generation and card-regeneration-on-edit both go through `internal/db/cards.go`'s
@@ -65,7 +65,7 @@ Card generation and card-regeneration-on-edit both go through `internal/db/cards
 keep their id, and with it their `user_card_state`/`review_log` history (docs/schema.md's
 card-regeneration trap).
 
-**Build order step 6 (§11) has landed** ([#55](https://github.com/Jolls/enshu/issues/55)):
+**Build order step 6 (§11) has landed** ([#55](https://github.com/Jolls/deckshare/issues/55)):
 `internal/render/` — the §8 template mini-language (`{{Field}}`, sections, filters, cloze
 fan-out) and card-content/CSS sanitisation, built on `github.com/microcosm-cc/bluemonday`
 (HTML) and `github.com/aymerick/douceur` (the note-type CSS blob). A pure package: no
@@ -75,7 +75,7 @@ sanitisation via `TypeAnswerInput`/`TypeAnswerExpected`, never through it — se
 [docs/plans/55-note-type-rendering-sanitisation.md](plans/55-note-type-rendering-sanitisation.md)
 for the full design. No route consumes it yet; the reviewer (step 7) is the first caller.
 
-**Build order step 7 (§11) has landed** ([#56](https://github.com/Jolls/enshu/issues/56)): the
+**Build order step 7 (§11) has landed** ([#56](https://github.com/Jolls/deckshare/issues/56)): the
 reviewer — `internal/review/` (batch precompute, server-authoritative grading, replay) and
 `internal/http/review.go` (docs/routes.md's three routes), implementing §6 in full: the four
 concurrency mechanisms (advisory locks acquired in ascending sorted-key order, events applied in
@@ -89,7 +89,7 @@ buttons are plain (no per-button `hx-post`) so grading can batch and retry with 
 literal per-button POST cannot do — a hidden `#review-sender` element, JS-triggered, is the single
 network-touching sender.
 
-**Build order step 7's security layer has landed** ([#57](https://github.com/Jolls/enshu/issues/57)):
+**Build order step 7's security layer has landed** ([#57](https://github.com/Jolls/deckshare/issues/57)):
 a global `Content-Security-Policy` set by `internal/http/security.go`'s `securityHeaders`
 middleware, wrapping outside `auth.Service.Middleware` so it covers rejected requests too. It is
 the browser-enforced bound behind §8's sanitisation, not a replacement for it: `script-src`
@@ -103,10 +103,10 @@ HTML carries inline `style=""` attributes, which cannot take a nonce, and a nonc
 makes CSP ignore `'unsafe-inline'` entirely. See
 [docs/plans/57-csp-reviewer.md](plans/57-csp-reviewer.md).
 
-**Build order step 8 (§11) has landed** ([#58](https://github.com/Jolls/enshu/issues/58),
-[#59](https://github.com/Jolls/enshu/issues/59)): `internal/apkg/` is a complete `apkg -> IR ->
+**Build order step 8 (§11) has landed** ([#58](https://github.com/Jolls/deckshare/issues/58),
+[#59](https://github.com/Jolls/deckshare/issues/59)): `internal/apkg/` is a complete `apkg -> IR ->
 db` reader/writer pair for schema 11, and reader-only for schema 18 -- its core protobuf field
-numbers are now verified against a real export ([#61](https://github.com/Jolls/enshu/issues/61)),
+numbers are now verified against a real export ([#61](https://github.com/Jolls/deckshare/issues/61)),
 but the writer stays schema-11-only by design (every Anki version can read it, so there is no
 compatibility reason to emit schema 18). `Export`
 (db -> IR) and `Write`/`WriteFile` (IR -> `.apkg`) mirror `Import`/`Read` in reverse: each row
@@ -120,7 +120,7 @@ only the exporting owner's own `user_card_state`/`review_log` rows are flattened
 rows, and since DeckShare persists no package-wide creation instant, `col.crt` is synthesised from
 the earliest exported review-state due date rather than carried through.
 
-`GET`/`POST /import` ([#62](https://github.com/Jolls/enshu/issues/62)) is the HTTP layer on top
+`GET`/`POST /import` ([#62](https://github.com/Jolls/deckshare/issues/62)) is the HTTP layer on top
 of the reader/writer above: `internal/http/import.go` uploads a `.apkg`, calls `apkg.Read` then
 `apkg.Import` inside one transaction, and redirects to the resulting deck. Since a package's
 `Decks` list doesn't say which deck its cards actually landed in (Anki collections routinely
@@ -130,7 +130,7 @@ received the most cards. Verified end to end against the real fixture
 (`tests/fixtures/apkg/mathematics-schema18.apkg`) via the actual route, not just `apkg.Import`
 directly.
 
-**Build order step 9 (§11) has landed** ([#63](https://github.com/Jolls/enshu/issues/63)):
+**Build order step 9 (§11) has landed** ([#63](https://github.com/Jolls/deckshare/issues/63)):
 `GET`/`POST /settings/fsrs` and `POST /decks/{id}/settings/fsrs` write the `desired_retention`-
 only row `internal/review.EffectiveParams` (the reviewer's read path, §6) has read since
 migration 00012 — no fitting; `fsrs_version`/`params` come from `fsrs.NewDefaultParams`
@@ -140,14 +140,14 @@ to `can_view AND can_study`, so a caller lacking either matches zero rows and th
 `0` affected — the handler then 404s, the same collapse-existence shape `UpdateDeck` (decks.sql)
 already uses for `can_edit_settings`.
 
-**Per-deck daily new-card limit has landed** ([#101](https://github.com/Jolls/enshu/issues/101)):
+**Per-deck daily new-card limit has landed** ([#101](https://github.com/Jolls/deckshare/issues/101)):
 `ListDueCardsForStudy` caps never-seen cards at the deck's `preset` `new.perDay` (default 20,
 Anki's own shape), editable from `/decks/{id}/edit`; `/decks` and `/decks/{id}` keep showing the
-raw uncapped unseen-card count until [#106](https://github.com/Jolls/enshu/issues/106).
+raw uncapped unseen-card count until [#106](https://github.com/Jolls/deckshare/issues/106).
 
 **Per-deck combined new+due daily total with priority backfill has landed**
-([#115](https://github.com/Jolls/enshu/issues/115) item 1,
-[#118](https://github.com/Jolls/enshu/issues/118)): `preset` `rev.perDay` (default 200, Anki's own
+([#115](https://github.com/Jolls/deckshare/issues/115) item 1,
+[#118](https://github.com/Jolls/deckshare/issues/118)): `preset` `rev.perDay` (default 200, Anki's own
 `reviews/day` default) started as an independent due-only cap (#115 item 1) and was redefined by
 #118 as the deck's combined new+due daily total — `new.perDay` still separately ceilings how many
 of that total can be new. `preset` `priority` (`due`/`new`/`mixed`, default `due`) decides which
@@ -159,7 +159,7 @@ free once the due-side cutoff and the outer `LIMIT` are both driven by the remai
 than an independent due cap — see `internal/review/batch.go`'s `effectiveLimit`. Editable from
 `/decks/{id}/edit` (labelled "Review Deck Prioritization").
 
-**Orphaned media collection has landed** ([#91](https://github.com/Jolls/enshu/issues/91)):
+**Orphaned media collection has landed** ([#91](https://github.com/Jolls/deckshare/issues/91)):
 `internal/media/gc.go` is a second in-process ticker beside auth's hourly session/rate-limit sweep
 (§1 above, `cmd/deckshare/main.go`), reclaiming `media_blobs` rows whose last `media_refs` row cascaded
 away with a deleted deck, and — walking `MEDIA_ROOT` directly, since no query can see them — files a
@@ -174,7 +174,7 @@ keeps the filesystem half off imports still in flight. Reasoning in
 
 ## 3. Stack
 
-Scaffolded as of [#49](https://github.com/Jolls/enshu/issues/49) (§1). This table describes the
+Scaffolded as of [#49](https://github.com/Jolls/deckshare/issues/49) (§1). This table describes the
 target, decided in [docs/plans/architecture-reconsidered.md](plans/architecture-reconsidered.md).
 
 | Concern | Choice | Notes |
@@ -222,7 +222,7 @@ therefore rejects first — wrong parameter count for the declared `fsrs_version
 weight, `desired_retention` outside `(0, 1]`. The library's behaviour is pinned by
 `TestLibraryClipsOutOfRangeWeightSilently`, `TestLibraryReplacesTheWholeSetOnNonFiniteWeight` and
 `TestLibraryReplacesRetentionOutOfRange` (`internal/fsrs/params_test.go`). One gap is deliberate
-and tracked in [#67](https://github.com/Jolls/enshu/issues/67): a finite but out-of-range weight
+and tracked in [#67](https://github.com/Jolls/deckshare/issues/67): a finite but out-of-range weight
 passes our check and is clipped silently, recorded by `TestOurValidationDoesNotCatchClipping`.
 
 **`go-fsrs`'s fuzz is deterministic in its inputs, but `now` is one of them — so it is forced off.
@@ -242,7 +242,7 @@ pinned by `TestLibraryFuzzSeedIsPureInItsInputs` and `TestLibraryFuzzVariesWithN
 
 ## 4. Repo layout
 
-**Scaffolded as of [#49](https://github.com/Jolls/enshu/issues/49).** Package names below are
+**Scaffolded as of [#49](https://github.com/Jolls/deckshare/issues/49).** Package names below are
 the ones actually in the repo, not placeholders.
 
 ```
@@ -355,7 +355,7 @@ when go-fsrs's short-term learning steps would otherwise land it back within the
 
 A requeued card's interval labels are refreshed from the grade response's own four-branch
 preview, since the ones it was shipped with at batch-fetch time describe its pre-grade state
-([#142](https://github.com/Jolls/enshu/issues/142)); the requeue decision itself still runs
+([#142](https://github.com/Jolls/deckshare/issues/142)); the requeue decision itself still runs
 locally and still writes nothing.
 
 ### Fetching cards
@@ -429,7 +429,7 @@ next batch's hidden cards, and a second hidden element with
 graded events the queue module has accumulated. Rating buttons are plain — no per-button
 `hx-post` — because sending is batched (§11's "kind to mobile radios") and retried with backoff,
 which a literal one-request-per-button-press design cannot do; the module owns the flush cadence
-and backoff, htmx just listens for the event ([#56](https://github.com/Jolls/enshu/issues/56)).
+and backoff, htmx just listens for the event ([#56](https://github.com/Jolls/deckshare/issues/56)).
 htmx owns the two network-touching elements; the queue module owns everything that doesn't touch
 the wire, and nothing about it waits on a request completing before the UI advances
 (CLAUDE.md §2.6).
@@ -580,7 +580,7 @@ The parts you need without opening any of them:
 
 ## 8. Note-type rendering
 
-**Built** ([#55](https://github.com/Jolls/enshu/issues/55)) — `internal/render/`; full design in
+**Built** ([#55](https://github.com/Jolls/deckshare/issues/55)) — `internal/render/`; full design in
 [docs/plans/55-note-type-rendering-sanitisation.md](plans/55-note-type-rendering-sanitisation.md).
 
 Anki templates are their own small language, and this is more work than it looks:
@@ -622,9 +622,9 @@ each item closes a specific attack, not a generic one:
   isn't. This was originally left to `img-src 'self'` (the CSP layer, `internal/http/security.go`)
   to refuse in the browser, but that left the blocked URL visible in the console and the served
   HTML inconsistent with what CSP actually allows — dropped at sanitisation time instead
-  ([#92](https://github.com/Jolls/enshu/issues/92)). Fetching and locally caching remote images
+  ([#92](https://github.com/Jolls/deckshare/issues/92)). Fetching and locally caching remote images
   at import time, so decks stay self-contained, is deferred pending SSRF/content-validation
-  hardening ([#163](https://github.com/Jolls/enshu/issues/163)).
+  hardening ([#163](https://github.com/Jolls/deckshare/issues/163)).
 - **A CSS value grammar that admits no bare `(`** outside the four colour functions
   (`rgb`/`rgba`/`hsl`/`hsla`), so `url(...)`, `expression(...)`, and `image-set(...)` stay out
   even if a URL-accepting property is ever added to the allowed-properties list by mistake later.
@@ -811,7 +811,7 @@ Unresolved. Do not silently pick one — surface it.
   itself does, one step further: content-addressed rather than filename-addressed, because two
   users' decks can each carry a different `image.jpg`. S3-compatible remains a drop-in later —
   the metadata-row-plus-external-bytes shape is identical, only "external" changes.
-  **The decision is settled; the store is not built** — [#60](https://github.com/Jolls/enshu/issues/60)
+  **The decision is settled; the store is not built** — [#60](https://github.com/Jolls/deckshare/issues/60)
   is still open, and no Go media code exists yet at all (§1). The superseded TypeScript
   implementation had a media-map reader for import (`src/lib/server/apkg/media.ts`) but no
   blob store; the Go equivalent (`internal/apkg/media.go` — §4) starts from the same gap.
@@ -857,7 +857,7 @@ seemed tidier."
 | Row ids | Epoch-millis integers, unique per collection | UUIDv7; Anki's ids kept as `anki_id` for export fidelity. Per-collection ids cannot key across users — deck id 1 is `Default` in every collection ever made |
 | Card HTML | Trusted: it is always your own content | Sanitised on render (§8). A shared deck is *other users'* HTML |
 | Deck-content licensing | AnkiWeb hosts a public deck catalogue | No catalogue; a deck moves by `deck_access` row or by a file its owner passed on (§11) |
-| Remote card media | The webview loads whatever the card HTML references, including images on remote hosts | `internal/render/sanitise.go` strips remote `<img src>` outright (§8, [#92](https://github.com/Jolls/enshu/issues/92)); `img-src 'self'` (`internal/http/security.go`) is defence in depth, not the primary control. Card content is always your own in Anki; under `deck_access` it is someone else's, and a remote `<img>` is a beacon reporting every reviewer's IP, UA and review timing to a host the deck author picked. Relative Anki filenames and `/media/{sha256}` (#60) are unaffected. Fetching remote images to local media at import time is deferred ([#163](https://github.com/Jolls/enshu/issues/163)) pending SSRF/content-validation hardening |
+| Remote card media | The webview loads whatever the card HTML references, including images on remote hosts | `internal/render/sanitise.go` strips remote `<img src>` outright (§8, [#92](https://github.com/Jolls/deckshare/issues/92)); `img-src 'self'` (`internal/http/security.go`) is defence in depth, not the primary control. Card content is always your own in Anki; under `deck_access` it is someone else's, and a remote `<img>` is a beacon reporting every reviewer's IP, UA and review timing to a host the deck author picked. Relative Anki filenames and `/media/{sha256}` (#60) are unaffected. Fetching remote images to local media at import time is deferred ([#163](https://github.com/Jolls/deckshare/issues/163)) pending SSRF/content-validation hardening |
 
 ### Deliberate scope, not disagreement
 
@@ -886,11 +886,11 @@ live in its own deck. People use this.
 `IrNote.primaryDeckAnkiId` (`src/lib/server/apkg/ir.ts`, §1) collapsed a note's cards to one
 deck — the home deck of its lowest-numbered card — and justified it by
 `UNIQUE (deck_id, guid)`, which required a note to have exactly one deck or its identity was
-undefined. [#32](https://github.com/Jolls/enshu/issues/32) replaced that key with
+undefined. [#32](https://github.com/Jolls/deckshare/issues/32) replaced that key with
 `UNIQUE (owner_id, guid)` (§2.2), so the constraint that forced the flattening stopped existing;
 the multiuser argument is what *removed* it, not what created it.
 
-**The Go importer never inherited it** ([#58](https://github.com/Jolls/enshu/issues/58)). The
+**The Go importer never inherited it** ([#58](https://github.com/Jolls/deckshare/issues/58)). The
 rule, and where it is enforced:
 
 - `IrCard.DeckAnkiID` (`internal/apkg/ir.go`) is each card's own home deck — `odid` when
@@ -903,7 +903,7 @@ rule, and where it is enforced:
 - Guarded by `TestImport_FilesCardDeckFromCardsOwnDeck` and `TestImport_ReimportDoesNotMoveNotes`
   (`internal/apkg/dbwrite_test.go`). A change that reintroduces the flattening fails the first.
 
-One consequence, settled in [#51](https://github.com/Jolls/enshu/issues/51): deleting a deck
+One consequence, settled in [#51](https://github.com/Jolls/deckshare/issues/51): deleting a deck
 deletes the cards filed in it, and a note goes only when it has **no cards left anywhere** — so a
 note whose cards span decks survives its home deck's deletion and is re-homed to the deck of its
 lowest-ordinal surviving card. That is not expressible as a static FK cascade, so `cards.deck_id`
@@ -918,7 +918,7 @@ learning/relearning step's delay is short enough, regardless of rating. DeckShar
 heuristic (`web/static/review.js`'s `maybeRequeue`, cosmetic only, never written to
 `user_card_state`/`review_log`) additionally never requeues on a `Good` rating, so a card the
 user says they know is always deferred to the next study session rather than cycling back
-minutes later ([#136](https://github.com/Jolls/enshu/issues/136)). This does not trace to the
+minutes later ([#136](https://github.com/Jolls/deckshare/issues/136)). This does not trace to the
 content/progress seam (§2.1) — it is a UX choice, not a multiuser-forced one — which is why it
 needs this row per the §20 test.
 
@@ -926,11 +926,11 @@ needs this row per the §20 test.
 before the next day-boundary rollover — up to ~24h of look-ahead depending what time of day you
 study. DeckShare's study-queue queries (`ListDueCardsForStudy`/`ListReviewCardsForStudy`/
 `CountQueueForDeck`/`CountQueueForUser`) filtered the same way until
-[#155](https://github.com/Jolls/enshu/issues/155), which tightened the cutoff to `due <= now`
+[#155](https://github.com/Jolls/deckshare/issues/155), which tightened the cutoff to `due <= now`
 (zero look-ahead): the day-window version let a card graded Hard with a short FSRS learning step
 requeue itself indefinitely within one session, since it stayed "due" relative to the day-window
 end rather than the actual clock. This does not trace to the content/progress seam either — it is
-a correctness fix, not a multiuser-forced one. [#154](https://github.com/Jolls/enshu/issues/154)
+a correctness fix, not a multiuser-forced one. [#154](https://github.com/Jolls/deckshare/issues/154)
 reintroduces the old behavior as an explicit opt-in, per-deck `due.lookAheadMinutes` preset field
 (default 0, capped at 1440 — the same span the day-window used to allow, so this setting can
 restore Anki's default look-ahead at most, never exceed it), rather than reverting to Anki's
@@ -939,7 +939,7 @@ always-on version.
 **A deck's daily new/due limits share one total, with a priority split, instead of being fully
 independent.** Anki's `new cards/day` and `maximum reviews/day` never interact — each is its own
 hard ceiling, and its new-review-order setting is purely cosmetic (which group displays first),
-never an allocation or eligibility cap. [#118](https://github.com/Jolls/enshu/issues/118) asked
+never an allocation or eligibility cap. [#118](https://github.com/Jolls/deckshare/issues/118) asked
 for something Anki has no equivalent of: a deck-level cap on the day's *combined* card count, with
 a priority mode (`due`/`new`/`mixed`) deciding which side of the new/due split gets first claim on
 that shared budget when it binds, the other side backfilling whatever's left. This does not trace

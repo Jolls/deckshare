@@ -416,7 +416,7 @@ Access-management operations (`internal/http/access.go`) require `can_view` alon
 collaborator, and locking the deck for a revoke or flag edit. Otherwise a caller whose `can_view`
 was stripped but who still holds `can_manage_access` would be 404'd off the access page yet could
 still grant, revoke, or edit other collaborators' rows by posting to the mutation routes directly
-([#83](https://github.com/Jolls/enshu/issues/83)).
+([#83](https://github.com/Jolls/deckshare/issues/83)).
 
 ---
 

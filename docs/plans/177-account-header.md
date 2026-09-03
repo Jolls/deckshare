@@ -1,6 +1,6 @@
 # #177 — Account name and settings gear in a persistent header
 
-Issue: [#177](https://github.com/Jolls/enshu/issues/177). Design source:
+Issue: [#177](https://github.com/Jolls/deckshare/issues/177). Design source:
 `docs/plans/175-multi-user-session-switching.md` §8 (header partial + CSS subsections only — the
 dropdown, htmx roster fragment, and lock screen in that doc are later issues, not built here).
 

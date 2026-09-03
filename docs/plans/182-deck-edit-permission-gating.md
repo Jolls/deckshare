@@ -329,11 +329,11 @@ Add one entry under the current unreleased/next version in `CHANGELOG.md` (top o
 - Deck- and note-editing controls (edit deck, delete deck, manage access, add note, import via
   AI, edit/delete note, change note type) are now hidden from collaborators who lack the
   underlying permission, instead of leading to a bare-text 404
-  ([#182](https://github.com/Jolls/enshu/issues/182)).
+  ([#182](https://github.com/Jolls/deckshare/issues/182)).
 
 ### Added
 - A styled "not found" page for deck/note routes a caller can't reach, replacing the bare-text
-  404 response ([#182](https://github.com/Jolls/enshu/issues/182)).
+  404 response ([#182](https://github.com/Jolls/deckshare/issues/182)).
 ```
 Tag `v0.2.19` after committing, per CLAUDE.md §14.
 

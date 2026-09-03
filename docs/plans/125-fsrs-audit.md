@@ -332,7 +332,7 @@ therefore rejects first — wrong parameter count for the declared `fsrs_version
 weight, `desired_retention` outside `(0, 1]`. The library's behaviour is pinned by
 `TestLibraryClipsOutOfRangeWeightSilently`, `TestLibraryReplacesTheWholeSetOnNonFiniteWeight` and
 `TestLibraryReplacesRetentionOutOfRange` (`internal/fsrs/params_test.go`). One gap is deliberate
-and tracked in [#67](https://github.com/Jolls/enshu/issues/67): a finite but out-of-range weight
+and tracked in [#67](https://github.com/Jolls/deckshare/issues/67): a finite but out-of-range weight
 passes our check and is clipped silently, recorded by `TestOurValidationDoesNotCatchClipping`.
 
 **`go-fsrs`'s fuzz is deterministic in its inputs, but `now` is one of them — so it is forced off.
@@ -361,19 +361,19 @@ New version block above `## [0.1.32]`:
 ### Added
 - Explicit tests pinning `go-fsrs`'s two previously-unverified behaviours — that it silently clips
   or wholesale-replaces out-of-range parameters, and that its fuzz seed is reproducible but takes
-  `now` as an input ([#125](https://github.com/Jolls/enshu/issues/125)).
+  `now` as an input ([#125](https://github.com/Jolls/deckshare/issues/125)).
 - `fsrs.Outcome.CardStateAt`, replacing two copies of the same `Outcome` → `CardState` fold
-  ([#125](https://github.com/Jolls/enshu/issues/125)).
+  ([#125](https://github.com/Jolls/deckshare/issues/125)).
 
 ### Fixed
 - The go-fsrs fuzz characterisation test could not fail in either branch, so a library change to
-  its seeding would have gone unnoticed ([#125](https://github.com/Jolls/enshu/issues/125)).
+  its seeding would have gone unnoticed ([#125](https://github.com/Jolls/deckshare/issues/125)).
 
 ### Changed
 - Corrected the fuzz-seed explanation in `internal/fsrs` and architecture.md §3 (the seed comes
   from the caller-supplied `now`, not the process clock), sourced `MaximumInterval` from the
   library's own default instead of duplicating it, and named the remaining magic numbers — no
-  behavior change ([#125](https://github.com/Jolls/enshu/issues/125)).
+  behavior change ([#125](https://github.com/Jolls/deckshare/issues/125)).
 ```
 
 ## Sequencing

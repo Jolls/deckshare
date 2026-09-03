@@ -1,6 +1,6 @@
 # 58 — `.apkg` import: reader + IR → database writer
 
-Plan for [#58](https://github.com/Jolls/enshu/issues/58). Phase 1, build-order step 8
+Plan for [#58](https://github.com/Jolls/deckshare/issues/58). Phase 1, build-order step 8
 (architecture.md §11). Read [docs/apkg-format.md](../apkg-format.md) and
 [docs/anki-schema.md](../anki-schema.md) before implementing — this plan does not restate the
 format, it names which parts of it each function is responsible for.
@@ -21,11 +21,11 @@ note types, with each card's `deck_id` taken from **that card's own home deck**
 ceilings (member count, per-member and total decompressed bytes, zstd declared frame size
 checked before decompressing) are enforced in the container layer. Out of scope and explicitly
 **not** in this issue: the `.apkg` *file writer* (`internal/apkg/write.go` stays a stub —
-[#59](https://github.com/Jolls/enshu/issues/59)), the media blob store and any `media_blobs` /
-`media_refs` writes ([#60](https://github.com/Jolls/enshu/issues/60)), the `/import` HTTP route
-and real-fixture verification ([#62](https://github.com/Jolls/enshu/issues/62)), and verifying
+[#59](https://github.com/Jolls/deckshare/issues/59)), the media blob store and any `media_blobs` /
+`media_refs` writes ([#60](https://github.com/Jolls/deckshare/issues/60)), the `/import` HTTP route
+and real-fixture verification ([#62](https://github.com/Jolls/deckshare/issues/62)), and verifying
 the schema-18 protobuf field numbers against a real export
-([#61](https://github.com/Jolls/enshu/issues/61)).
+([#61](https://github.com/Jolls/deckshare/issues/61)).
 
 **Scope clarification on the issue's wording** (this is the §10-flagged ambiguity, resolved
 here): "reader + write IR into database" means `apkg -> IR -> db` only. `db -> IR -> apkg` is
@@ -1045,7 +1045,7 @@ CLAUDE.md §10's exception applies here without qualification: **this area alway
 ### Round-trip (CLAUDE.md §10.3) — scoped down, deliberately
 
 The full `import(export(import(f))) == import(f)` round trip **cannot be written in this issue**:
-the export half is `write.go`, which is [#59](https://github.com/Jolls/enshu/issues/59). What
+the export half is `write.go`, which is [#59](https://github.com/Jolls/deckshare/issues/59). What
 #58 ships instead, and what #59 must extend:
 
 - `TestRead_TwiceIsIdentical` — the import determinism half of the property.

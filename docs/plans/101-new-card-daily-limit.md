@@ -1,11 +1,11 @@
 # Plan — #101: per-deck daily new-card limit (v1 — enforcement only)
 
-**Issue:** [#101](https://github.com/Jolls/enshu/issues/101) — "Study goes through all due cards & All new cards."
+**Issue:** [#101](https://github.com/Jolls/deckshare/issues/101) — "Study goes through all due cards & All new cards."
 **Resolved scope (v1):** per-deck "new cards/day" setting stored in `decks.preset`, default 20,
 **enforced** in the review batch fetch, editable from the deck edit page. No global/user-level
 limit, no review-count cap, no learning-steps config.
 
-**Deferred to [#106](https://github.com/Jolls/enshu/issues/106):** capping the new-card counts
+**Deferred to [#106](https://github.com/Jolls/deckshare/issues/106):** capping the new-card counts
 *displayed* on `/decks` and `/decks/{id}` to match what's actually servable. Those pages will
 keep showing the deck's raw unseen-card count through this PR — cosmetic once enforcement is
 correct (§9), and split out to keep this PR to the enforcement path. Not milestoned.
@@ -103,7 +103,7 @@ Insert this clause **immediately before** the existing keyset-cursor comparison 
 Rejected alternative, for the record: a `count(*) FILTER (WHERE unseen) OVER (ORDER BY queue_key, card_id ROWS UNBOUNDED PRECEDING)` window in a CTE. It is correct only if the cursor is applied *outside* the CTE, which forces the whole eligible set (all due cards included) through a window on every refill and throws away the LIMIT pushdown the keyset design exists to keep.
 
 `CountQueueForDeck` and `CountQueueForUser` are **not touched** in this PR — the counts they
-report stay the deck's raw unseen count, uncapped, until [#106](https://github.com/Jolls/enshu/issues/106).
+report stay the deck's raw unseen count, uncapped, until [#106](https://github.com/Jolls/deckshare/issues/106).
 
 ## 4. `internal/db/queries/decks.sql` — `UpdateDeck`
 
@@ -161,7 +161,7 @@ func NewRemaining(perDay int32, introducedToday int64) int32
 
 `NewPerDay` clamps rather than errors: a value < 0 or > `MaxNewPerDay` (only reachable by hand-editing the DB — the handler validates) returns `DefaultNewPerDay`.
 
-`CapNewCount` (the displayed-count helper) is **not part of this PR** — see [#106](https://github.com/Jolls/enshu/issues/106).
+`CapNewCount` (the displayed-count helper) is **not part of this PR** — see [#106](https://github.com/Jolls/deckshare/issues/106).
 
 ### 5.2 `internal/review/batch.go`
 
@@ -195,7 +195,7 @@ Both call sites — the page handler (line ~61) and `GET /api/reviews/next` (lin
 
 ### 5.4 `internal/http/decks.go`
 
-Only the edit page changes — the list (`GET /decks`) and single-deck (`GET /decks/{id}`) handlers are untouched in this PR (their counts stay uncapped, per [#106](https://github.com/Jolls/enshu/issues/106)):
+Only the edit page changes — the list (`GET /decks`) and single-deck (`GET /decks/{id}`) handlers are untouched in this PR (their counts stay uncapped, per [#106](https://github.com/Jolls/deckshare/issues/106)):
 
 - `GET /decks/{id}/edit`: add `"NewPerDay": review.NewPerDay(deck.Preset)` to the render map.
 - `POST /decks/{id}/edit`: parse the field, then pass it through:
@@ -226,14 +226,14 @@ Inside the existing edit form, between the description textarea and the submit b
     <small>0 introduces no new cards from this deck. Due and learning cards are never limited.</small>
 ```
 
-`web/templates/decks.html` and `web/templates/deck.html` need no change in this PR — they keep rendering the raw, uncapped `$counts.New` / `.Queue.New` until [#106](https://github.com/Jolls/enshu/issues/106).
+`web/templates/decks.html` and `web/templates/deck.html` need no change in this PR — they keep rendering the raw, uncapped `$counts.New` / `.Queue.New` until [#106](https://github.com/Jolls/deckshare/issues/106).
 
 ## 6. Docs to update in the same PR
 
 - `docs/schema.md`: under the `decks` block, document the preset shape — `{"new": {"perDay": 20}}`, absent ⇒ 20, range 0..9999, parsed in Go — and note that it is enforced by `ListDueCardsForStudy`. Note that `CountQueueForDeck`/`CountQueueForUser` still report the raw unseen count (tracked in #106).
 - `docs/routes.md` line 58: `GET /decks/{id}/edit` no longer says "`preset` is not yet editable"; it now edits name, description, and new-cards-per-day. Add the same to the `POST /decks/{id}/edit` row.
 - `docs/architecture.md` §1: one sentence on the landing, in the existing style.
-- **`CHANGELOG.md` — entry needed, but do not write it here.** Per CLAUDE.md §14 the batch's entry is written once by the manager session, at the top under a new `## [0.1.X] - YYYY-MM-DD` with `### Added` and `([#101](https://github.com/Jolls/enshu/issues/101))`.
+- **`CHANGELOG.md` — entry needed, but do not write it here.** Per CLAUDE.md §14 the batch's entry is written once by the manager session, at the top under a new `## [0.1.X] - YYYY-MM-DD` with `### Added` and `([#101](https://github.com/Jolls/deckshare/issues/101))`.
 - `docs/plans/56-reviewer-batch-grading.md` open question 9 is now partly answered — enforcement lands, but the display-count half of that question is now tracked in #106; no edit to that plan (plans are historical records).
 
 ## 7. Tests (CLAUDE.md §10 — this is the item-2 batch-fetch path plus DB queries)
@@ -252,7 +252,7 @@ Inside the existing edit form, between the description textarea and the submit b
 
 **`internal/http/decks_test.go`**: `POST /decks/{id}/edit` with `new_per_day=5` persists and re-renders in the edit form; `new_per_day=abc`, `-1`, `10000` ⇒ 400 with the deck unchanged; the field absent leaves an existing value intact; access control unchanged (a caller without `can_edit_settings` still 404s).
 
-The displayed-count test (`GET /decks/{id}` renders `New: 0` when the allowance is exhausted) moves to [#106](https://github.com/Jolls/enshu/issues/106) along with the feature it tests.
+The displayed-count test (`GET /decks/{id}` renders `New: 0` when the allowance is exhausted) moves to [#106](https://github.com/Jolls/deckshare/issues/106) along with the feature it tests.
 
 ## 8. Sequencing
 
@@ -268,7 +268,7 @@ The displayed-count test (`GET /decks/{id}` renders `New: 0` when the allowance 
 - **Displayed new counts stay uncapped in this PR.** `/decks` and `/decks/{id}` will keep
   showing the deck's raw unseen-card count, not what's actually servable today — e.g. "50 new"
   with a 20/day limit and none introduced yet. The *behaviour* is correct (only 20 are ever
-  served); the *number shown* is not. Tracked in [#106](https://github.com/Jolls/enshu/issues/106).
+  served); the *number shown* is not. Tracked in [#106](https://github.com/Jolls/deckshare/issues/106).
 - **Importing today an `.apkg` whose revlog contains today's first-ever reviews consumes today's allowance** for those cards. Correct in substance (they were introduced today) and unreachable for a normal import of older history.
 - **A shared deck's limit is shared; the count is not.** §0.7.
 - **A card that arrives from an import with a `user_card_state` row but no reviews** (only reachable for a *flagged* new Anki card — `seedCardStates`'s `hasState` test) is not "unseen" here, so the cap does not gate it, though grading it does consume the day's allowance. Errs toward fewer new cards, never more. Its pre-existing exclusion from every `CountQueueForDeck` bucket while still being servable is a separate miscount that predates this issue — **not fixed here**; worth a follow-up issue.

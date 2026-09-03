@@ -1,6 +1,6 @@
 # Plan: #51 — Deck/user deletion policy: resolve the FK-restrict deadlock
 
-Phase 1, step 2 (architecture.md §11), applied **on top of [#50](https://github.com/Jolls/enshu/issues/50)**
+Phase 1, step 2 (architecture.md §11), applied **on top of [#50](https://github.com/Jolls/deckshare/issues/50)**
 (`docs/plans/50-schema-migrations.md`), which ships the full DDL with every foreign key written
 `ON DELETE RESTRICT`. This issue replaces that blanket stopgap with the terminal per-FK policy,
 adds the deck-delete procedure the policy needs, and closes the last-`can_manage_access`/
@@ -289,7 +289,7 @@ Filename note: the hand-written `internal/db/deletion.go` does not collide with 
 A deck delete cascades its `media_refs` rows away and can leave a `media_blobs` row with zero
 remaining references. **Nothing collects it, by design, in this issue.** Blob deletion is not a
 row delete: the bytes live on the filesystem at `${MEDIA_ROOT}/<sha[0:2]>/<sha>` (schema.md, §Media)
-and no store exists yet at all ([#60](https://github.com/Jolls/enshu/issues/60)). A reference-counted
+and no store exists yet at all ([#60](https://github.com/Jolls/deckshare/issues/60)). A reference-counted
 GC has to delete a row and a file with no transaction spanning them, which is a real design problem
 and a separate feature. `media_refs.sha256` stays RESTRICT so nothing can delete a referenced blob
 in the meantime, and the orphan is a bounded disk-space cost, not a correctness one.
@@ -734,7 +734,7 @@ Replace the closing paragraph — currently *"One consequence to settle while do
 policy is already unreachable behind the FK restricts (#15), so settle both at once."* — with a
 resolved-and-implemented note:
 
-> One consequence, settled in [#51](https://github.com/Jolls/enshu/issues/51): deleting a deck
+> One consequence, settled in [#51](https://github.com/Jolls/deckshare/issues/51): deleting a deck
 > deletes the cards filed in it, and a note goes only when it has **no cards left anywhere** — so a
 > note whose cards span decks survives its home deck's deletion and is re-homed to the deck of its
 > lowest-ordinal surviving card. That is not expressible as a static FK cascade, so `cards.deck_id`
@@ -774,24 +774,24 @@ these lines into that PR's single version entry rather than adding a second:
 ### Added
 - Deletion policy: deck delete removes the deck's cards and any note left with no cards anywhere,
   re-homing notes whose cards survive in other decks; `internal/db/deletion.go` runs it as an
-  ordered transaction ([#51](https://github.com/Jolls/enshu/issues/51))
+  ordered transaction ([#51](https://github.com/Jolls/deckshare/issues/51))
 - Last-`can_manage_access`/`can_delete`-holder guard on `deck_access`, enforced in the query layer
-  under a deck row lock ([#51](https://github.com/Jolls/enshu/issues/51))
+  under a deck row lock ([#51](https://github.com/Jolls/deckshare/issues/51))
 - DB-backed tests for the cascade graph, the deck-delete procedure, and the access guard
 
 ### Changed
 - Foreign keys carry their terminal `ON DELETE` behaviour instead of the blanket `RESTRICT`:
   sessions, fields, templates, `deck_access.deck_id`, `cards.note_id`/`deck_id`,
   `user_card_state.card_id`, per-deck `user_fsrs_params`, and `media_refs.deck_id` cascade;
-  everything user-owned restricts ([#51](https://github.com/Jolls/enshu/issues/51))
+  everything user-owned restricts ([#51](https://github.com/Jolls/deckshare/issues/51))
 - `review_log.card_id` is no longer a foreign key — the column, its index, and the re-import dedup
   key are unchanged, and no `review_log` row is deletable by any path. This is what makes a studied
   deck deletable without a `DELETE` over training data, and it matches Anki's own `revlog.cid`
-  ([#51](https://github.com/Jolls/enshu/issues/51))
+  ([#51](https://github.com/Jolls/deckshare/issues/51))
 
 ### Removed
 - User deletion as a reachable operation: blocked at the FK level pending an account-closure
-  design ([#51](https://github.com/Jolls/enshu/issues/51))
+  design ([#51](https://github.com/Jolls/deckshare/issues/51))
 ```
 
 ---

@@ -107,7 +107,7 @@ deck_access deck_id, user_id, created_at,
 `{"new": {"perDay": 20}, "rev": {"perDay": 200, "order": "due"}, "priority": "due",
 "due": {"lookAheadMinutes": 0}}` — the per-deck daily new-card ceiling (#101), the deck's combined
 new+due daily total (`rev.perDay`, originally an independent due-only cap under #115, redefined
-by [#118](https://github.com/Jolls/enshu/issues/118) as the shared total), review order (#116),
+by [#118](https://github.com/Jolls/deckshare/issues/118) as the shared total), review order (#116),
 review prioritization (`priority`, #118 — which side of the new/due split fills the shared total
 first, the other side backfilling the remainder; top-level rather than nested under `new` since it
 governs the whole day's split rather than describing new-card mixing the way its predecessor,
@@ -122,7 +122,7 @@ new/due split itself (`PriorityAllocate`) is also Go-side, used by the "left to 
 fetch time via ordering + per-side cutoffs + a `LIMIT` clamped to the remaining total, not by
 calling `PriorityAllocate` directly (docs/architecture.md §6/§20 has the reasoning).
 `CountQueueForDeck`/`CountQueueForUser` still report the deck's raw unseen-card count, uncapped
-by `new.perDay`/`rev.perDay` ([#106](https://github.com/Jolls/enshu/issues/106)), but do apply
+by `new.perDay`/`rev.perDay` ([#106](https://github.com/Jolls/deckshare/issues/106)), but do apply
 `due.lookAheadMinutes` to their due-card filter same as the study queries. `CountQueueForUser`
 groups counts across every deck a user can view in one query, so it can't bind
 `look_ahead_minutes` as a single scalar the way the other three do — the caller passes parallel
@@ -209,7 +209,7 @@ permission source and exempts nobody.
 
 ## Deletion policy
 
-Settled in [#51](https://github.com/Jolls/enshu/issues/51); full reasoning:
+Settled in [#51](https://github.com/Jolls/deckshare/issues/51); full reasoning:
 `docs/plans/51-deletion-policy.md`. Two organising principles decide every foreign key's
 `ON DELETE` action: a row with no independent meaning without its parent cascades; a row
 another user can reach, or that is training data, never cascades.
@@ -339,7 +339,7 @@ straight into `make_interval`), `review_log.rating` 1–4, `review_log.review_ki
 `user_fsrs_params.desired_retention` strictly between 0 and 1.
 
 **Every foreign key carries its terminal `ON DELETE` action** — settled in
-[#51](https://github.com/Jolls/enshu/issues/51); the full table and reasoning are in
+[#51](https://github.com/Jolls/deckshare/issues/51); the full table and reasoning are in
 Deletion policy, above.
 
 **Indexes backing `ON DELETE RESTRICT`.** A restricting foreign key makes Postgres run
@@ -415,9 +415,9 @@ only a genuine content disagreement that does.
 `${MEDIA_ROOT}/<sha[0:2]>/<sha>`. The database holds metadata rows only and never a `bytea`
 column. S3-compatible stays a drop-in later — the metadata-row-plus-external-bytes shape is
 identical, only "external" changes. See architecture.md §12; the store itself is not built yet
-([#60](https://github.com/Jolls/enshu/issues/60)).
+([#60](https://github.com/Jolls/deckshare/issues/60)).
 
-**Orphaned media is collected by a periodic sweep** ([#91](https://github.com/Jolls/enshu/issues/91),
+**Orphaned media is collected by a periodic sweep** ([#91](https://github.com/Jolls/deckshare/issues/91),
 `internal/media/gc.go`, hourly ticker in `cmd/deckshare/main.go`), covering two classes. A deck delete
 cascades its `media_refs` rows away and can leave a `media_blobs` row with zero remaining
 references; and `Put` writes bytes before the enclosing import transaction commits, so a
@@ -477,7 +477,7 @@ locking the deck for a revoke or flag edit (`LockDeckForAccessChange`, `internal
 all query for both flags together, never `can_manage_access` alone. Otherwise a caller whose
 `can_view` was stripped but who still holds `can_manage_access` would be 404'd off the access
 page yet could still grant, revoke, or edit other collaborators' rows by posting to the mutation
-routes directly ([#83](https://github.com/Jolls/enshu/issues/83)).
+routes directly ([#83](https://github.com/Jolls/deckshare/issues/83)).
 
 ---
 

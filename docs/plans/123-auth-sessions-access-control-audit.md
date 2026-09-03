@@ -362,7 +362,7 @@ CLAUDE.md §14 requires one `CHANGELOG.md` entry per PR. Under the branch's vers
 
 ```
 ### Security
-- Changing a password now invalidates every other session for that account and reissues the acting browser's session cookie ([#123](https://github.com/Jolls/enshu/issues/123))
+- Changing a password now invalidates every other session for that account and reissues the acting browser's session cookie ([#123](https://github.com/Jolls/deckshare/issues/123))
 ```
 
 Do not edit `docs/plans/52-auth-accounts.md` — historical plans are records of what was decided
@@ -719,7 +719,7 @@ script in it, which makes CSP load-bearing rather than defence-in-depth. Candida
 directive. Note that R2's `nosniff` narrows but does not close this — it stops MIME *sniffing*,
 not a correctly-declared `image/svg+xml` that contains script.
 
-Filed as [#133](https://github.com/Jolls/enshu/issues/133). Reference it in this PR body so the finding is traceable to the audit that
+Filed as [#133](https://github.com/Jolls/deckshare/issues/133). Reference it in this PR body so the finding is traceable to the audit that
 found it.
 
 ### R4. Rate-limit keys behind NAT — leave as is, record the finding

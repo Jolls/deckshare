@@ -17,7 +17,7 @@ So: **every `uuid` PK is `uuid PRIMARY KEY DEFAULT uuidv7()`.** The application 
 Minimum Postgres version for this schema: **18** (the `uuidv7()` default is what raises the floor from 13 — `NULLS NOT DISTINCT` alone would only have required 15).
 
 **0.2 FK `ON DELETE` policy — `RESTRICT` everywhere, without exception.**
-schema.md only specifies `review_log`'s FKs ("`ON DELETE RESTRICT`: nothing may cascade training data away"). Deck/user deletion cascade policy is [#51](https://github.com/Jolls/enshu/issues/51)'s job, and #50 must not pre-empt it. The conservative default that keeps every delete *blocked* until #51 decides is `ON DELETE RESTRICT`, applied to all 17 foreign keys. Consequence, and it is intended: **no user and no deck can be deleted at all until #51 lands.** There is no delete route in Phase 1 yet, so nothing is blocked in practice.
+schema.md only specifies `review_log`'s FKs ("`ON DELETE RESTRICT`: nothing may cascade training data away"). Deck/user deletion cascade policy is [#51](https://github.com/Jolls/deckshare/issues/51)'s job, and #50 must not pre-empt it. The conservative default that keeps every delete *blocked* until #51 decides is `ON DELETE RESTRICT`, applied to all 17 foreign keys. Consequence, and it is intended: **no user and no deck can be deleted at all until #51 lands.** There is no delete route in Phase 1 yet, so nothing is blocked in practice.
 
 Every FK is written with an explicit `ON DELETE RESTRICT` and a `-- #51 revisits this` comment, so #51's diff is a mechanical grep rather than an audit.
 

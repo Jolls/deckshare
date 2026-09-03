@@ -13,7 +13,7 @@ Extracted from [architecture.md](architecture.md) §7. Read this before touching
 > 1. A widely distributed community geography deck, v53, exported ~2025-04, 319 notes / 978
 >    cards / 546 media files. **Schema 11 in a legacy container.**
 > 2. A small hand-built collection, exported by the project's own maintainer specifically to
->    close [#61](https://github.com/Jolls/enshu/issues/61), committed at
+>    close [#61](https://github.com/Jolls/deckshare/issues/61), committed at
 >    `tests/fixtures/apkg/mathematics-schema18.apkg` — 9 notes / 11 cards / 14 media files, one
 >    Basic-family note type and one real Cloze note type with content. **Schema 18 in a modern
 >    zstd container** (`meta` version 3 — the first version-3 `meta` this doc has seen; the

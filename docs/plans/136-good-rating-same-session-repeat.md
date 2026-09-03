@@ -216,7 +216,7 @@ different race (a refill landing before a grade's POST has committed) and need n
   regardless of rating; Enshu's client-side heuristic (`web/static/review.js`'s `maybeRequeue`,
   cosmetic only, never written to `user_card_state`/`review_log`) additionally never requeues on
   a `Good` rating, so a card the user says they know is always deferred to the next study session
-  rather than cycling back minutes later — [#136](https://github.com/Jolls/enshu/issues/136).
+  rather than cycling back minutes later — [#136](https://github.com/Jolls/deckshare/issues/136).
   State plainly that this does not trace to the content/progress seam (§2.1) — it is a UX choice,
   not a multiuser-forced one — which is why it needs this row per the §20 test.
 
