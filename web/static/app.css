@@ -129,6 +129,17 @@ details > summary ~ * {
     padding: 0.5rem 0;
 }
 
+.account-identity {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.avatar-thumb {
+    border-radius: 50%;
+    object-fit: cover;
+}
+
 /* Resolved decision (#175 Q4): hidden on the reviewer and study-all pages -- a persistent bar
    costs vertical space on a phone, and a later issue hangs account-switch/lock controls off this
    bar, which must not sit one mis-tap from a grading button. layout.html sets this class on

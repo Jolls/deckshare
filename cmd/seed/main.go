@@ -11,8 +11,11 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha1" //nolint:gosec // Anki csum compatibility, not a security use of SHA-1
+	"crypto/sha256"
+	_ "embed"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,7 +29,14 @@ import (
 
 	"github.com/Jolls/enshu/internal/auth"
 	"github.com/Jolls/enshu/internal/db"
+	"github.com/Jolls/enshu/internal/media"
 )
+
+// seedAvatarJPEG is a real (manually tested via the upload UI) avatar image, so a fresh seed
+// shows a populated account header/settings avatar instead of the initials-only placeholder.
+//
+//go:embed avatar.jpg
+var seedAvatarJPEG []byte
 
 const (
 	testEmail       = "test@test.com"
@@ -90,6 +100,14 @@ func run() error {
 	collaborator, err := ensureUser(ctx, pool, authSvc, collaboratorEmail, collaboratorPassword, collaboratorDisplayName)
 	if err != nil {
 		return fmt.Errorf("ensure collaborator user: %w", err)
+	}
+
+	if !user.AvatarSha256.Valid {
+		if err := ensureAvatar(ctx, pool, user.ID); err != nil {
+			return fmt.Errorf("ensure test user avatar: %w", err)
+		}
+	} else {
+		log.Print("test user already has an avatar, skipping avatar seeding")
 	}
 
 	for _, name := range []string{basicDeckName, clozeDeckName, sharedDeckName} {
@@ -209,6 +227,48 @@ func ensureDeckAccess(ctx context.Context, pool *pgxpool.Pool, arg db.GrantDeckA
 		return fmt.Errorf("caller lacks can_view+can_manage_access on deck %v", arg.DeckID)
 	}
 	log.Printf("granted deck access")
+	return nil
+}
+
+// ensureAvatar stores seedAvatarJPEG as a content-addressed blob and points userID's
+// avatar_sha256 at it, using the same single-transaction shape as POST /settings/avatar
+// (internal/http/settings.go) so the media GC sweep never observes the blob row committed but
+// not yet referenced. MEDIA_ROOT defaults to "./media" (matching .env.example) rather than
+// failing like cmd/enshu's requirement, since a missing avatar is not fatal to seeding decks/notes.
+func ensureAvatar(ctx context.Context, pool *pgxpool.Pool, userID pgtype.UUID) error {
+	mediaRoot := os.Getenv("MEDIA_ROOT")
+	if mediaRoot == "" {
+		mediaRoot = "./media"
+	}
+	blobs := media.New(mediaRoot)
+
+	sum := sha256.Sum256(seedAvatarJPEG)
+	sha := hex.EncodeToString(sum[:])
+	if err := blobs.Put(sha, seedAvatarJPEG); err != nil {
+		return fmt.Errorf("write avatar blob: %w", err)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	q := db.New(tx)
+	if err := q.CreateMediaBlob(ctx, db.CreateMediaBlobParams{
+		Sha256: sha, SizeBytes: int64(len(seedAvatarJPEG)), Mime: "image/jpeg",
+	}); err != nil {
+		return fmt.Errorf("create media blob: %w", err)
+	}
+	if err := q.UpdateUserAvatar(ctx, db.UpdateUserAvatarParams{
+		ID: userID, AvatarSha256: pgtype.Text{String: sha, Valid: true},
+	}); err != nil {
+		return fmt.Errorf("update user avatar: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	log.Print("seeded test user avatar")
 	return nil
 }
 

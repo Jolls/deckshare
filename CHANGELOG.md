@@ -13,8 +13,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - A `users.avatar_sha256` column referencing `media_blobs`, so a user's avatar is stored as a
-  deduplicated content-addressed blob like any other media. Schema only -- no upload or serving
-  route yet ([#176](https://github.com/Jolls/enshu/issues/176)).
+  deduplicated content-addressed blob like any other media.
+- An avatar upload control in account settings: the browser resizes and re-encodes the image to a
+  JPEG no larger than 512px before sending it, the server independently caps upload size and
+  decoded dimensions, and the account header shows the uploaded avatar next to the display name.
+  Visible only to the account owner for now -- no cross-user visibility rule exists yet
+  ([#176](https://github.com/Jolls/enshu/issues/176)).
 
 ## [0.2.19] - 2026-09-02
 

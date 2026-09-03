@@ -1,6 +1,9 @@
 {{define "header"}}
 <header class="account-bar">
-    <span>{{.User.DisplayName}}</span>
+    <span class="account-identity">
+        {{if .User.AvatarSha256.Valid}}<img class="avatar-thumb" src="/settings/avatar" width="24" height="24" alt="">{{end}}
+        {{.User.DisplayName}}
+    </span>
     <a href="/settings" aria-label="Account settings">⚙</a>
 </header>
 {{end}}

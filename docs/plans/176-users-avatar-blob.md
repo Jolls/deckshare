@@ -2,6 +2,13 @@
 
 **Issue:** [#176](https://github.com/Jolls/enshu/issues/176) "Add blob in users for avatar or photo."
 
+**Update:** the scope line below described the schema-only first commit on this branch. A
+follow-up commit on the same branch/PR added the upload route (`POST /settings/avatar`), the
+serving route (`GET /settings/avatar`, self-only), the settings-page UI, and the client-side
+resize/re-encode step -- closing #176. See `docs/routes.md`'s Settings section and
+`CHANGELOG.md`'s `0.2.20` entry for what actually shipped; this plan's body below is left
+unedited as the historical record of the schema-only step.
+
 **Scope (confirmed, do not re-litigate):** schema + queries + docs only. No HTTP upload route, no
 serving route, no UI, no template change, no handler change. The column exists and is writable
 through a query; nothing calls that query yet.

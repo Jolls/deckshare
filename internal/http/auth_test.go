@@ -99,16 +99,16 @@ func newTestHandler(t *testing.T, tx pgx.Tx, cfg auth.Config, clocks ...func() t
 		clock = clocks[0]
 	}
 	mux := http.NewServeMux()
+	blobs := media.New(t.TempDir())
 	registerStaticRoutes(mux)
 	registerAuthRoutes(mux, a, pages)
-	registerSettingsRoutes(mux, a, tx, pages)
+	registerSettingsRoutes(mux, a, tx, pages, blobs)
 	registerDeckRoutes(mux, tx, pages, clock)
 	registerAccessRoutes(mux, tx, pages)
 	registerNoteTypeRoutes(mux, tx, pages)
 	registerNoteRoutes(mux, tx, pages)
 	registerNotePreviewRoutes(mux, tx, fragments)
 	registerReviewRoutes(mux, tx, pages, fragments, clock)
-	blobs := media.New(t.TempDir())
 	registerMediaRoutes(mux, tx, blobs)
 	registerImportRoutes(mux, tx, pages, blobs, clock)
 	registerAIImportRoutes(mux, tx, pages)

@@ -157,6 +157,8 @@ exempts nobody from the guard.
 | POST | `/settings/password` | session | Change password |
 | POST | `/settings/fsrs` | session | Update the global `desired_retention` default |
 | POST | `/decks/{id}/settings/fsrs` | `can_study` | Per-deck override. Scoped to the caller, not the deck — `user_fsrs_params` keys on `(user_id, deck_id)`, so this is "my retention target for this deck," not a deck-wide setting an admin sets for everyone |
+| POST | `/settings/avatar` | session | Upload an avatar image (JPEG only, client resizes to ≤512px before sending; server independently caps size and decoded dimensions). Stored as a content-addressed blob (`media_blobs` + `users.avatar_sha256`, #176) — no `media_refs` row, since an avatar isn't deck-scoped media |
+| GET | `/settings/avatar` | session, self only | Serve the caller's own avatar bytes; 404 if none set. No cross-user visibility rule exists yet, so this doesn't reuse `GetMediaBlobForUser`'s `deck_access` gate |
 
 ---
 

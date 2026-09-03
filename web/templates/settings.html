@@ -3,6 +3,19 @@
 <h1>Account settings</h1>
 
 <section>
+    <h2>Avatar</h2>
+    {{template "errorMsg" .AvatarError}}
+    {{template "successMsg" .AvatarSuccess}}
+    {{if .User.AvatarSha256.Valid}}<img id="avatar-preview" src="/settings/avatar" width="96" height="96" alt="Your avatar">{{end}}
+    <form method="post" action="/settings/avatar" enctype="multipart/form-data" id="avatar-form">
+        <label for="avatar">Choose an image</label>
+        <input type="file" id="avatar" name="avatar" accept="image/*" required>
+        <button type="submit">Upload avatar</button>
+    </form>
+    <script src="/static/settings_avatar.js" defer></script>
+</section>
+
+<section>
     <h2>Profile</h2>
     {{template "errorMsg" .ProfileError}}
     {{template "successMsg" .ProfileSuccess}}
