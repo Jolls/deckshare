@@ -22,5 +22,8 @@ Pico.css doesn't cover.
 back to a malformed default encoding -- docs/plans/99-grading-persistence.md). The review batch
 POST is sent with a direct `fetch()` instead (`web/static/review.js`'s `flush()`).
 
+`favicon.png` is the app icon (hand-supplied artwork, not vendored), downscaled to 256x256 and
+converted to PNG from the source image; referenced from `web/templates/layout.html`.
+
 To update: download the new version from the same upstream URL, recompute its SHA-256
 (`sha256sum web/static/<file>`), and update this table.
