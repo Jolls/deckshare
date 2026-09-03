@@ -59,6 +59,20 @@ const (
 	// seedDueCardCount is how many of each freshly-seeded deck's cards start already in Review
 	// state and due, rather than New.
 	seedDueCardCount = 2
+
+	// baseCardCSS/clozeBoldCSS: signup seeds the test user's Basic/Cloze note types with empty
+	// CSS (internal/auth/notetypes.go), so a reseed has nothing to visually check note-type
+	// CSS against (e.g. #194: the reviewer's visible card missing the enshu-card scope class,
+	// which silently drops every note-type CSS rule). Backfilled here rather than by changing
+	// what signup seeds, since this is test-fixture content, not a product default.
+	baseCardCSS = ".card {\n" +
+		"    font-family: arial;\n" +
+		"    font-size: 20px;\n" +
+		"    text-align: center;\n" +
+		"    color: black;\n" +
+		"    background-color: white;\n" +
+		"}\n"
+	clozeBoldCSS = ".cloze {\n    font-weight: bold;\n}\n"
 )
 
 // seedDueDate is a fixed calendar date, not relative to time.Now -- so the "couple of due cards"
@@ -141,6 +155,13 @@ func run() error {
 	clozeType, ok := findNoteType(noteTypes, "Cloze")
 	if !ok {
 		return errors.New(`note type "Cloze" not found -- signup seeding may have failed`)
+	}
+
+	if err := ensureNoteTypeCSS(ctx, q, basicType, baseCardCSS); err != nil {
+		return fmt.Errorf("ensure Basic note type css: %w", err)
+	}
+	if err := ensureNoteTypeCSS(ctx, q, clozeType, baseCardCSS+clozeBoldCSS); err != nil {
+		return fmt.Errorf("ensure Cloze note type css: %w", err)
 	}
 
 	if basicDeck.CardCount == 0 {
@@ -345,6 +366,20 @@ func findDeck(decks []db.ListDecksForUserRow, name string) (db.ListDecksForUserR
 		}
 	}
 	return db.ListDecksForUserRow{}, false
+}
+
+// ensureNoteTypeCSS backfills a note type's CSS the first time seed runs against it, then leaves
+// it alone -- re-running seed must not clobber CSS someone edited by hand in the running app.
+func ensureNoteTypeCSS(ctx context.Context, q *db.Queries, nt db.ListNoteTypesForOwnerRow, wantCSS string) error {
+	if nt.Css != "" {
+		return nil
+	}
+	if _, err := q.UpdateNoteTypeRow(ctx, db.UpdateNoteTypeRowParams{
+		Name: nt.Name, Css: wantCSS, SortFieldIdx: nt.SortFieldIdx, ID: nt.ID, OwnerID: nt.OwnerID,
+	}); err != nil {
+		return fmt.Errorf("update note type css: %w", err)
+	}
+	return nil
 }
 
 func findNoteType(noteTypes []db.ListNoteTypesForOwnerRow, name string) (db.ListNoteTypesForOwnerRow, bool) {
