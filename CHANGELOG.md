@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.20] - 2026-09-02
+
+### Fixed
+- Pressing Enter in a note field editor now inserts a `<br>` instead of a raw newline, so line
+  breaks actually render on the card instead of silently collapsing to a space
+  ([#185](https://github.com/Jolls/enshu/issues/185)).
+
 ## [0.2.19] - 2026-09-02
 
 ### Fixed
