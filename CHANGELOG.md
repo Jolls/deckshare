@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.24] - 2026-09-03
+
+### Fixed
+- The reviewer's visible card never carried the CSS scope class, so a note type's custom CSS
+  (cloze bold, colors, fonts — anything) silently never applied while actually studying, even
+  though it rendered correctly in the note-type editor's preview
+  ([#194](https://github.com/Jolls/enshu/issues/194)).
+
 ## [0.2.23] - 2026-09-03
 
 ### Added
