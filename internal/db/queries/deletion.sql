@@ -85,6 +85,15 @@ SET can_view          = sqlc.arg(can_view),
     can_delete        = sqlc.arg(can_delete)
 WHERE deck_id = sqlc.arg(deck_id) AND user_id = sqlc.arg(target_user_id);
 
+-- Resets target_user_id's scheduling progress on one deck. review_log is untouched (#189,
+-- CLAUDE.md §2.5) -- the next review for a reset card starts fresh because gradeEvent treats a
+-- missing user_card_state row as FSRS's zero-value New state (internal/review/grade.go), not as
+-- a signal to replay history.
+-- name: DeleteUserCardStateForDeck :execrows
+DELETE FROM user_card_state ucs
+USING cards c
+WHERE ucs.card_id = c.id AND c.deck_id = sqlc.arg(deck_id) AND ucs.user_id = sqlc.arg(target_user_id);
+
 -- The guard itself, run AFTER the mutation inside the same transaction. Zero of either count
 -- means the deck has been stranded and the caller must roll back.
 -- name: CountDeckAccessHolders :one

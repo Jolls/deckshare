@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.23] - 2026-09-03
+
+### Added
+- Deck managers can reset a collaborator's scheduling progress on a deck from the access page;
+  `review_log` is left untouched, so today's daily new/review limit still applies if they already
+  studied today — the deck behaves like new starting the next study day
+  ([#189](https://github.com/Jolls/enshu/issues/189)).
+
 ## [0.2.22] - 2026-09-03
 
 ### Added

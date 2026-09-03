@@ -177,6 +177,34 @@ func registerAccessRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 		}
 		http.Redirect(w, r, "/decks/"+deckID.String()+"/access", http.StatusSeeOther)
 	})))
+
+	mux.Handle("POST /decks/{id}/access/{userId}/reset", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, _ := auth.UserFromContext(r.Context())
+		deckID, ok := pathUUID(r, "id")
+		if !ok {
+			notFoundPage(w, pages, user)
+			return
+		}
+		targetUserID, ok := pathUUID(r, "userId")
+		if !ok {
+			notFoundPage(w, pages, user)
+			return
+		}
+
+		tx, ok := startTx(r.Context(), w, store)
+		if !ok {
+			return
+		}
+		defer func() { _ = tx.Rollback(r.Context()) }()
+
+		if !handleAccessChangeErr(w, pages, user, db.ResetDeckProgress(r.Context(), tx, deckID, user.ID, targetUserID)) {
+			return
+		}
+		if !commitTx(r.Context(), w, tx) {
+			return
+		}
+		http.Redirect(w, r, "/decks/"+deckID.String()+"/access", http.StatusSeeOther)
+	})))
 }
 
 // grantDeckAccess runs the INSERT in its own transaction (a savepoint, since store is the shared

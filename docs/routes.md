@@ -137,6 +137,14 @@ access until Milestone 2 (architecture.md §11).
 | POST | `/decks/{id}/access` | `can_manage_access` | Grant access (email + choice of the six flags) |
 | POST | `/decks/{id}/access/{userId}/edit` | `can_manage_access` | Change a collaborator's flags |
 | POST | `/decks/{id}/access/{userId}/delete` | `can_manage_access` | Revoke access (delete the row) |
+| POST | `/decks/{id}/access/{userId}/reset` | `can_manage_access` | Reset a collaborator's scheduling progress on this deck (deletes their `user_card_state` rows for it; `review_log` untouched — [#189](https://github.com/Jolls/enshu/issues/189)) |
+
+**Reset and the daily cap.** `rev.perDay`'s new/review allowance for the *current* study day is
+computed from `review_log` (`CountNewIntroducedToday`/`CountReviewedToday`, reviews.sql), which a
+reset cannot touch (§2.5). So if the target already spent today's allowance before being reset,
+they stay capped for the remainder of today even though every card now shows as New — the deck
+only behaves like a fresh, never-studied deck starting the next study day, once those `review_log`
+rows fall outside the day window.
 
 **Last-holder guard, enforced.** A deck must always retain at least one `can_manage_access`
 holder and one `can_delete` holder. `db.RevokeDeckAccess` and `db.SetDeckAccess`
