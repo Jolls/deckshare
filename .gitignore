@@ -17,8 +17,8 @@ Thumbs.db
 
 # Go build output
 /bin/
-/enshu
-/enshu.exe
+/deckshare
+/deckshare.exe
 *.test
 coverage.out
 /media
@@ -26,9 +26,9 @@ coverage.out
 # run-app skill's tracked server process
 .claude/skills/run-app/.server.pid
 .claude/skills/run-app/.server.log
-.claude/skills/run-app/.enshu-server.exe
+.claude/skills/run-app/.deckshare-server.exe
 .claude/skills/run-app/.media/
-.claude/skills/run-app/.enshu-server.exe~
+.claude/skills/run-app/.deckshare-server.exe~
 
 # Playwright / Node (tests/e2e)
 node_modules/

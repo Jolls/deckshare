@@ -442,7 +442,7 @@
         var r = results[i];
         applyFreshPreview(r.cardId, r.preview);
         if (r.status === 'rejected' || r.status === 'forbidden') {
-          console.error('enshu: event ' + r.id + ' ' + r.status + ', dropped permanently');
+          console.error('deckshare: event ' + r.id + ' ' + r.status + ', dropped permanently');
           showDeliveryError('A grade could not be saved (' + r.status + '). Check your device clock or deck access.');
         }
       }
@@ -453,7 +453,7 @@
     if (status === 409) {
       // The session now belongs to another account (#178). The events cannot be retried -- retrying
       // would either be refused again or, worse, land under the wrong user if the tab reloaded.
-      console.error('enshu: batch refused (409, session changed), dropping ' + sent.length + ' event(s)');
+      console.error('deckshare: batch refused (409, session changed), dropping ' + sent.length + ' event(s)');
       showDeliveryError('This tab is signed in as a different account now, so these grades were not saved. Reload the page to keep studying.');
       return;
     }
@@ -461,7 +461,7 @@
     if (status >= 400 && status < 500 && status !== 401) {
       // A malformed batch (400) can never succeed by retrying it unchanged -- drop.
       // 401 is deliberately excluded and handled just below.
-      console.error('enshu: batch rejected (' + status + '), dropping ' + sent.length + ' event(s)');
+      console.error('deckshare: batch rejected (' + status + '), dropping ' + sent.length + ' event(s)');
       showDeliveryError('Some grades failed to save (status ' + status + '). Reload the page and try again.');
       return;
     }
@@ -471,7 +471,7 @@
       // invalidates every session for the account. The events are still perfectly valid, so
       // they are held and retried rather than dropped: losing them would lose review_log
       // training data that cannot be reconstructed (CLAUDE.md §2.5).
-      console.error('enshu: batch unauthorised (401), holding ' + sent.length + ' event(s)');
+      console.error('deckshare: batch unauthorised (401), holding ' + sent.length + ' event(s)');
       showDeliveryError('Your session ended. Sign in again in another tab to save your grades -- don\'t close this page.');
     }
 
@@ -540,7 +540,7 @@
     return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
   }
 
-  window.enshuReview = {
+  window.deckshareReview = {
     deckId: function () { return state.deckId; },
     cursor: function () { return state.cursor; },
     extraRounds: function () { return String(state.extraRounds); },

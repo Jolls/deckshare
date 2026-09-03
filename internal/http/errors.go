@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Jolls/enshu/internal/auth"
+	"github.com/Jolls/deckshare/internal/auth"
 )
 
 // classifyFormError maps a service-layer error to a renderable (status, message, Retry-After)

@@ -7,8 +7,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/Jolls/enshu/internal/db"
-	"github.com/Jolls/enshu/web"
+	"github.com/Jolls/deckshare/internal/db"
+	"github.com/Jolls/deckshare/web"
 )
 
 // pagePartials lists extra template files a page needs beyond layout.html + <name>.html --

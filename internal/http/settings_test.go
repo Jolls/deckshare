@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/Jolls/enshu/internal/auth"
+	"github.com/Jolls/deckshare/internal/auth"
 )
 
 // smallJPEG returns a tiny (dim x dim) encoded JPEG, for tests that need real, decodable image

@@ -13,10 +13,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/Jolls/enshu/internal/db"
-	"github.com/Jolls/enshu/internal/fsrs"
-	"github.com/Jolls/enshu/internal/media"
-	"github.com/Jolls/enshu/internal/review"
+	"github.com/Jolls/deckshare/internal/db"
+	"github.com/Jolls/deckshare/internal/fsrs"
+	"github.com/Jolls/deckshare/internal/media"
+	"github.com/Jolls/deckshare/internal/review"
 )
 
 // ImportResult is the per-import tally the import UI (#62) reports.
@@ -82,7 +82,7 @@ func Import(ctx context.Context, tx pgx.Tx, ownerID pgtype.UUID, col *IrCollecti
 	// Ordered by the package's own deck list, not by map iteration: ImportResult.Decks decides
 	// which deck /import redirects to (internal/http/import.go), and randomised order makes that
 	// redirect vary run to run whenever two decks tie on card count. Deduped because two Anki
-	// deck ids can resolve to one Enshu deck, and importMedia refs each deck once.
+	// deck ids can resolve to one DeckShare deck, and importMedia refs each deck once.
 	seenDeck := make(map[pgtype.UUID]bool, len(deckByAnkiID))
 	deckIDs := make([]pgtype.UUID, 0, len(deckByAnkiID))
 	for _, d := range col.Decks {

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Jolls/enshu/internal/auth"
+	"github.com/Jolls/deckshare/internal/auth"
 )
 
 // parseCSP splits a Content-Security-Policy header value into directive -> sources, failing loudly

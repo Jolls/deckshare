@@ -21,7 +21,7 @@ flowchart TD
     classDef decision fill:transparent,stroke:#8a8f82,stroke-width:1.5px,font-weight:600;
     classDef blocked fill:transparent,stroke:#a5382f,stroke-width:1.5px,stroke-dasharray:4 3,color:#a5382f;
 
-    A(["Open enshu"]):::user --> B{"Session cookie valid?"}:::decision
+    A(["Open deckshare"]):::user --> B{"Session cookie valid?"}:::decision
     B -- "no" --> LOGINPAGE["GET /login<br/>render form"]:::server
     LOGINPAGE --> SUBMIT(["Enter email + password"]):::user
     SUBMIT --> DOLOGIN["POST /login<br/>verify, argon2id, create session"]:::server
@@ -68,7 +68,7 @@ server derives *what follows*.
 
 | | User does | UI does | Server does |
 |---|---|---|---|
-| 1 | Opens enshu | — | `GET /` — authed → redirect `/decks`; else → redirect `/login` |
+| 1 | Opens deckshare | — | `GET /` — authed → redirect `/decks`; else → redirect `/login` |
 | 2 | Submits email + password | Renders the login form | `POST /login` — verify credentials (`argon2id`), create session, cookie = hashed token |
 | 3 | Lands on the deck list | Renders deck cards | `GET /decks` — decks reachable via `deck_access` |
 | 4 | Clicks a deck | Renders notes list, note/card counts | `GET /decks/{id}` — permission `can_view` |

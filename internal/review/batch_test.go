@@ -9,8 +9,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/Jolls/enshu/internal/db"
-	"github.com/Jolls/enshu/internal/fsrs"
+	"github.com/Jolls/deckshare/internal/db"
+	"github.com/Jolls/deckshare/internal/fsrs"
 )
 
 // testStudyDay returns a fixed, deterministic study-day window, offsetDays after a fixed epoch --

@@ -13,11 +13,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/Jolls/enshu/internal/auth"
-	"github.com/Jolls/enshu/internal/db"
-	"github.com/Jolls/enshu/internal/fsrs"
-	cardrender "github.com/Jolls/enshu/internal/render"
-	"github.com/Jolls/enshu/internal/review"
+	"github.com/Jolls/deckshare/internal/auth"
+	"github.com/Jolls/deckshare/internal/db"
+	"github.com/Jolls/deckshare/internal/fsrs"
+	cardrender "github.com/Jolls/deckshare/internal/render"
+	"github.com/Jolls/deckshare/internal/review"
 )
 
 const (

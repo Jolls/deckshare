@@ -15,5 +15,5 @@
 //	a := render.TypeAnswerExpected(card.Answer)        // answer side
 //	css, dropped := render.SanitiseCSS(noteType.Css)   // once per note type per page, never per card
 //	// page: <style>{{.CSS}}</style>
-//	//       <article hidden data-card-id class="enshu-card card">{{.Q}}</article>
+//	//       <article hidden data-card-id class="deckshare-card card">{{.Q}}</article>
 package render

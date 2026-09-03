@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/Jolls/enshu/internal/db"
+	"github.com/Jolls/deckshare/internal/db"
 )
 
 // Export reads ONE deck's decks/note types/notes/cards row set, plus callerID's own scheduling
@@ -190,7 +190,7 @@ type cardScheduling struct {
 }
 
 // deriveCardScheduling reconstructs the Anki type/queue/due triple a card would need to write.
-// Enshu keeps no separate "queue" column -- FSRS state, suspended, and buried_until stand in for
+// DeckShare keeps no separate "queue" column -- FSRS state, suspended, and buried_until stand in for
 // it, which loses Anki's five-way queue split (short-term learning vs. day-learning vs. preview
 // all collapse to one epoch-seconds "learning" queue on export). That is the same "lossy in this
 // direction by definition" apkg-format.md's Export section already documents for user_card_state
@@ -238,7 +238,7 @@ func deriveCardScheduling(state db.UserCardState, hasState bool, now time.Time, 
 	}
 }
 
-// deriveCrt picks a synthetic col.crt anchor. Enshu persists no per-package creation instant
+// deriveCrt picks a synthetic col.crt anchor. DeckShare persists no per-package creation instant
 // (apkg-format.md's Export section), so this uses the earliest review-state due date being
 // exported, floored to midnight UTC: every review-state card's day-since-crt offset comes out
 // non-negative, and for cards that share one real original anchor (the common case -- they all

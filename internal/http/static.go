@@ -5,7 +5,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/Jolls/enshu/web"
+	"github.com/Jolls/deckshare/web"
 )
 
 // registerStaticRoutes serves the vendored JS under /static/ -- public, no session, since these

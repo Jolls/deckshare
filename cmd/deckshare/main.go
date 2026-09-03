@@ -1,4 +1,4 @@
-// Command enshu wires config, the database pool, and the HTTP server together.
+// Command deckshare wires config, the database pool, and the HTTP server together.
 package main
 
 import (
@@ -12,10 +12,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Jolls/enshu/internal/auth"
-	"github.com/Jolls/enshu/internal/db"
-	apphttp "github.com/Jolls/enshu/internal/http"
-	"github.com/Jolls/enshu/internal/media"
+	"github.com/Jolls/deckshare/internal/auth"
+	"github.com/Jolls/deckshare/internal/db"
+	apphttp "github.com/Jolls/deckshare/internal/http"
+	"github.com/Jolls/deckshare/internal/media"
 )
 
 // mediaGCGrace is how long a media file with no media_blobs row must sit untouched before the

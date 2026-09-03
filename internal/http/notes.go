@@ -13,9 +13,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/Jolls/enshu/internal/auth"
-	"github.com/Jolls/enshu/internal/db"
-	noterender "github.com/Jolls/enshu/internal/render"
+	"github.com/Jolls/deckshare/internal/auth"
+	"github.com/Jolls/deckshare/internal/db"
+	noterender "github.com/Jolls/deckshare/internal/render"
 )
 
 var errNoClozeMarkers = errors.New("a cloze note must contain at least one {{c1::...}} marker")

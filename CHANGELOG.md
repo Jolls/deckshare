@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.27] - 2026-09-03
+
+### Changed
+- Renamed the project from Enshu to DeckShare: Go module path, binary/build tooling, the
+  session cookie name, the review-card CSS scope class, and user-facing/docs text. The GitHub
+  repository itself has not been renamed yet — see
+  [docs/plans/rename-enshu-to-deckshare.md](docs/plans/rename-enshu-to-deckshare.md).
+
 ## [0.2.26] - 2026-09-03
 
 ### Added

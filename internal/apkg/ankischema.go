@@ -111,7 +111,7 @@ const (
 const ankiFlagMask = 0x7
 
 // ankiDefaultFactor is the SM-2 ease Anki assigns a fresh card (2.5 x 1000). Export writes it on
-// every card unconditionally: Enshu stores no SM-2 ease, and cards.factor is a column any reader
+// every card unconditionally: DeckShare stores no SM-2 ease, and cards.factor is a column any reader
 // of our output will parse. It is never derived from, and never maps back to, FSRS difficulty
 // (apkg-format.md, and dbwrite_test.go's TestImport_NeverWritesFactor in the other direction).
 const ankiDefaultFactor = 2500

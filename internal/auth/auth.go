@@ -19,15 +19,15 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/Jolls/enshu/internal/db"
+	"github.com/Jolls/deckshare/internal/db"
 )
 
 const (
-	CookieName      = "__Host-enshu_session"
+	CookieName      = "__Host-deckshare_session"
 	SessionLifetime = 30 * 24 * time.Hour
 	RenewThreshold  = 15 * 24 * time.Hour
 
-	dummyPassword = "enshu-timing-safe-dummy-password"
+	dummyPassword = "deckshare-timing-safe-dummy-password"
 
 	loginIPLimit     = 20
 	loginIPWindow    = 15 * time.Minute
@@ -60,8 +60,8 @@ func (e *RateLimitError) Unwrap() error { return ErrRateLimited }
 
 // Config carries the deployment-dependent knobs. Zero values are the dev defaults.
 type Config struct {
-	// Origin is a comma-separated list of allowed origins, e.g. "https://enshu.example" or
-	// "https://enshu.example,https://abc123.onion" for an instance reachable at more than one
+	// Origin is a comma-separated list of allowed origins, e.g. "https://deckshare.example" or
+	// "https://deckshare.example,https://abc123.onion" for an instance reachable at more than one
 	// address (StartOS commonly exposes the same instance over LAN and Tor simultaneously).
 	// Empty means compare the request Origin's host to r.Host.
 	Origin string

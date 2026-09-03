@@ -1,4 +1,4 @@
-module github.com/Jolls/enshu
+module github.com/Jolls/deckshare
 
 go 1.26
 

@@ -12,9 +12,9 @@ func TestSanitiseCSS(t *testing.T) {
 		wantOutput  string // substring the output must contain; "" means output must be empty
 		mustNotHave string
 	}{
-		{"basic card rule", `.card { color: red; }`, ".enshu-card {", ""},
-		{"descendant scoped", `.card .front { color: blue; }`, ".enshu-card .front {", ""},
-		{"non-card selector prefixed", `.night_mode { color: white; }`, ".enshu-card .night_mode", ""},
+		{"basic card rule", `.card { color: red; }`, ".deckshare-card {", ""},
+		{"descendant scoped", `.card .front { color: blue; }`, ".deckshare-card .front {", ""},
+		{"non-card selector prefixed", `.night_mode { color: white; }`, ".deckshare-card .night_mode", ""},
 		{"url value dropped", `.card { background: url(evil.com); color: red; }`, "color: red", "url("},
 		{"colour functions allowed", `.card { color: rgb(1,2,3); }`, "rgb(1,2,3)", ""},
 		{"expression dropped", `.card { width: expression(alert(1)); }`, "", "expression"},
@@ -32,7 +32,7 @@ func TestSanitiseCSS(t *testing.T) {
 		{"at-rule font-face dropped", `@font-face { font-family: x; } .card { color: red; }`, "color: red", "@font-face"},
 		{"at-rule media dropped", `@media screen { .card { color: red; } } .card { color: blue; }`, "color: blue", "@media"},
 		{"unparseable returns empty", `.card { color: `, "", "color"},
-		{"svg element selector allowed", `path { fill: red; }`, ".enshu-card path {", ""},
+		{"svg element selector allowed", `path { fill: red; }`, ".deckshare-card path {", ""},
 		{"svg fill none allowed", `.placeholder path { fill: none; stroke: currentColor; stroke-width: 1; }`, "fill: none", ""},
 		{"svg fill url dropped", `path { fill: url(evil.com); color: red; }`, "color: red", "fill"},
 		{"svg fill-rule enum enforced", `path { fill-rule: spiral; }`, "", "fill-rule"},

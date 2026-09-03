@@ -10,7 +10,7 @@
   <small><span x-text="count"></span> reviewed this session</small>
 </p>
 
-<section id="review-stage" hidden class="review-card enshu-card">
+<section id="review-stage" hidden class="review-card deckshare-card">
   <div class="card-question"></div>
   <div class="card-answer" hidden></div>
   <p>
@@ -29,7 +29,7 @@
 <div id="review-refill" hidden
      hx-get="/api/reviews/next"
      hx-trigger="refill-needed from:body"
-     hx-vals='js:{deck: enshuReview.deckId(), cursor: enshuReview.cursor(), extraRounds: enshuReview.extraRounds()}'
+     hx-vals='js:{deck: deckshareReview.deckId(), cursor: deckshareReview.cursor(), extraRounds: deckshareReview.extraRounds()}'
      hx-target="#review-queue"
      hx-swap="beforeend"></div>
 

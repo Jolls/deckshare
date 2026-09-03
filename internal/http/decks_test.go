@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Jolls/enshu/internal/auth"
+	"github.com/Jolls/deckshare/internal/auth"
 )
 
 func TestDeckRoutes_GoldenPath(t *testing.T) {

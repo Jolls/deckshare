@@ -10,9 +10,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/Jolls/enshu/internal/auth"
-	"github.com/Jolls/enshu/internal/db"
-	noterender "github.com/Jolls/enshu/internal/render"
+	"github.com/Jolls/deckshare/internal/auth"
+	"github.com/Jolls/deckshare/internal/db"
+	noterender "github.com/Jolls/deckshare/internal/render"
 )
 
 // errFieldCountMismatch is the one hard-error case buildNotePreview reports: the posted

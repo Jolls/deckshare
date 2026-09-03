@@ -1,4 +1,4 @@
-// Command run-app is the mechanical start/stop for the local enshu dev stack, and the
+// Command run-app is the mechanical start/stop for the local deckshare dev stack, and the
 // DB reset used when tests hit stale state from a prior run-app session (issue #95).
 // See .claude/skills/run-app/SKILL.md for the one judgment call this doesn't automate
 // (port-3000 conflict on start).
@@ -19,7 +19,7 @@ const (
 	port       = 3000
 	dbURL      = "postgres://root:mysecretpassword@localhost:5432/local"
 	skillDir   = ".claude/skills/run-app"
-	binName    = ".enshu-server.exe"
+	binName    = ".deckshare-server.exe"
 	pidName    = ".server.pid"
 	logName    = ".server.log"
 	mediaName  = ".media"
@@ -154,7 +154,7 @@ func start() error {
 	}
 
 	bin := filepath.Join(skillDir, binName)
-	if err := runVisible("go", "build", "-o", bin, "./cmd/enshu"); err != nil {
+	if err := runVisible("go", "build", "-o", bin, "./cmd/deckshare"); err != nil {
 		return fmt.Errorf("go build: %w", err)
 	}
 

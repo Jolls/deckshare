@@ -1,10 +1,10 @@
-# Architecture — Enshu
+# Architecture — DeckShare
 
 **What this system is and how it is built.** Companion to [CLAUDE.md](../CLAUDE.md), which
 holds the working rules, the invariants, and the process an agent follows. This file holds the
 descriptive half: state, stack, layout, protocols, roadmap, and vocabulary.
 
-[README.md](../README.md) is the public rationale ("why these decisions"); [enshu.md](../enshu.md)
+[README.md](../README.md) is the public rationale ("why these decisions"); [deckshare.md](../deckshare.md)
 is the personal-notes digest of it. If a decision here contradicts the README, the README wins
 on *rationale* and this file wins on *mechanics*. If you change a decision, update both.
 
@@ -41,7 +41,7 @@ the sanitisation allowlist's XSS-defense rationale, the advisory-lock deadlock-a
 and a card-regeneration data-loss trap among them — and folded in where found.
 
 **Build order step 1 (§11) is scaffolded** ([#49](https://github.com/Jolls/enshu/issues/49)):
-`cmd/enshu/`, the `internal/` package skeleton (§4), `sqlc`/`goose` wiring, `golangci-lint`,
+`cmd/deckshare/`, the `internal/` package skeleton (§4), `sqlc`/`goose` wiring, `golangci-lint`,
 a multi-arch `Dockerfile`, and GitHub Actions CI.
 
 **Build order step 2 (§11) has landed** ([#50](https://github.com/Jolls/enshu/issues/50),
@@ -117,7 +117,7 @@ exists), and `deriveCardScheduling` reconstructs Anki's `type`/`queue`/`due` tri
 review/relearning). Export is lossy in one direction by construction (apkg-format.md's Export
 section): a shared deck's other reviewers' progress cannot fit in a single Anki collection, so
 only the exporting owner's own `user_card_state`/`review_log` rows are flattened back onto card
-rows, and since Enshu persists no package-wide creation instant, `col.crt` is synthesised from
+rows, and since DeckShare persists no package-wide creation instant, `col.crt` is synthesised from
 the earliest exported review-state due date rather than carried through.
 
 `GET`/`POST /import` ([#62](https://github.com/Jolls/enshu/issues/62)) is the HTTP layer on top
@@ -161,7 +161,7 @@ than an independent due cap — see `internal/review/batch.go`'s `effectiveLimit
 
 **Orphaned media collection has landed** ([#91](https://github.com/Jolls/enshu/issues/91)):
 `internal/media/gc.go` is a second in-process ticker beside auth's hourly session/rate-limit sweep
-(§1 above, `cmd/enshu/main.go`), reclaiming `media_blobs` rows whose last `media_refs` row cascaded
+(§1 above, `cmd/deckshare/main.go`), reclaiming `media_blobs` rows whose last `media_refs` row cascaded
 away with a deleted deck, and — walking `MEDIA_ROOT` directly, since no query can see them — files a
 rolled-back import left behind, `Put` having written the bytes before the import transaction
 committed. It unlinks each file before deleting its row, never the reverse, and reads the `RESTRICT`
@@ -246,10 +246,10 @@ pinned by `TestLibraryFuzzSeedIsPureInItsInputs` and `TestLibraryFuzzVariesWithN
 the ones actually in the repo, not placeholders.
 
 ```
-enshu/
+deckshare/
 ├─ CLAUDE.md              working rules, invariants, process
 ├─ README.md              public rationale
-├─ enshu.md               personal notes digest
+├─ deckshare.md           personal notes digest
 ├─ .claude/
 │  ├─ memory/             agent memory — repo-local, gitignored, see CLAUDE.md §19
 │  └─ skills/
@@ -262,7 +262,7 @@ enshu/
 │  ├─ apkg-format.md      the .apkg container + encoding traps (§7 lives here)
 │  └─ plans/              implementation plans and decision records, <slug>.md
 ├─ migrations/            generated SQL (committed, immutable once merged)
-├─ cmd/enshu/             main package: wiring, config, server startup
+├─ cmd/deckshare/         main package: wiring, config, server startup
 ├─ internal/
 │  ├─ db/                 sqlc-generated queries + a hand-written pool/connection setup
 │  ├─ auth/
@@ -686,7 +686,7 @@ counts, lapse hotspots). §2.7 is what makes those per-student numbers trustwort
 
 - **Anki sync protocol.** See the README.
 - **Full offline study** — deck and media pre-caching, IndexedDB, multi-device conflict
-  resolution. Not deferred: not wanted. Enshu is a server, and the reviewer being
+  resolution. Not deferred: not wanted. DeckShare is a server, and the reviewer being
   *network-independent for the duration of a grade* (CLAUDE.md §2.6) is a latency property, not a step
   toward offline. Should this ever be reconsidered, nothing here forecloses it: `review_log`
   is the source of truth and `replayReviews` already exists.
@@ -718,7 +718,7 @@ Unresolved. Do not silently pick one — surface it.
   finished porting the optimiser. Not a Phase 1 blocker, but still open: which path to take when
   it's time. `fsrs-rs` invoked as a subprocess/CLI call from Go is proven and available today;
   `go-fsrs`'s own PR #34 (pure-Go v6 optimizer, unmerged as of 2026-08) would need zero FFI at
-  all if it matures — worth tracking, and possibly worth contributing to, since Enshu has a
+  all if it matures — worth tracking, and possibly worth contributing to, since DeckShare has a
   direct stake in it landing. Full evaluation:
   [docs/plans/architecture-reconsidered.md](plans/architecture-reconsidered.md).
 - ~~**Auth library.**~~ Settled: hand-rolled sessions. No OAuth/SSO requirement (Phase 1 is
@@ -738,7 +738,7 @@ Unresolved. Do not silently pick one — surface it.
   - **Session cookie name is `__Host-`-prefixed.** That prefix requires `Secure`, `Path=/`, and
     no `Domain` attribute — the browser enforces all three, not just convention — which is what
     stops a sibling subdomain (a future status page, a blog, anything with its own XSS bug) from
-    setting a same-named cookie that silently rides along to Enshu.
+    setting a same-named cookie that silently rides along to DeckShare.
   - **Sliding expiration, renewed only when it's close to expiring** (e.g. a 30-day lifetime,
     renewed once under 15 days remain), so a `Set-Cookie` header — and the write it costs — only
     goes out on the minority of requests that need one, not every request of an active session.
@@ -786,7 +786,7 @@ Unresolved. Do not silently pick one — surface it.
   `golang-migrate` (comparable, but goose's own migration files can carry Go functions
   alongside SQL, which `schema.md`'s data-migration cases may eventually want) and `atlas`
   (its declarative diff-and-plan model fights CLAUDE.md §9's "committed, generated SQL,
-  immutable once merged, fix forward" convention more than it serves it — Enshu wants
+  immutable once merged, fix forward" convention more than it serves it — DeckShare wants
   hand-authored, reviewable migration files, not an auto-planned diff).
 - ~~**Exact Go package layout.**~~ Settled (2026-08-11): §4's tree, as written, is the target —
   `internal/db`, `internal/auth`, `internal/apkg`, `internal/fsrs`, `internal/review`,
@@ -798,9 +798,9 @@ Unresolved. Do not silently pick one — surface it.
   not `all` on day one), GitHub Actions running `go build`/`go vet`/`golangci-lint run`/
   `go test ./...` on push and PR — the natural default given `gh` is already this project's
   tool of choice.
-- **Native-speaker check on "Enshu."** Connotation is where non-native judgement is least
+- **Native-speaker check on "DeckShare."** Connotation is where non-native judgement is least
   reliable. Renaming a repo is cheap; renaming a product with users and inbound links is not.
-- ~~**Deck-content licensing.**~~ Closed by dropping the public deck directory (§11). Enshu
+- ~~**Deck-content licensing.**~~ Closed by dropping the public deck directory (§11). DeckShare
   never redistributes deck content: a deck reaches another user through a `deck_access` row on
   this instance, or through an `.apkg` the user obtained and imported themselves. There is no
   catalogue to attach per-deck licence metadata to, and no republication for Ankitects' stated
@@ -849,7 +849,7 @@ seemed tidier."
 
 ### Forced by multiuser
 
-| | Anki | Enshu |
+| | Anki | DeckShare |
 |---|---|---|
 | Scheduling state | On the `cards` row, alongside the content pointer | `user_card_state`, keyed `(user_id, card_id)` (§2.1) |
 | Grading authority | No client/server boundary exists — it is a local app | Server recomputes and decides (§2.7), and is the *only* place FSRS ever runs — there's no client copy to diverge from (§6). Anki never faced this question; multiuser creates it |
@@ -861,7 +861,7 @@ seemed tidier."
 
 ### Deliberate scope, not disagreement
 
-| | Anki | Enshu |
+| | Anki | DeckShare |
 |---|---|---|
 | Sync protocol | Yes | No, permanently (§2.9) |
 | Filtered / custom-study decks | Yes | Not built as a persistent deck. The importer reads `odid`/`odue` and files cards under their real home deck, so nothing is lost on the way in. A narrow slice now exists: "Keep studying" on `/decks/{id}/review`'s completion screen (#172) re-grants the deck's own preset allowance, one full round per click, for the rest of the page session only — never persisted, never a new deck, no order/priority override |
@@ -914,7 +914,7 @@ same shape Anki's `revlog.cid` has, which is what lets a studied deck be deletab
 reasoning: `docs/plans/51-deletion-policy.md`.
 
 **Good never requeues in-session.** Anki resurfaces a card within the same session whenever a
-learning/relearning step's delay is short enough, regardless of rating. Enshu's client-side
+learning/relearning step's delay is short enough, regardless of rating. DeckShare's client-side
 heuristic (`web/static/review.js`'s `maybeRequeue`, cosmetic only, never written to
 `user_card_state`/`review_log`) additionally never requeues on a `Good` rating, so a card the
 user says they know is always deferred to the next study session rather than cycling back
@@ -924,7 +924,7 @@ needs this row per the §20 test.
 
 **Due-card look-ahead defaults to zero, not the day rollover.** Anki always offers every card due
 before the next day-boundary rollover — up to ~24h of look-ahead depending what time of day you
-study. Enshu's study-queue queries (`ListDueCardsForStudy`/`ListReviewCardsForStudy`/
+study. DeckShare's study-queue queries (`ListDueCardsForStudy`/`ListReviewCardsForStudy`/
 `CountQueueForDeck`/`CountQueueForUser`) filtered the same way until
 [#155](https://github.com/Jolls/enshu/issues/155), which tightened the cutoff to `due <= now`
 (zero look-ahead): the day-window version let a card graded Hard with a short FSRS learning step

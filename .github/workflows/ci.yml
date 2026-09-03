@@ -75,8 +75,8 @@ jobs:
         run: goose -dir migrations postgres "$DATABASE_URL" up
       - name: Build and start the server
         run: |
-          go build -o enshu ./cmd/enshu
-          ./enshu &
+          go build -o deckshare ./cmd/deckshare
+          ./deckshare &
           for i in $(seq 1 30); do
             curl -sf -o /dev/null http://localhost:3000/login && exit 0
             sleep 1

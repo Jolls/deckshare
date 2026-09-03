@@ -47,14 +47,14 @@ func TestCheckOrigin(t *testing.T) {
 		{"case-insensitive host match", "https://Example.COM", "", "example.com", true},
 		{"unparseable origin", "://bad", "", "example.com", false},
 
-		{"matching config origin", "https://enshu.example", "https://enshu.example", "ignored.internal", true},
-		{"wrong host vs config origin", "https://evil.com", "https://enshu.example", "ignored.internal", false},
-		{"wrong scheme vs config origin", "http://enshu.example", "https://enshu.example", "ignored.internal", false},
-		{"wrong port vs config origin", "https://enshu.example:8080", "https://enshu.example", "ignored.internal", false},
+		{"matching config origin", "https://deckshare.example", "https://deckshare.example", "ignored.internal", true},
+		{"wrong host vs config origin", "https://evil.com", "https://deckshare.example", "ignored.internal", false},
+		{"wrong scheme vs config origin", "http://deckshare.example", "https://deckshare.example", "ignored.internal", false},
+		{"wrong port vs config origin", "https://deckshare.example:8080", "https://deckshare.example", "ignored.internal", false},
 
-		{"matches first of multiple config origins", "https://enshu.example", "https://enshu.example,https://abc.onion", "ignored.internal", true},
-		{"matches second of multiple config origins", "https://abc.onion", "https://enshu.example,https://abc.onion", "ignored.internal", true},
-		{"matches none of multiple config origins", "https://evil.com", "https://enshu.example,https://abc.onion", "ignored.internal", false},
+		{"matches first of multiple config origins", "https://deckshare.example", "https://deckshare.example,https://abc.onion", "ignored.internal", true},
+		{"matches second of multiple config origins", "https://abc.onion", "https://deckshare.example,https://abc.onion", "ignored.internal", true},
+		{"matches none of multiple config origins", "https://evil.com", "https://deckshare.example,https://abc.onion", "ignored.internal", false},
 	}
 
 	for _, tt := range tests {

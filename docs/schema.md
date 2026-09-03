@@ -418,7 +418,7 @@ identical, only "external" changes. See architecture.md §12; the store itself i
 ([#60](https://github.com/Jolls/enshu/issues/60)).
 
 **Orphaned media is collected by a periodic sweep** ([#91](https://github.com/Jolls/enshu/issues/91),
-`internal/media/gc.go`, hourly ticker in `cmd/enshu/main.go`), covering two classes. A deck delete
+`internal/media/gc.go`, hourly ticker in `cmd/deckshare/main.go`), covering two classes. A deck delete
 cascades its `media_refs` rows away and can leave a `media_blobs` row with zero remaining
 references; and `Put` writes bytes before the enclosing import transaction commits, so a
 rolled-back import leaves a file on disk with no row at all. The first is found by SQL

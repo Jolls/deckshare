@@ -242,7 +242,7 @@ func encodeCardData(fsrs *IrFSRSState) (string, error) {
 
 // unresolveDue is resolveDue run in reverse: given the queue this card is being written with and
 // its already-decided IrDue, computes the raw `due` column value. odue/odid are always written 0
-// -- Enshu tracks no filtered decks on export (architecture.md §20, apkg-format.md's Export
+// -- DeckShare tracks no filtered decks on export (architecture.md §20, apkg-format.md's Export
 // section).
 func unresolveDue(queue int32, d IrDue, crt time.Time) int64 {
 	switch d.Kind {

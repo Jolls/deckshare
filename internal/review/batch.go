@@ -10,9 +10,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/Jolls/enshu/internal/db"
-	"github.com/Jolls/enshu/internal/fsrs"
-	"github.com/Jolls/enshu/internal/render"
+	"github.com/Jolls/deckshare/internal/db"
+	"github.com/Jolls/deckshare/internal/fsrs"
+	"github.com/Jolls/deckshare/internal/render"
 )
 
 // StudyDay is the per-user rollover window a batch fetch is scoped to (docs/schema.md, plan

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Jolls/enshu/internal/apkg"
-	"github.com/Jolls/enshu/internal/auth"
+	"github.com/Jolls/deckshare/internal/apkg"
+	"github.com/Jolls/deckshare/internal/auth"
 )
 
 // TestExportRoute_GoldenPath imports the real schema-18 fixture through /import, then exports the

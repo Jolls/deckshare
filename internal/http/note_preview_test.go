@@ -11,7 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/Jolls/enshu/internal/auth"
+	"github.com/Jolls/deckshare/internal/auth"
 )
 
 // newClozeNoteTypeBody creates a single-field, single-template cloze note type, following the
@@ -80,7 +80,7 @@ func TestNotePreview_NonCloze_WritesNoSchedulingState(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("preview status = %d, want 200: %s", w.Code, w.Body.String())
 	}
-	if got := strings.Count(w.Body.String(), `class="enshu-card"`); got != 2 {
+	if got := strings.Count(w.Body.String(), `class="deckshare-card"`); got != 2 {
 		t.Errorf("card count = %d, want 2 (one per template): %s", got, w.Body.String())
 	}
 	if !strings.Contains(w.Body.String(), "Question text") || !strings.Contains(w.Body.String(), "Answer text") {
@@ -123,7 +123,7 @@ func TestNotePreview_Cloze_OneCardPerOrdinal(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("preview status = %d, want 200: %s", w.Code, w.Body.String())
 	}
-	if got := strings.Count(w.Body.String(), `class="enshu-card"`); got != 2 {
+	if got := strings.Count(w.Body.String(), `class="deckshare-card"`); got != 2 {
 		t.Errorf("card count = %d, want 2 (one per cloze ordinal): %s", got, w.Body.String())
 	}
 

@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Jolls/enshu/internal/db"
-	"github.com/Jolls/enshu/internal/fsrs"
-	"github.com/Jolls/enshu/internal/review"
+	"github.com/Jolls/deckshare/internal/db"
+	"github.com/Jolls/deckshare/internal/fsrs"
+	"github.com/Jolls/deckshare/internal/review"
 )
 
 // TestImport_ImageRendersFromApkgImport is the end-to-end regression test for the "images don't
