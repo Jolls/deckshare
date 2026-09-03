@@ -13,58 +13,56 @@ import (
 	"github.com/Jolls/enshu/internal/db"
 )
 
-// Export reads ownerID's own decks, note types, notes, cards, scheduling state, and review
-// history into an IrCollection (db -> IR, architecture.md §4). Must be called inside a
-// transaction it does not own; it only reads.
+// Export reads ONE deck's decks/note types/notes/cards row set, plus callerID's own scheduling
+// state and review history on that deck's cards, into an IrCollection (db -> IR,
+// architecture.md §4). Must be called inside a transaction it does not own; it only reads.
+//
+// Deck-scoped and caller-scoped, matching GET /decks/{id}/export (docs/routes.md, #140): a
+// collaborator with can_view on someone else's shared deck exports that deck's content with
+// THEIR OWN progress on it. Authorisation lives in export.sql's deck_access joins, not here --
+// a caller without can_view gets pgx.ErrNoRows from GetDeckForExport and nothing else runs.
 //
 // Lossy in one direction by definition (apkg-format.md's Export section): a shared deck's other
-// users' progress cannot fit in a single Anki collection, so this exports only ownerID's own
-// user_card_state and review_log rows on ownerID's own cards. Media is never exported: #60 built
-// the blob store for import only, so col.Media is always empty. Export wiring is a separate
-// follow-up.
-func Export(ctx context.Context, tx pgx.Tx, ownerID pgtype.UUID, now time.Time) (*IrCollection, error) {
+// users' progress cannot fit in a single Anki collection. Media is never exported: #60 built the
+// blob store for import only, so col.Media is always empty.
+func Export(ctx context.Context, tx pgx.Tx, deckID, callerID pgtype.UUID, now time.Time) (*IrCollection, error) {
 	q := db.New(tx)
 
-	deckRows, err := q.ListDecksByOwner(ctx, ownerID)
+	deck, err := q.GetDeckForExport(ctx, db.GetDeckForExportParams{DeckID: deckID, CallerID: callerID})
 	if err != nil {
-		return nil, fmt.Errorf("apkg: listing decks for export: %w", err)
+		return nil, fmt.Errorf("apkg: reading deck for export: %w", err)
 	}
-	noteTypeRows, err := q.ListNoteTypesByOwner(ctx, ownerID)
+	noteTypeRows, err := q.ListNoteTypesForDeckExport(ctx, db.ListNoteTypesForDeckExportParams{DeckID: deckID, CallerID: callerID})
 	if err != nil {
 		return nil, fmt.Errorf("apkg: listing note types for export: %w", err)
 	}
-	fieldRows, err := q.ListFieldsForOwner(ctx, ownerID)
+	fieldRows, err := q.ListFieldsForDeckExport(ctx, db.ListFieldsForDeckExportParams{DeckID: deckID, CallerID: callerID})
 	if err != nil {
 		return nil, fmt.Errorf("apkg: listing fields for export: %w", err)
 	}
-	templateRows, err := q.ListTemplatesForOwner(ctx, ownerID)
+	templateRows, err := q.ListTemplatesForDeckExport(ctx, db.ListTemplatesForDeckExportParams{DeckID: deckID, CallerID: callerID})
 	if err != nil {
 		return nil, fmt.Errorf("apkg: listing templates for export: %w", err)
 	}
-	noteRows, err := q.ListNotesByOwner(ctx, ownerID)
+	noteRows, err := q.ListNotesForDeckExport(ctx, db.ListNotesForDeckExportParams{DeckID: deckID, CallerID: callerID})
 	if err != nil {
 		return nil, fmt.Errorf("apkg: listing notes for export: %w", err)
 	}
-	cardRows, err := q.ListCardsByOwner(ctx, ownerID)
+	cardRows, err := q.ListCardsForDeckExport(ctx, db.ListCardsForDeckExportParams{DeckID: deckID, CallerID: callerID})
 	if err != nil {
 		return nil, fmt.Errorf("apkg: listing cards for export: %w", err)
 	}
-	stateRows, err := q.ListUserCardStateForOwnerExport(ctx, ownerID)
+	stateRows, err := q.ListUserCardStateForDeckExport(ctx, db.ListUserCardStateForDeckExportParams{DeckID: deckID, CallerID: callerID})
 	if err != nil {
 		return nil, fmt.Errorf("apkg: listing scheduling state for export: %w", err)
 	}
-	reviewRows, err := q.ListReviewLogForOwnerExport(ctx, ownerID)
+	reviewRows, err := q.ListReviewLogForDeckExport(ctx, db.ListReviewLogForDeckExportParams{DeckID: deckID, CallerID: callerID})
 	if err != nil {
 		return nil, fmt.Errorf("apkg: listing review history for export: %w", err)
 	}
 
-	deckAnkiID := make(map[pgtype.UUID]int64, len(deckRows))
-	decks := make([]IrDeck, 0, len(deckRows))
-	for _, d := range deckRows {
-		id := exportAnkiID(d.AnkiID, d.CreatedAt.Time.UnixMilli())
-		deckAnkiID[d.ID] = id
-		decks = append(decks, IrDeck{AnkiID: id, Name: d.Name, Description: d.Description})
-	}
+	deckAnkiID := exportAnkiID(deck.AnkiID, deck.CreatedAt.Time.UnixMilli())
+	decks := []IrDeck{{AnkiID: deckAnkiID, Name: deck.Name, Description: deck.Description}}
 
 	noteTypeAnkiID := make(map[pgtype.UUID]int64, len(noteTypeRows))
 	noteTypeIdx := make(map[pgtype.UUID]int, len(noteTypeRows))
@@ -110,7 +108,11 @@ func Export(ctx context.Context, tx pgx.Tx, ownerID pgtype.UUID, now time.Time) 
 			AnkiID: id, Guid: n.Guid, NoteTypeAnkiID: noteTypeAnkiID[n.NoteTypeID],
 			Fields: fields, Tags: append([]string(nil), n.Tags...), Checksum: n.Checksum,
 			Created: n.CreatedAt.Time.UTC(), Modified: n.ModifiedAt.Time.UTC(),
-			HomeDeckAnkiID: deckAnkiID[n.DeckID],
+			// The package contains exactly one deck, so that is the only home deck a note can
+			// have here. Notably NOT n.DeckID: a note whose cards span decks keeps its home deck
+			// elsewhere, and dbwrite.go's importNotes SKIPS any note whose home deck does not
+			// resolve in the package.
+			HomeDeckAnkiID: deckAnkiID,
 		})
 	}
 
@@ -143,7 +145,7 @@ func Export(ctx context.Context, tx pgx.Tx, ownerID pgtype.UUID, now time.Time) 
 		}
 
 		cards = append(cards, IrCard{
-			AnkiID: id, NoteAnkiID: noteAnkiID[c.NoteID], DeckAnkiID: deckAnkiID[c.DeckID],
+			AnkiID: id, NoteAnkiID: noteAnkiID[c.NoteID], DeckAnkiID: deckAnkiID,
 			Ordinal: c.Ordinal, Type: sched.Type, Queue: sched.Queue, Due: sched.Due,
 			IntervalSeconds: sched.IntervalSeconds, Factor: ankiDefaultFactor,
 			Reps: sched.Reps, Lapses: sched.Lapses, Flag: sched.Flag,

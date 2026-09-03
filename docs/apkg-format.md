@@ -316,7 +316,8 @@ with the multiuser seam cut through it: their `cards` row becomes our `user_card
 
 ## Export
 
-`db -> IR -> apkg` for one user, flattening their `user_card_state` back onto card rows.
+`db -> IR -> apkg` for one deck and one user, flattening that user's `user_card_state` back onto
+card rows (`GET /decks/{id}/export`, #140).
 
 Lossy in that direction by definition — a shared deck's other users' progress cannot be
 represented in an Anki collection. That's fine and expected, but the UI should say so.

@@ -11,15 +11,66 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const listCardsByOwner = `-- name: ListCardsByOwner :many
+const getDeckForExport = `-- name: GetDeckForExport :one
+
+SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id FROM decks d
+JOIN deck_access da ON da.deck_id = d.id AND da.user_id = $1 AND da.can_view
+WHERE d.id = $2
+`
+
+type GetDeckForExportParams struct {
+	CallerID pgtype.UUID
+	DeckID   pgtype.UUID
+}
+
+// Export (#59, wired to GET /decks/{id}/export by #140). Every statement here is called only from
+// internal/apkg/dbexport.go, and every one is scoped two ways at once:
+//
+//   - by DECK -- one deck's content, not an owner's whole collection. The route is deck-scoped
+//     (docs/routes.md) and a caller exporting a deck shared with them has no business reading the
+//     owner's other decks. Card membership is the definition: a card is in the export iff its own
+//     cards.deck_id is this deck (architecture.md §20 -- cards.deck_id is authoritative, notes.deck_id
+//     is only the note's home deck), and a note is in iff it has such a card. Note types follow the
+//     notes, because Anki's package format cannot carry a note without its note type.
+//
+//   - by CALLER -- deck_access, never owner_id (CLAUDE.md §9's "no cross-user reads without a
+//     deck_access row", "authorisation is explicit at the query layer"). The deck_access join is
+//     repeated on every statement rather than trusted to the handler or to GetDeckForExport alone;
+//     deck_access is primary-keyed (deck_id, user_id), so the join is a guard, never a fan-out.
+//
+// user_card_state/review_log are the caller's OWN rows on this deck's cards -- not the owner's. A
+// shared deck's other reviewers' progress is exactly what apkg-format.md's Export section says
+// cannot be represented in a single Anki collection.
+func (q *Queries) GetDeckForExport(ctx context.Context, arg GetDeckForExportParams) (Deck, error) {
+	row := q.db.QueryRow(ctx, getDeckForExport, arg.CallerID, arg.DeckID)
+	var i Deck
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Description,
+		&i.Preset,
+		&i.CreatedAt,
+		&i.ModifiedAt,
+		&i.AnkiID,
+	)
+	return i, err
+}
+
+const listCardsForDeckExport = `-- name: ListCardsForDeckExport :many
 SELECT c.id, c.note_id, c.template_id, c.ordinal, c.deck_id, c.anki_id, c.import_due_position FROM cards c
-JOIN notes n ON n.id = c.note_id
-WHERE n.owner_id = $1
+JOIN deck_access da ON da.deck_id = $1 AND da.user_id = $2 AND da.can_view
+WHERE c.deck_id = $1
 ORDER BY c.id
 `
 
-func (q *Queries) ListCardsByOwner(ctx context.Context, ownerID pgtype.UUID) ([]Card, error) {
-	rows, err := q.db.Query(ctx, listCardsByOwner, ownerID)
+type ListCardsForDeckExportParams struct {
+	DeckID   pgtype.UUID
+	CallerID pgtype.UUID
+}
+
+func (q *Queries) ListCardsForDeckExport(ctx context.Context, arg ListCardsForDeckExportParams) ([]Card, error) {
+	rows, err := q.db.Query(ctx, listCardsForDeckExport, arg.DeckID, arg.CallerID)
 	if err != nil {
 		return nil, err
 	}
@@ -46,53 +97,24 @@ func (q *Queries) ListCardsByOwner(ctx context.Context, ownerID pgtype.UUID) ([]
 	return items, nil
 }
 
-const listDecksByOwner = `-- name: ListDecksByOwner :many
-
-SELECT id, owner_id, name, description, preset, created_at, modified_at, anki_id FROM decks WHERE owner_id = $1 ORDER BY id
-`
-
-// Export (#59). Every statement here is called only from internal/apkg/dbexport.go, reading one
-// owner's own content -- scoped directly by owner_id, the same convention import.sql uses,
-// not deck_access: exporting is always the owner's own collection, never someone else's shared
-// deck (architecture.md §7's Export section).
-func (q *Queries) ListDecksByOwner(ctx context.Context, ownerID pgtype.UUID) ([]Deck, error) {
-	rows, err := q.db.Query(ctx, listDecksByOwner, ownerID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Deck
-	for rows.Next() {
-		var i Deck
-		if err := rows.Scan(
-			&i.ID,
-			&i.OwnerID,
-			&i.Name,
-			&i.Description,
-			&i.Preset,
-			&i.CreatedAt,
-			&i.ModifiedAt,
-			&i.AnkiID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listFieldsForOwner = `-- name: ListFieldsForOwner :many
+const listFieldsForDeckExport = `-- name: ListFieldsForDeckExport :many
 SELECT f.id, f.note_type_id, f.ordinal, f.name, f.font, f.size, f.is_rtl, f.sticky FROM fields f
-JOIN note_types nt ON nt.id = f.note_type_id
-WHERE nt.owner_id = $1
+JOIN deck_access da ON da.deck_id = $1 AND da.user_id = $2 AND da.can_view
+WHERE EXISTS (
+    SELECT 1 FROM notes n
+    JOIN cards c ON c.note_id = n.id
+    WHERE n.note_type_id = f.note_type_id AND c.deck_id = $1
+)
 ORDER BY f.note_type_id, f.ordinal
 `
 
-func (q *Queries) ListFieldsForOwner(ctx context.Context, ownerID pgtype.UUID) ([]Field, error) {
-	rows, err := q.db.Query(ctx, listFieldsForOwner, ownerID)
+type ListFieldsForDeckExportParams struct {
+	DeckID   pgtype.UUID
+	CallerID pgtype.UUID
+}
+
+func (q *Queries) ListFieldsForDeckExport(ctx context.Context, arg ListFieldsForDeckExportParams) ([]Field, error) {
+	rows, err := q.db.Query(ctx, listFieldsForDeckExport, arg.DeckID, arg.CallerID)
 	if err != nil {
 		return nil, err
 	}
@@ -120,12 +142,24 @@ func (q *Queries) ListFieldsForOwner(ctx context.Context, ownerID pgtype.UUID) (
 	return items, nil
 }
 
-const listNoteTypesByOwner = `-- name: ListNoteTypesByOwner :many
-SELECT id, owner_id, name, css, is_cloze, sort_field_idx, anki_id FROM note_types WHERE owner_id = $1 ORDER BY id
+const listNoteTypesForDeckExport = `-- name: ListNoteTypesForDeckExport :many
+SELECT nt.id, nt.owner_id, nt.name, nt.css, nt.is_cloze, nt.sort_field_idx, nt.anki_id FROM note_types nt
+JOIN deck_access da ON da.deck_id = $1 AND da.user_id = $2 AND da.can_view
+WHERE EXISTS (
+    SELECT 1 FROM notes n
+    JOIN cards c ON c.note_id = n.id
+    WHERE n.note_type_id = nt.id AND c.deck_id = $1
+)
+ORDER BY nt.id
 `
 
-func (q *Queries) ListNoteTypesByOwner(ctx context.Context, ownerID pgtype.UUID) ([]NoteType, error) {
-	rows, err := q.db.Query(ctx, listNoteTypesByOwner, ownerID)
+type ListNoteTypesForDeckExportParams struct {
+	DeckID   pgtype.UUID
+	CallerID pgtype.UUID
+}
+
+func (q *Queries) ListNoteTypesForDeckExport(ctx context.Context, arg ListNoteTypesForDeckExportParams) ([]NoteType, error) {
+	rows, err := q.db.Query(ctx, listNoteTypesForDeckExport, arg.DeckID, arg.CallerID)
 	if err != nil {
 		return nil, err
 	}
@@ -152,12 +186,20 @@ func (q *Queries) ListNoteTypesByOwner(ctx context.Context, ownerID pgtype.UUID)
 	return items, nil
 }
 
-const listNotesByOwner = `-- name: ListNotesByOwner :many
-SELECT id, guid, owner_id, note_type_id, deck_id, fields, tags, checksum, created_at, modified_at, anki_id FROM notes WHERE owner_id = $1 ORDER BY id
+const listNotesForDeckExport = `-- name: ListNotesForDeckExport :many
+SELECT n.id, n.guid, n.owner_id, n.note_type_id, n.deck_id, n.fields, n.tags, n.checksum, n.created_at, n.modified_at, n.anki_id FROM notes n
+JOIN deck_access da ON da.deck_id = $1 AND da.user_id = $2 AND da.can_view
+WHERE EXISTS (SELECT 1 FROM cards c WHERE c.note_id = n.id AND c.deck_id = $1)
+ORDER BY n.id
 `
 
-func (q *Queries) ListNotesByOwner(ctx context.Context, ownerID pgtype.UUID) ([]Note, error) {
-	rows, err := q.db.Query(ctx, listNotesByOwner, ownerID)
+type ListNotesForDeckExportParams struct {
+	DeckID   pgtype.UUID
+	CallerID pgtype.UUID
+}
+
+func (q *Queries) ListNotesForDeckExport(ctx context.Context, arg ListNotesForDeckExportParams) ([]Note, error) {
+	rows, err := q.db.Query(ctx, listNotesForDeckExport, arg.DeckID, arg.CallerID)
 	if err != nil {
 		return nil, err
 	}
@@ -188,16 +230,21 @@ func (q *Queries) ListNotesByOwner(ctx context.Context, ownerID pgtype.UUID) ([]
 	return items, nil
 }
 
-const listReviewLogForOwnerExport = `-- name: ListReviewLogForOwnerExport :many
+const listReviewLogForDeckExport = `-- name: ListReviewLogForDeckExport :many
 SELECT rl.id, rl.user_id, rl.card_id, rl.rating, rl.reviewed_at, rl.duration_ms, rl.state_before, rl.learning_steps_before, rl.stability_before, rl.difficulty_before, rl.elapsed_days_before, rl.scheduled_days_after, rl.fsrs_version, rl.review_kind, rl.anki_id FROM review_log rl
 JOIN cards c ON c.id = rl.card_id
-JOIN notes n ON n.id = c.note_id
-WHERE n.owner_id = $1 AND rl.user_id = $1
+JOIN deck_access da ON da.deck_id = $1 AND da.user_id = $2 AND da.can_view
+WHERE c.deck_id = $1 AND rl.user_id = $2
 ORDER BY rl.card_id, rl.reviewed_at
 `
 
-func (q *Queries) ListReviewLogForOwnerExport(ctx context.Context, ownerID pgtype.UUID) ([]ReviewLog, error) {
-	rows, err := q.db.Query(ctx, listReviewLogForOwnerExport, ownerID)
+type ListReviewLogForDeckExportParams struct {
+	DeckID   pgtype.UUID
+	CallerID pgtype.UUID
+}
+
+func (q *Queries) ListReviewLogForDeckExport(ctx context.Context, arg ListReviewLogForDeckExportParams) ([]ReviewLog, error) {
+	rows, err := q.db.Query(ctx, listReviewLogForDeckExport, arg.DeckID, arg.CallerID)
 	if err != nil {
 		return nil, err
 	}
@@ -232,15 +279,24 @@ func (q *Queries) ListReviewLogForOwnerExport(ctx context.Context, ownerID pgtyp
 	return items, nil
 }
 
-const listTemplatesForOwner = `-- name: ListTemplatesForOwner :many
+const listTemplatesForDeckExport = `-- name: ListTemplatesForDeckExport :many
 SELECT t.id, t.note_type_id, t.ordinal, t.name, t.qfmt, t.afmt, t.browser_qfmt, t.browser_afmt FROM templates t
-JOIN note_types nt ON nt.id = t.note_type_id
-WHERE nt.owner_id = $1
+JOIN deck_access da ON da.deck_id = $1 AND da.user_id = $2 AND da.can_view
+WHERE EXISTS (
+    SELECT 1 FROM notes n
+    JOIN cards c ON c.note_id = n.id
+    WHERE n.note_type_id = t.note_type_id AND c.deck_id = $1
+)
 ORDER BY t.note_type_id, t.ordinal
 `
 
-func (q *Queries) ListTemplatesForOwner(ctx context.Context, ownerID pgtype.UUID) ([]Template, error) {
-	rows, err := q.db.Query(ctx, listTemplatesForOwner, ownerID)
+type ListTemplatesForDeckExportParams struct {
+	DeckID   pgtype.UUID
+	CallerID pgtype.UUID
+}
+
+func (q *Queries) ListTemplatesForDeckExport(ctx context.Context, arg ListTemplatesForDeckExportParams) ([]Template, error) {
+	rows, err := q.db.Query(ctx, listTemplatesForDeckExport, arg.DeckID, arg.CallerID)
 	if err != nil {
 		return nil, err
 	}
@@ -268,17 +324,20 @@ func (q *Queries) ListTemplatesForOwner(ctx context.Context, ownerID pgtype.UUID
 	return items, nil
 }
 
-const listUserCardStateForOwnerExport = `-- name: ListUserCardStateForOwnerExport :many
+const listUserCardStateForDeckExport = `-- name: ListUserCardStateForDeckExport :many
 SELECT ucs.user_id, ucs.card_id, ucs.due, ucs.stability, ucs.difficulty, ucs.state, ucs.reps, ucs.lapses, ucs.elapsed_days, ucs.scheduled_days, ucs.learning_steps, ucs.last_review, ucs.suspended, ucs.buried_until, ucs.flag FROM user_card_state ucs
 JOIN cards c ON c.id = ucs.card_id
-JOIN notes n ON n.id = c.note_id
-WHERE n.owner_id = $1 AND ucs.user_id = $1
+JOIN deck_access da ON da.deck_id = $1 AND da.user_id = $2 AND da.can_view
+WHERE c.deck_id = $1 AND ucs.user_id = $2
 `
 
-// Only this user's OWN progress on their OWN cards -- a shared deck's other reviewers' state is
-// exactly what apkg-format.md's Export section says cannot be represented in a single collection.
-func (q *Queries) ListUserCardStateForOwnerExport(ctx context.Context, ownerID pgtype.UUID) ([]UserCardState, error) {
-	rows, err := q.db.Query(ctx, listUserCardStateForOwnerExport, ownerID)
+type ListUserCardStateForDeckExportParams struct {
+	DeckID   pgtype.UUID
+	CallerID pgtype.UUID
+}
+
+func (q *Queries) ListUserCardStateForDeckExport(ctx context.Context, arg ListUserCardStateForDeckExportParams) ([]UserCardState, error) {
+	rows, err := q.db.Query(ctx, listUserCardStateForDeckExport, arg.DeckID, arg.CallerID)
 	if err != nil {
 		return nil, err
 	}

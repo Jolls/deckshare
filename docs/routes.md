@@ -176,7 +176,7 @@ exempts nobody from the guard.
 |---|---|---|---|
 | GET | `/import` | session | Upload form |
 | POST | `/import` | session | Upload `.apkg`; synchronous `read → IR → db`, redirects to the resulting deck. Idempotent on `(owner_id, guid)` (§7, invariant §2.2) |
-| GET | `/decks/{id}/export` | `can_view` | Stream a `.apkg` (`db → IR → write`, `Content-Disposition: attachment`) — a read of the deck's content, not an edit |
+| GET | `/decks/{id}/export` | `can_view` | Stream a `.apkg` (`db → IR → write`, `Content-Disposition: attachment`) — a read of the deck's content, not an edit. Scoped to the one deck (subdecks are separate decks and are not followed) and to the **caller's own** progress — a collaborator exports the deck's content with their own `user_card_state`, never the owner's |
 
 Synchronous upload is a Simplicity First choice for MVP — no job queue. Revisit if a large
 collection makes the request time out; nothing here blocks adding an async path later.

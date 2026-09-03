@@ -39,6 +39,7 @@ func NewHandler(pool *pgxpool.Pool, a *auth.Service, blobs *media.Store) (http.H
 	registerReviewRoutes(mux, pool, pages, fragments, time.Now)
 	registerMediaRoutes(mux, pool, blobs)
 	registerImportRoutes(mux, pool, pages, blobs, time.Now)
+	registerExportRoutes(mux, pool, pages, time.Now)
 	registerAIImportRoutes(mux, pool, pages)
 	return securityHeaders(a.Middleware(mux)), nil
 }
