@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.26] - 2026-09-03
+
+### Added
+- Decks can be exported back out as `.apkg` from the deck page: one deck's notes and cards plus
+  the exporting user's own scheduling state and review history, so a collaborator on a shared
+  deck exports their progress rather than the owner's
+  ([#140](https://github.com/Jolls/enshu/issues/140)).
+
 ## [0.2.25] - 2026-09-03
 
 ### Added

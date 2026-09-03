@@ -13,6 +13,7 @@
     {{end}}
     {{if .Deck.CanEditSettings}}<a href="/decks/{{.Deck.ID}}/edit" role="button" class="outline btn-sm">Edit deck</a>{{end}}
     {{if .Deck.CanManageAccess}}<a href="/decks/{{.Deck.ID}}/access" role="button" class="outline btn-sm">Manage access</a>{{end}}
+    <a href="/decks/{{.Deck.ID}}/export" role="button" class="outline btn-sm">Export</a>
     <a href="/decks" role="button" class="outline btn-sm">Back to decks</a>
 </nav>
 

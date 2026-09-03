@@ -120,29 +120,47 @@ func TestExport_RoundTripsThroughReimport(t *testing.T) {
 		t.Fatalf("first Import: %v", err)
 	}
 
-	col2, err := Export(ctx, tx, ownerA, now)
-	if err != nil {
-		t.Fatalf("Export: %v", err)
-	}
-	if len(col2.Decks) != len(spec.Decks) {
-		t.Fatalf("Export: %d decks, want %d", len(col2.Decks), len(spec.Decks))
-	}
-	if len(col2.Cards) != len(spec.Cards) {
-		t.Fatalf("Export: %d cards, want %d", len(col2.Cards), len(spec.Cards))
-	}
-
-	var buf bytes.Buffer
-	if err := Write(col2, &buf); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
-	col3 := readBytes(t, buf.Bytes()) // Write's own output must re-parse cleanly
-
-	ownerB := seedUser(t, tx)
-	if _, err := Import(ctx, tx, ownerB, col3, now, testMediaStore(t)); err != nil {
-		t.Fatalf("second Import: %v", err)
-	}
-
 	q := db.New(tx)
+	ownerB := seedUser(t, tx)
+
+	// #140: Export is deck-scoped, so the round trip is per deck. defaultSynthSpec's
+	// "guid-note-1" has one card in each deck, which is the case that matters: each package
+	// carries only its own deck's cards, and re-importing both must reassemble the note.
+	totalCards := 0
+	for _, d := range spec.Decks {
+		deck, err := q.GetDeckByOwnerAndName(ctx, db.GetDeckByOwnerAndNameParams{OwnerID: ownerA, Name: d.Name})
+		if err != nil {
+			t.Fatalf("owner A deck %q: %v", d.Name, err)
+		}
+
+		col2, err := Export(ctx, tx, deck.ID, ownerA, now)
+		if err != nil {
+			t.Fatalf("Export(%q): %v", d.Name, err)
+		}
+		if len(col2.Decks) != 1 || col2.Decks[0].Name != d.Name {
+			t.Fatalf("Export(%q): decks = %+v, want exactly that deck", d.Name, col2.Decks)
+		}
+		for _, n := range col2.Notes {
+			if n.HomeDeckAnkiID != col2.Decks[0].AnkiID {
+				t.Errorf("Export(%q): note %q home deck = %d, want the exported deck %d",
+					d.Name, n.Guid, n.HomeDeckAnkiID, col2.Decks[0].AnkiID)
+			}
+		}
+		totalCards += len(col2.Cards)
+
+		var buf bytes.Buffer
+		if err := Write(col2, &buf); err != nil {
+			t.Fatalf("Write(%q): %v", d.Name, err)
+		}
+		col3 := readBytes(t, buf.Bytes()) // Write's own output must re-parse cleanly
+
+		if _, err := Import(ctx, tx, ownerB, col3, now, testMediaStore(t)); err != nil {
+			t.Fatalf("second Import(%q): %v", d.Name, err)
+		}
+	}
+	if totalCards != len(spec.Cards) {
+		t.Fatalf("per-deck exports covered %d cards, want %d", totalCards, len(spec.Cards))
+	}
 
 	for _, d := range spec.Decks {
 		a, err := q.GetDeckByOwnerAndName(ctx, db.GetDeckByOwnerAndNameParams{OwnerID: ownerA, Name: d.Name})
@@ -249,6 +267,131 @@ func TestExport_RoundTripsThroughReimport(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestExport_ScopedToDeckAndCaller is #140's scoping invariant: Export takes one deck and one
+// CALLER, so a collaborator with can_view on a shared deck exports that deck's content with their
+// own user_card_state -- never the owner's, and never the owner's other decks.
+func TestExport_ScopedToDeckAndCaller(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	ownerA := seedUser(t, tx)
+	collab := seedUser(t, tx)
+	now := time.Now()
+
+	spec := defaultSynthSpec(t)
+	col1 := readBytes(t, buildSchema11Package(t, spec))
+	if _, err := Import(ctx, tx, ownerA, col1, now, testMediaStore(t)); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	q := db.New(tx)
+	defaultDeck, err := q.GetDeckByOwnerAndName(ctx, db.GetDeckByOwnerAndNameParams{OwnerID: ownerA, Name: "Default"})
+	if err != nil {
+		t.Fatalf("owner A deck \"Default\": %v", err)
+	}
+	subDeck, err := q.GetDeckByOwnerAndName(ctx, db.GetDeckByOwnerAndNameParams{OwnerID: ownerA, Name: "Default::Sub"})
+	if err != nil {
+		t.Fatalf("owner A deck \"Default::Sub\": %v", err)
+	}
+
+	// The collaborator can_view "Default" only -- "Default::Sub" stays unshared, so it is the
+	// negative case below.
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO deck_access (deck_id, user_id, can_view, can_study) VALUES ($1,$2,true,true)`,
+		defaultDeck.ID, collab,
+	); err != nil {
+		t.Fatalf("grant collaborator access: %v", err)
+	}
+
+	note1, err := q.GetNoteByOwnerAndGuid(ctx, db.GetNoteByOwnerAndGuidParams{OwnerID: ownerA, Guid: "guid-note-1"})
+	if err != nil {
+		t.Fatalf("owner A note guid-note-1: %v", err)
+	}
+	cards1, err := findCardsForNote(ctx, tx, note1.ID)
+	if err != nil {
+		t.Fatalf("cards of guid-note-1: %v", err)
+	}
+	card0, ok := cards1[0] // ordinal 0 is the card in "Default" (spec card 201, did 1)
+	if !ok {
+		t.Fatal("guid-note-1 has no ordinal-0 card")
+	}
+	// A stability owner A's own imported state does not have, so the assertion below can only
+	// pass if Export read the CALLER's row.
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO user_card_state (user_id, card_id, state, due, stability, difficulty, reps, lapses)
+		 VALUES ($1,$2,2,now(),42.5,3.25,1,0)`,
+		collab, card0.ID,
+	); err != nil {
+		t.Fatalf("seed collaborator state: %v", err)
+	}
+
+	col, err := Export(ctx, tx, defaultDeck.ID, collab, now)
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if len(col.Decks) != 1 || col.Decks[0].Name != "Default" {
+		t.Fatalf("Export: decks = %+v, want just \"Default\"", col.Decks)
+	}
+
+	wantCards := 0
+	for _, c := range spec.Cards {
+		if c.Did == 1 {
+			wantCards++
+		}
+	}
+	if len(col.Cards) != wantCards {
+		t.Errorf("Export: %d cards, want %d (the deck's own cards only)", len(col.Cards), wantCards)
+	}
+	for _, c := range col.Cards {
+		if c.DeckAnkiID != col.Decks[0].AnkiID {
+			t.Errorf("card %d: deck = %d, want the exported deck %d", c.AnkiID, c.DeckAnkiID, col.Decks[0].AnkiID)
+		}
+	}
+
+	// Every note with at least one card in "Default" comes along, whichever deck its other cards
+	// live in.
+	wantGuids := map[string]bool{}
+	for _, c := range spec.Cards {
+		if c.Did != 1 {
+			continue
+		}
+		for _, n := range spec.Notes {
+			if n.AnkiID == c.NoteAnkiID {
+				wantGuids[n.Guid] = true
+			}
+		}
+	}
+	gotGuids := map[string]bool{}
+	for _, n := range col.Notes {
+		gotGuids[n.Guid] = true
+	}
+	if len(gotGuids) != len(wantGuids) {
+		t.Errorf("Export: note guids = %v, want %v", gotGuids, wantGuids)
+	}
+	for g := range wantGuids {
+		if !gotGuids[g] {
+			t.Errorf("Export: note %q missing from the export", g)
+		}
+	}
+
+	var seeded *IrCard
+	for i := range col.Cards {
+		if col.Cards[i].NoteAnkiID == 101 && col.Cards[i].Ordinal == 0 {
+			seeded = &col.Cards[i]
+		}
+	}
+	if seeded == nil {
+		t.Fatal("exported cards do not include guid-note-1 ordinal 0")
+	}
+	if seeded.FSRS == nil || seeded.FSRS.Stability != 42.5 {
+		t.Errorf("seeded card FSRS = %+v, want the caller's own stability 42.5", seeded.FSRS)
+	}
+
+	// No deck_access row on the sub-deck: not merely empty, but indistinguishable from absent.
+	if _, err := Export(ctx, tx, subDeck.ID, collab, now); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("Export of an unshared deck: err = %v, want pgx.ErrNoRows", err)
 	}
 }
 

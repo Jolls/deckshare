@@ -111,6 +111,7 @@ func newTestHandler(t *testing.T, tx pgx.Tx, cfg auth.Config, clocks ...func() t
 	registerReviewRoutes(mux, tx, pages, fragments, clock)
 	registerMediaRoutes(mux, tx, blobs)
 	registerImportRoutes(mux, tx, pages, blobs, clock)
+	registerExportRoutes(mux, tx, pages, clock)
 	registerAIImportRoutes(mux, tx, pages)
 	return securityHeaders(a.Middleware(mux)), a
 }
