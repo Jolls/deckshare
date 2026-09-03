@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.25] - 2026-09-03
+
+### Added
+- New signups' Basic and Cloze note types now seed with baseline CSS (matching Anki's stock
+  defaults) instead of empty: a `.card` rule for font/size/alignment/colors, plus a bold
+  `.cloze` rule so the revealed cloze deletion actually stands out from the surrounding text.
+
 ## [0.2.24] - 2026-09-03
 
 ### Fixed

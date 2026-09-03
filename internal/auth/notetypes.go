@@ -20,13 +20,21 @@ func (s *Service) seedDefaultNoteTypes(ctx context.Context, userID pgtype.UUID) 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := db.CreateNoteTypeWithFieldsAndTemplates(ctx, tx, userID, "Basic", "", false, 0,
+	const baseCardCSS = ".card {\n" +
+		"    font-family: arial;\n" +
+		"    font-size: 20px;\n" +
+		"    text-align: center;\n" +
+		"    color: black;\n" +
+		"    background-color: white;\n" +
+		"}\n"
+
+	if _, err := db.CreateNoteTypeWithFieldsAndTemplates(ctx, tx, userID, "Basic", baseCardCSS, false, 0,
 		[]string{"Front", "Back"},
 		[]db.TemplateEdit{{Name: "Card 1", Qfmt: "{{Front}}", Afmt: "{{FrontSide}}<hr>{{Back}}"}},
 	); err != nil {
 		return err
 	}
-	if _, err := db.CreateNoteTypeWithFieldsAndTemplates(ctx, tx, userID, "Cloze", "", true, 0,
+	if _, err := db.CreateNoteTypeWithFieldsAndTemplates(ctx, tx, userID, "Cloze", baseCardCSS+".cloze {\n    font-weight: bold;\n}\n", true, 0,
 		[]string{"Text", "Extra"},
 		[]db.TemplateEdit{{Name: "Cloze", Qfmt: "{{cloze:Text}}", Afmt: "{{cloze:Text}}"}},
 	); err != nil {

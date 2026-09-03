@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/Jolls/enshu/internal/db"
@@ -38,6 +39,15 @@ func TestSignup_SeedsDefaultNoteTypes(t *testing.T) {
 	}
 	if !cloze.IsCloze {
 		t.Error("Cloze note type should be marked is_cloze")
+	}
+	if !strings.Contains(basic.Css, ".card {") {
+		t.Errorf("Basic css = %q, want a base .card rule", basic.Css)
+	}
+	if !strings.Contains(cloze.Css, ".card {") {
+		t.Errorf("Cloze css = %q, want a base .card rule", cloze.Css)
+	}
+	if !strings.Contains(cloze.Css, ".cloze {") || !strings.Contains(cloze.Css, "font-weight: bold") {
+		t.Errorf("Cloze css = %q, want a bold .cloze rule", cloze.Css)
 	}
 
 	basicFields, err := q.ListFieldsForNoteType(ctx, basic.ID)
