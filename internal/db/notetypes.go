@@ -88,11 +88,12 @@ func CreateNoteTypeWithFieldsAndTemplates(ctx context.Context, tx pgx.Tx, ownerI
 // template's new position, and hard-deleting cards backed by a removed template.
 //
 // Must be called inside a transaction it does not own; the caller commits. Returns
-// pgx.ErrNoRows if the note type is absent or not owned by ownerID.
-func UpdateNoteType(ctx context.Context, tx pgx.Tx, ownerID, noteTypeID pgtype.UUID, name, css string, sortFieldIdx int32, fields []FieldEdit, templates []TemplateEdit) error {
+// pgx.ErrNoRows if the note type is absent or not WRITABLE for userID
+// (docs/plans/192-note-type-authority.md).
+func UpdateNoteType(ctx context.Context, tx pgx.Tx, userID, noteTypeID pgtype.UUID, name, css string, sortFieldIdx int32, fields []FieldEdit, templates []TemplateEdit) error {
 	q := New(tx)
 
-	nt, err := q.LockNoteTypeForOwner(ctx, LockNoteTypeForOwnerParams{ID: noteTypeID, OwnerID: ownerID})
+	nt, err := q.LockNoteTypeForEdit(ctx, LockNoteTypeForEditParams{ID: noteTypeID, UserID: userID})
 	if err != nil {
 		return err
 	}
@@ -114,7 +115,7 @@ func UpdateNoteType(ctx context.Context, tx pgx.Tx, ownerID, noteTypeID pgtype.U
 		Css:          css,
 		SortFieldIdx: sortFieldIdx,
 		ID:           noteTypeID,
-		OwnerID:      ownerID,
+		UserID:       userID,
 	}); err != nil {
 		return err
 	}

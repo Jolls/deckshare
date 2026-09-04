@@ -3,6 +3,15 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.28] - 2026-09-03
+
+### Changed
+- Note-type read/write authority now derives from the decks whose notes use the note type
+  (`can_view` on any for read, `can_view`+`can_edit_content` on every one for write) instead of
+  `note_types.owner_id`, so a collaborator with edit access on a shared deck can edit its note
+  types and a revoked creator no longer keeps exclusive edit rights over a note type they can't
+  reach ([#192](https://github.com/Jolls/deckshare/issues/192)).
+
 ## [0.2.27] - 2026-09-03
 
 ### Changed

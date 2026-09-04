@@ -32,16 +32,18 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		user, _ := auth.UserFromContext(r.Context())
 		q := db.New(store)
 
-		noteTypes, err := q.ListNoteTypesForOwner(r.Context(), user.ID)
-		if err != nil {
-			serverError(w)
-			return
-		}
 		depth := parseClozeDepth(r.URL.Query().Get("depth"))
 
 		deckID, deckOK := parseUUIDParam(r.URL.Query().Get("deck_id"))
 		if !deckOK {
 			decks, err := q.ListDecksForUser(r.Context(), user.ID)
+			if err != nil {
+				serverError(w)
+				return
+			}
+			// No deck chosen yet, so there's no deck to scope the "in this deck" ordering to --
+			// every READABLE note type, not just the caller's own (docs/plans/192-note-type-authority.md).
+			noteTypes, err := q.ListNoteTypesForUser(r.Context(), user.ID)
 			if err != nil {
 				serverError(w)
 				return
@@ -55,6 +57,11 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 
 		deck, err := q.GetDeckForContentEdit(r.Context(), db.GetDeckForContentEditParams{UserID: user.ID, DeckID: deckID})
 		if handleQueryErrPage(w, pages, user, err) {
+			return
+		}
+		noteTypes, err := q.ListNoteTypesForNoteForm(r.Context(), db.ListNoteTypesForNoteFormParams{DeckID: deckID, UserID: user.ID})
+		if err != nil {
+			serverError(w)
 			return
 		}
 
@@ -198,9 +205,10 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 	})))
 }
 
-// loadDeckAndNoteType resolves and authorises both halves of the picker (owner-scoped, same
-// checks as notes.go) -- the hidden deck_id/note_type_id form fields on the POST are never
-// trusted without re-resolving them the same way the GET did.
+// loadDeckAndNoteType resolves and authorises both halves of the picker (can_edit_content on the
+// deck, READABLE on the note type -- docs/plans/192-note-type-authority.md) -- the hidden
+// deck_id/note_type_id form fields on the POST are never trusted without re-resolving them the
+// same way the GET did.
 func loadDeckAndNoteType(ctx context.Context, q *db.Queries, userID, deckID, noteTypeID pgtype.UUID) (db.Deck, db.NoteType, []db.Field, error) {
 	deck, err := q.GetDeckForContentEdit(ctx, db.GetDeckForContentEditParams{UserID: userID, DeckID: deckID})
 	if err != nil {
@@ -214,7 +222,7 @@ func loadDeckAndNoteType(ctx context.Context, q *db.Queries, userID, deckID, not
 }
 
 func loadNoteType(ctx context.Context, q *db.Queries, userID, noteTypeID pgtype.UUID) (db.NoteType, []db.Field, error) {
-	nt, err := q.GetNoteTypeForOwner(ctx, db.GetNoteTypeForOwnerParams{ID: noteTypeID, OwnerID: userID})
+	nt, err := q.GetNoteTypeForRead(ctx, db.GetNoteTypeForReadParams{ID: noteTypeID, UserID: userID})
 	if err != nil {
 		return db.NoteType{}, nil, err
 	}

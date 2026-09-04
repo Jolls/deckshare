@@ -4,7 +4,10 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/Jolls/deckshare/internal/auth"
 )
@@ -808,5 +811,317 @@ func TestNoteTypeEdit_TemplateRemovalWithNotes_MultiuserSchedulingStateSurvives(
 		if countRows(t, tx, `SELECT count(*) FROM review_log WHERE id = $1 AND card_id = $2`, rl, removedCardID) != 1 {
 			t.Errorf("user %s: removed card's review_log should survive, orphaned", u)
 		}
+	}
+}
+
+// grantEditor inserts a can_view+can_edit_content deck_access row directly -- the docs/plans/
+// 192-note-type-authority.md WRITABLE tests' fixture shape for a collaborator who can edit
+// content on a deck but was granted nothing else.
+func grantEditor(t *testing.T, tx pgx.Tx, deckID, userID string) {
+	t.Helper()
+	if _, err := tx.Exec(context.Background(),
+		`INSERT INTO deck_access (deck_id, user_id, can_view, can_edit_content) VALUES ($1, $2, true, true)`, deckID, userID); err != nil {
+		t.Fatalf("grant editor access: %v", err)
+	}
+}
+
+// setupNoteTypeAcrossTwoDecks creates two decks (A named "D" via setupDeckAndNoteType, B named
+// "SecretDeck") and one note type ("Basic2") with one note in each deck -- the fixture the #192
+// WRITABLE/multi-deck tests below share. B's distinctive name makes an accidental substring match
+// in a denial message easy to catch.
+func setupNoteTypeAcrossTwoDecks(t *testing.T, tx pgx.Tx, handler http.Handler, ownerCookie *http.Cookie) (noteTypeID, deckAID, deckBID string) {
+	t.Helper()
+	ctx := context.Background()
+
+	deckPathA := setupDeckAndNoteType(t, handler, ownerCookie)
+	deckAID = strings.TrimPrefix(deckPathA, "/decks/")
+
+	w := doRequest(handler, "POST", "/decks", "name=SecretDeck", ownerCookie, "http://example.com")
+	deckPathB := w.Header().Get("Location")
+	deckBID = strings.TrimPrefix(deckPathB, "/decks/")
+
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+	addNotes(t, handler, ownerCookie, deckPathA, noteTypeID, 1)
+	addNotes(t, handler, ownerCookie, deckPathB, noteTypeID, 1)
+	return noteTypeID, deckAID, deckBID
+}
+
+// renameNoteTypeEditBody builds a pure-rename edit submission against newNoteTypeBody's two
+// fields (Front, Back) and one template -- submitting both fields at their existing ordinals
+// keeps this a non-structural change, so it applies without a confirmation step.
+func renameNoteTypeEditBody(name, frontFieldID, backFieldID, templateID string) url.Values {
+	v := url.Values{}
+	v.Set("name", name)
+	v.Set("css", "")
+	v.Add("field_id[]", frontFieldID)
+	v.Add("field_name[]", "Front")
+	v.Add("field_position[]", "0")
+	v.Add("field_id[]", backFieldID)
+	v.Add("field_name[]", "Back")
+	v.Add("field_position[]", "1")
+	v.Add("template_id[]", templateID)
+	v.Add("template_name[]", "Card 1")
+	v.Add("qfmt[]", "{{Front}}")
+	v.Add("afmt[]", "{{FrontSide}}<hr>{{Back}}")
+	v.Add("template_position[]", "0")
+	return v
+}
+
+func lookupFieldAndTemplate(t *testing.T, tx pgx.Tx, noteTypeID string) (frontFieldID, backFieldID, templateID string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := tx.QueryRow(ctx, `SELECT id FROM fields WHERE note_type_id = $1 AND name = 'Front'`, noteTypeID).Scan(&frontFieldID); err != nil {
+		t.Fatalf("lookup Front field: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `SELECT id FROM fields WHERE note_type_id = $1 AND name = 'Back'`, noteTypeID).Scan(&backFieldID); err != nil {
+		t.Fatalf("lookup Back field: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `SELECT id FROM templates WHERE note_type_id = $1`, noteTypeID).Scan(&templateID); err != nil {
+		t.Fatalf("lookup template: %v", err)
+	}
+	return frontFieldID, backFieldID, templateID
+}
+
+// #192 test 1, the classroom case and the point of the rule: a note type backing notes in decks
+// A and B is WRITABLE only for someone who can edit content in both. A collaborator who can edit
+// content on A alone is denied, and the notetypes list's denial reason must not name B, which
+// they cannot see.
+func TestNoteTypeAccess_ClassroomCase_EditDeniedWithoutNamingInvisibleBlockingDeck(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	ownerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	mateEmail := testEmail()
+	mateCookie := loginCookie(t, tx, a, mateEmail, "correct-horse-battery")
+	ctx := context.Background()
+	mateID := userID(t, ctx, tx, mateEmail)
+
+	noteTypeID, deckAID, _ := setupNoteTypeAcrossTwoDecks(t, tx, handler, ownerCookie)
+	grantEditor(t, tx, deckAID, mateID)
+
+	w := doRequest(handler, "GET", "/note-types", "", mateCookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /note-types status = %d: %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "SecretDeck") {
+		t.Errorf("denial reason must not name deck B, which mate cannot see: %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "1 deck you don&#39;t have access to") {
+		t.Errorf("denial reason should count the invisible blocking deck: %s", w.Body.String())
+	}
+
+	frontID, backID, templateID := lookupFieldAndTemplate(t, tx, noteTypeID)
+	w = doRequest(handler, "POST", "/note-types/"+noteTypeID+"/edit",
+		renameNoteTypeEditBody("Renamed", frontID, backID, templateID).Encode(), mateCookie, "http://example.com")
+	if w.Code != http.StatusNotFound {
+		t.Errorf("edit status = %d, want 404 (deck B blocks WRITABLE)", w.Code)
+	}
+}
+
+// The denial reason can name a visible blocking deck and count an invisible one in the same
+// message -- both branches of noteTypeDenialReason firing together. This is also what
+// cmd/seed's fixtures show for real: "Basic" backs notes in Test Deck A (the collaborator
+// account has no access at all) and Test Deck C (view-only), so its reason on a seeded dev DB
+// reads the same way.
+func TestNoteTypeAccess_ClassroomCase_DenialReasonMixesNamedAndCountedBlockingDecks(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	ownerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	mateEmail := testEmail()
+	mateCookie := loginCookie(t, tx, a, mateEmail, "correct-horse-battery")
+	ctx := context.Background()
+	mateID := userID(t, ctx, tx, mateEmail)
+
+	_, deckAID, _ := setupNoteTypeAcrossTwoDecks(t, tx, handler, ownerCookie)
+	grantViewer(t, tx, deckAID, mateID) // visible (can_view), but not editable -- a named blocker
+
+	w := doRequest(handler, "GET", "/note-types", "", mateCookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /note-types status = %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "D, which you can&#39;t edit content in") {
+		t.Errorf("denial reason should name the visible blocking deck: %s", body)
+	}
+	if !strings.Contains(body, "1 deck you don&#39;t have access to") {
+		t.Errorf("denial reason should also count the invisible blocking deck: %s", body)
+	}
+	if strings.Contains(body, "SecretDeck") {
+		t.Errorf("denial reason must not name deck B, which mate cannot see: %s", body)
+	}
+}
+
+// #192 test 2: the same fixture, but the collaborator can edit content on both A and B -- WRITABLE
+// holds and the edit applies.
+func TestNoteTypeAccess_ClassroomCase_EditAllowedWhenBothDecksEditable(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	ownerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	mateEmail := testEmail()
+	mateCookie := loginCookie(t, tx, a, mateEmail, "correct-horse-battery")
+	ctx := context.Background()
+	mateID := userID(t, ctx, tx, mateEmail)
+
+	noteTypeID, deckAID, deckBID := setupNoteTypeAcrossTwoDecks(t, tx, handler, ownerCookie)
+	grantEditor(t, tx, deckAID, mateID)
+	grantEditor(t, tx, deckBID, mateID)
+
+	frontID, backID, templateID := lookupFieldAndTemplate(t, tx, noteTypeID)
+	w := doRequest(handler, "POST", "/note-types/"+noteTypeID+"/edit",
+		renameNoteTypeEditBody("Renamed", frontID, backID, templateID).Encode(), mateCookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("edit status = %d, want 303: %s", w.Code, w.Body.String())
+	}
+	if n := countRows(t, tx, `SELECT count(*) FROM note_types WHERE id = $1 AND name = 'Renamed'`, noteTypeID); n != 1 {
+		t.Error("rename should have applied")
+	}
+}
+
+// #192 test 3: a note type with zero notes has no decks, so WRITABLE's per-deck requirement is
+// vacuous and falls through to ownership -- the owner may edit, a stranger with no ownership or
+// access may not.
+func TestNoteTypeAccess_ZeroNotes_OwnerCanEditStrangerCannot(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	ownerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	strangerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	ctx := context.Background()
+
+	doRequest(handler, "POST", "/note-types", newNoteTypeBody(), ownerCookie, "http://example.com")
+	var noteTypeID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+	frontID, backID, templateID := lookupFieldAndTemplate(t, tx, noteTypeID)
+
+	w := doRequest(handler, "POST", "/note-types/"+noteTypeID+"/edit",
+		renameNoteTypeEditBody("Stranger Rename", frontID, backID, templateID).Encode(), strangerCookie, "http://example.com")
+	if w.Code != http.StatusNotFound {
+		t.Errorf("stranger edit status = %d, want 404", w.Code)
+	}
+
+	w = doRequest(handler, "POST", "/note-types/"+noteTypeID+"/edit",
+		renameNoteTypeEditBody("Owner Rename", frontID, backID, templateID).Encode(), ownerCookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("owner edit status = %d, want 303: %s", w.Code, w.Body.String())
+	}
+}
+
+// #192 test 4: READABLE only needs can_view on any one deck using the note type, even when it's
+// also used in a deck the caller can't see.
+func TestNoteTypeAccess_Read_CanViewOnOneDeckIsEnough(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	ownerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	mateEmail := testEmail()
+	mateCookie := loginCookie(t, tx, a, mateEmail, "correct-horse-battery")
+	ctx := context.Background()
+	mateID := userID(t, ctx, tx, mateEmail)
+
+	noteTypeID, deckAID, _ := setupNoteTypeAcrossTwoDecks(t, tx, handler, ownerCookie)
+	grantViewer(t, tx, deckAID, mateID)
+
+	w := doRequest(handler, "GET", "/note-types/"+noteTypeID+"/edit", "", mateCookie, "")
+	if w.Code != http.StatusOK {
+		t.Errorf("read status = %d, want 200 (READABLE via deck A alone): %s", w.Code, w.Body.String())
+	}
+}
+
+// #192 test 5: no ownership and no deck_access anywhere on a deck using the note type denies read.
+func TestNoteTypeAccess_Read_DeniedWithNoAccessAnywhere(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	ownerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	strangerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	noteTypeID, _, _ := setupNoteTypeAcrossTwoDecks(t, tx, handler, ownerCookie)
+
+	w := doRequest(handler, "GET", "/note-types/"+noteTypeID+"/edit", "", strangerCookie, "")
+	if w.Code != http.StatusNotFound {
+		t.Errorf("stranger read status = %d, want 404", w.Code)
+	}
+}
+
+// #192 test 6, the revoked-owner case that motivated this rule (issue #192): note_types.owner_id
+// still names the creator, but once their own deck_access row on the note type's only deck is
+// gone, WRITABLE's "or user owns it" fallback does not rescue them -- that fallback only covers a
+// note type backing zero notes. READABLE, which checks ownership unconditionally, still lets them
+// see it.
+func TestNoteTypeAccess_RevokedOwner_EditDeniedReadAllowed(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	ownerEmail := testEmail()
+	ownerCookie := loginCookie(t, tx, a, ownerEmail, "correct-horse-battery")
+	ctx := context.Background()
+	ownerID := userID(t, ctx, tx, ownerEmail)
+
+	deckPath := setupDeckAndNoteType(t, handler, ownerCookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	var noteTypeID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+	addNotes(t, handler, ownerCookie, deckPath, noteTypeID, 1)
+
+	// The scenario issue #192 was filed for: the deck's admin revokes the creator's own access.
+	if _, err := tx.Exec(ctx, `DELETE FROM deck_access WHERE deck_id = $1 AND user_id = $2`, deckID, ownerID); err != nil {
+		t.Fatalf("revoke owner's own access: %v", err)
+	}
+
+	frontID, backID, templateID := lookupFieldAndTemplate(t, tx, noteTypeID)
+	w := doRequest(handler, "POST", "/note-types/"+noteTypeID+"/edit",
+		renameNoteTypeEditBody("Renamed", frontID, backID, templateID).Encode(), ownerCookie, "http://example.com")
+	if w.Code != http.StatusNotFound {
+		t.Errorf("revoked owner edit status = %d, want 404", w.Code)
+	}
+
+	w = doRequest(handler, "GET", "/note-types/"+noteTypeID+"/edit", "", ownerCookie, "")
+	if w.Code != http.StatusOK {
+		t.Errorf("revoked owner read status = %d, want 200 (READABLE via ownership)", w.Code)
+	}
+}
+
+// #192 test 7: ListNoteTypesForNoteForm lets a collaborator with only can_edit_content on someone
+// else's deck select that deck's existing note types on the new-note picker, even though they own
+// none of them -- the live bug this query fixes.
+func TestNoteTypeAccess_NewNoteForm_CollaboratorSeesDecksExistingNoteTypes(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	ownerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	mateEmail := testEmail()
+	mateCookie := loginCookie(t, tx, a, mateEmail, "correct-horse-battery")
+	ctx := context.Background()
+	mateID := userID(t, ctx, tx, mateEmail)
+
+	deckPath := setupDeckAndNoteType(t, handler, ownerCookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	var noteTypeID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+	addNotes(t, handler, ownerCookie, deckPath, noteTypeID, 1)
+	grantEditor(t, tx, deckID, mateID)
+
+	w := doRequest(handler, "GET", deckPath+"/notes/new", "", mateCookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("collaborator GET new-note status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "Basic2") {
+		t.Errorf("collaborator should see the deck's existing note type in the picker: %s", w.Body.String())
+	}
+
+	// The picker offering it is not enough on its own -- CreateNote's authorization must also
+	// accept a READABLE-but-not-owned note type, not just an owned one.
+	noteBody := url.Values{}
+	noteBody.Set("note_type_id", noteTypeID)
+	noteBody.Add("field[]", "collaborator's front")
+	noteBody.Add("field[]", "collaborator's back")
+	w = doRequest(handler, "POST", deckPath+"/notes", noteBody.Encode(), mateCookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("collaborator create-note status = %d, want 303: %s", w.Code, w.Body.String())
+	}
+	if n := countRows(t, tx, `SELECT count(*) FROM notes WHERE note_type_id = $1 AND deck_id = $2`, noteTypeID, deckID); n != 2 {
+		t.Errorf("deck should have 2 notes of this type (owner's + collaborator's), got %d", n)
 	}
 }

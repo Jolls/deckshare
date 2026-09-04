@@ -2,17 +2,19 @@
 <h1>Note types</h1>
 <p><a href="/note-types/new">New note type</a> · <a href="/decks">Back to decks</a></p>
 
-{{if .NoteTypes}}
+{{if .Editable}}
+<h2>Note types you can edit</h2>
 <table>
     <thead>
-        <tr><th>Name</th><th>Cloze</th><th>Notes</th><th></th></tr>
+        <tr><th>Name</th><th>Cloze</th><th>Notes</th><th>Used in</th><th></th></tr>
     </thead>
     <tbody>
-        {{range .NoteTypes}}
+        {{range .Editable}}
         <tr>
             <td>{{.Name}}</td>
             <td>{{if .IsCloze}}yes{{else}}no{{end}}</td>
             <td>{{.NoteCount}}</td>
+            <td>{{.DeckCount}}</td>
             <td>
                 <a href="/note-types/{{.ID}}/edit">Edit</a>
                 <form method="post" action="/note-types/{{.ID}}/delete" style="display:inline">
@@ -23,7 +25,30 @@
         {{end}}
     </tbody>
 </table>
-{{else}}
+{{end}}
+
+{{if .ReadOnly}}
+<h2>Note types in decks you share</h2>
+<table>
+    <thead>
+        <tr><th>Name</th><th>Cloze</th><th>Notes</th><th>Used in</th><th></th></tr>
+    </thead>
+    <tbody>
+        {{range .ReadOnly}}
+        <tr>
+            <td>{{.Name}}</td>
+            <td>{{if .IsCloze}}yes{{else}}no{{end}}</td>
+            <td>{{.NoteCount}}</td>
+            <td>{{.DeckCount}}</td>
+            <td><a href="/note-types/{{.ID}}/edit">View</a></td>
+        </tr>
+        <tr><td colspan="5"><small>{{.Reason}}</small></td></tr>
+        {{end}}
+    </tbody>
+</table>
+{{end}}
+
+{{if not (or .Editable .ReadOnly)}}
 <p>No note types yet.</p>
 {{end}}
 {{end}}

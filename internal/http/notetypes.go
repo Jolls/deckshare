@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"errors"
+	"fmt"
 	"html/template"
 	"net/http"
 	"sort"
@@ -16,15 +17,82 @@ import (
 	"github.com/Jolls/deckshare/internal/db"
 )
 
+// noteTypeListRow is a read-only-section row for the notetypes list: the ordinary listing fields
+// plus the one-line reason it can't be edited (docs/plans/192-note-type-authority.md).
+type noteTypeListRow struct {
+	db.ListNoteTypesForUserRow
+	Reason string
+}
+
+// splitNoteTypesByEdit partitions ListNoteTypesForUser's rows into the two sections
+// notetypes.html renders, computing each read-only row's denial reason from the decks that use
+// it (one extra query per read-only row -- bounded by how many note types a user has, not worth
+// a bulk join).
+func splitNoteTypesByEdit(ctx context.Context, q *db.Queries, userID pgtype.UUID, rows []db.ListNoteTypesForUserRow) (editable []db.ListNoteTypesForUserRow, readOnly []noteTypeListRow, err error) {
+	for _, nt := range rows {
+		if nt.CanEdit.Bool {
+			editable = append(editable, nt)
+			continue
+		}
+		decks, derr := q.ListDecksUsingNoteType(ctx, db.ListDecksUsingNoteTypeParams{UserID: userID, NoteTypeID: nt.ID})
+		if derr != nil {
+			return nil, nil, derr
+		}
+		readOnly = append(readOnly, noteTypeListRow{ListNoteTypesForUserRow: nt, Reason: noteTypeDenialReason(decks)})
+	}
+	return editable, readOnly, nil
+}
+
+// noteTypeDenialReason explains why a note type is read-only, using only the decks that actually
+// block WRITABLE (editable == false) -- a deck the caller can already edit content in is not a
+// reason -- and without leaking the name of a blocking deck the caller can't see: a visible
+// blocking deck is named, an invisible one is only counted.
+func noteTypeDenialReason(decks []db.ListDecksUsingNoteTypeRow) string {
+	var visibleNames []string
+	hidden := 0
+	for _, d := range decks {
+		if d.Editable {
+			continue
+		}
+		if d.Visible {
+			visibleNames = append(visibleNames, d.Name)
+		} else {
+			hidden++
+		}
+	}
+	switch {
+	case len(visibleNames) == 0:
+		return fmt.Sprintf("Also used in %s you don't have access to.", pluralDecks(hidden))
+	case hidden == 0:
+		return fmt.Sprintf("Also used in %s, which you can't edit content in.", strings.Join(visibleNames, ", "))
+	default:
+		return fmt.Sprintf("Also used in %s, which you can't edit content in, and %s you don't have access to.",
+			strings.Join(visibleNames, ", "), pluralDecks(hidden))
+	}
+}
+
+func pluralDecks(n int) string {
+	if n == 1 {
+		return "1 deck"
+	}
+	return fmt.Sprintf("%d decks", n)
+}
+
 func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]*template.Template) {
 	mux.Handle("GET /note-types", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, _ := auth.UserFromContext(r.Context())
-		noteTypes, err := db.New(store).ListNoteTypesForOwner(r.Context(), user.ID)
+		q := db.New(store)
+		noteTypes, err := q.ListNoteTypesForUser(r.Context(), user.ID)
 		if err != nil {
 			serverError(w)
 			return
 		}
-		render(w, pages["notetypes"], http.StatusOK, map[string]any{"User": user, "NoteTypes": noteTypes})
+		editable, readOnly, err := splitNoteTypesByEdit(r.Context(), q, user.ID, noteTypes)
+		if err != nil {
+			serverError(w)
+			return
+		}
+		render(w, pages["notetypes"], http.StatusOK, map[string]any{"User": user, "Editable": editable, "ReadOnly": readOnly})
 	})))
 
 	mux.Handle("GET /note-types/new", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +165,7 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 			return
 		}
 		q := db.New(store)
-		nt, err := q.GetNoteTypeForOwner(r.Context(), db.GetNoteTypeForOwnerParams{ID: id, OwnerID: user.ID})
+		nt, err := q.GetNoteTypeForRead(r.Context(), db.GetNoteTypeForReadParams{ID: id, UserID: user.ID})
 		if handleQueryErrPage(w, pages, user, err) {
 			return
 		}
@@ -111,8 +179,13 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 			serverError(w)
 			return
 		}
+		canEdit, err := q.CanEditNoteType(r.Context(), db.CanEditNoteTypeParams{ID: id, UserID: user.ID})
+		if err != nil {
+			serverError(w)
+			return
+		}
 		render(w, pages["notetype_form"], http.StatusOK, map[string]any{
-			"User": user, "NoteType": nt, "Fields": fields, "Templates": templates,
+			"User": user, "NoteType": nt, "Fields": fields, "Templates": templates, "CanEdit": canEdit.Bool,
 		})
 	})))
 
@@ -153,7 +226,7 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		}
 
 		q := db.New(store)
-		nt, err := q.GetNoteTypeForOwner(r.Context(), db.GetNoteTypeForOwnerParams{ID: id, OwnerID: user.ID})
+		nt, err := q.LockNoteTypeForEdit(r.Context(), db.LockNoteTypeForEditParams{ID: id, UserID: user.ID})
 		if handleQueryErrPage(w, pages, user, err) {
 			return
 		}
@@ -388,10 +461,12 @@ func previewTemplates(templates []db.TemplateEdit) []previewTemplateRow {
 }
 
 // structuralChangePreview is the #89 confirmation page's data: what a structural field/template
-// change will discard or add, computed once before the user confirms.
+// change will discard or add, computed once before the user confirms. AffectedDeckNames is safe
+// to render unconditionally: reaching this page requires WRITABLE, which implies can_view on
+// every deck holding a note that uses this note type (docs/plans/192-note-type-authority.md).
 type structuralChangePreview struct {
 	NoteCount            int64
-	DeckCount            int64
+	AffectedDeckNames    []string
 	OtherUserCount       int64
 	RemovedFieldNames    []string
 	RemovedTemplateNames []string
@@ -401,14 +476,22 @@ type structuralChangePreview struct {
 }
 
 func buildStructuralChangePreview(
-	ctx context.Context, q *db.Queries, ownerID, noteTypeID pgtype.UUID,
+	ctx context.Context, q *db.Queries, userID, noteTypeID pgtype.UUID,
 	existingFields []db.Field, fields []db.FieldEdit,
 	existingTemplates []db.Template, templates []db.TemplateEdit,
 	noteCount int64,
 ) (structuralChangePreview, error) {
-	summary, err := q.NoteTypeImpactSummary(ctx, db.NoteTypeImpactSummaryParams{NoteTypeID: noteTypeID, OwnerID: ownerID})
+	otherUserCount, err := q.NoteTypeOtherUserCount(ctx, db.NoteTypeOtherUserCountParams{NoteTypeID: noteTypeID, OwnerID: userID})
 	if err != nil {
 		return structuralChangePreview{}, err
+	}
+	decksUsingNT, err := q.ListDecksUsingNoteType(ctx, db.ListDecksUsingNoteTypeParams{UserID: userID, NoteTypeID: noteTypeID})
+	if err != nil {
+		return structuralChangePreview{}, err
+	}
+	deckNames := make([]string, len(decksUsingNT))
+	for i, d := range decksUsingNT {
+		deckNames[i] = d.Name
 	}
 
 	submittedFieldIDs := make(map[pgtype.UUID]bool, len(fields))
@@ -456,8 +539,8 @@ func buildStructuralChangePreview(
 
 	return structuralChangePreview{
 		NoteCount:            noteCount,
-		DeckCount:            summary.DeckCount,
-		OtherUserCount:       summary.OtherUserCount,
+		AffectedDeckNames:    deckNames,
+		OtherUserCount:       otherUserCount,
 		RemovedFieldNames:    removedFieldNames,
 		RemovedTemplateNames: removedTemplateNames,
 		RemovedCardCount:     removedCardCount,

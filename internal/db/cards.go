@@ -140,7 +140,7 @@ type AddedTemplate struct {
 // runs) -- both are guaranteed vacated by the time add runs. Finalize must be last, once every
 // other phase has settled which ordinals are actually free.
 //
-// Must be called inside a transaction that already holds LockNoteTypeForOwner's row lock on the
+// Must be called inside a transaction that already holds LockNoteTypeForEdit's row lock on the
 // note type. The caller commits.
 func RemapNoteTypeCards(ctx context.Context, tx pgx.Tx, noteTypeID pgtype.UUID, changed []TemplateOrdinalChange, removed []pgtype.UUID, added []AddedTemplate) error {
 	q := New(tx)

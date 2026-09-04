@@ -19,9 +19,9 @@ func TestSignup_SeedsDefaultNoteTypes(t *testing.T) {
 	}
 
 	q := db.New(tx)
-	noteTypes, err := q.ListNoteTypesForOwner(ctx, user.ID)
+	noteTypes, err := q.ListNoteTypesForUser(ctx, user.ID)
 	if err != nil {
-		t.Fatalf("ListNoteTypesForOwner: %v", err)
+		t.Fatalf("ListNoteTypesForUser: %v", err)
 	}
 	if len(noteTypes) != 2 {
 		t.Fatalf("got %d note types, want 2 (Basic, Cloze)", len(noteTypes))
