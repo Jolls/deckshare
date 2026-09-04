@@ -1,9 +1,9 @@
 {{define "content"}}
 {{if .ConfirmStructuralChange}}
 <h1>Confirm note type change</h1>
-<p>This note type has {{.Preview.NoteCount}} note(s) across {{.Preview.DeckCount}} deck(s)
-   {{if gt .Preview.OtherUserCount 0}}, {{.Preview.OtherUserCount}} of them shared with other users
-   whose scheduling progress will also be affected{{end}}.</p>
+<p>This note type has {{.Preview.NoteCount}} note(s) across
+   {{range $i, $name := .Preview.AffectedDeckNames}}{{if $i}}, {{end}}{{$name}}{{end}}
+   {{if gt .Preview.OtherUserCount 0}} ({{.Preview.OtherUserCount}} other user(s) also study these decks){{end}}.</p>
 
 {{if .Preview.RemovedFieldNames}}
 <p><strong>Removing field(s) {{range .Preview.RemovedFieldNames}}"{{.}}" {{end}}will permanently
@@ -71,6 +71,36 @@
 
     <button type="submit">Create note type</button>
 </form>
+{{else if not .CanEdit}}
+<h1>{{.NoteType.Name}}</h1>
+<p>You can view this note type but not edit it: it's also used in a deck you can't edit content
+   in.</p>
+
+<label for="css">CSS</label>
+<textarea id="css" readonly>{{.NoteType.Css}}</textarea>
+
+<label>
+    <input type="checkbox" disabled {{if .NoteType.IsCloze}}checked{{end}}>
+    Cloze note type
+</label>
+
+<fieldset>
+    <legend>Fields</legend>
+    {{range .Fields}}<div>{{.Name}}</div>{{end}}
+</fieldset>
+
+<fieldset>
+    <legend>Templates</legend>
+    {{range .Templates}}
+    <div>
+        <p>{{.Name}}</p>
+        <label>Question format</label>
+        <textarea readonly>{{.Qfmt}}</textarea>
+        <label>Answer format</label>
+        <textarea readonly>{{.Afmt}}</textarea>
+    </div>
+    {{end}}
+</fieldset>
 {{else}}
 <h1>Edit note type</h1>
 <form method="post" action="/note-types/{{.NoteType.ID}}/edit">

@@ -1,10 +1,22 @@
-// Command seed populates a freshly-migrated local database with a test user, two test decks,
+// Command seed populates a freshly-migrated local database with a test user, several test decks,
 // and a few sample notes/cards in each -- so a manually-tested or reset dev DB has something to
 // review, not just empty decks. Signup already seeds the user's Basic/Cloze note types
 // (internal/auth/notetypes.go); this adds decks and notes on top. It also creates a second test
-// user and a third deck shared between them, so the deck access management page (#83) has a
-// collaborator row to show without granting access by hand. Safe to re-run: an already-seeded
-// deck (non-zero card count) is left alone, and an existing access grant is left alone too.
+// user and two decks shared between them, so the deck access management page (#83) and the
+// note-type-authority split (#192, docs/plans/192-note-type-authority.md) both have something to
+// show without granting access by hand:
+//
+//   - Test Deck C (Shared): collaborator has can_view+can_study only. Its notes use "Basic",
+//     which is also used in owner-only Test Deck A -- so for the collaborator, "Basic" is
+//     READABLE (via Deck C) but not WRITABLE, and its notetypes-list denial reason exercises
+//     both branches at once: Deck C is visible but not editable (named), Deck A is invisible
+//     entirely (only counted).
+//   - Test Deck D (Shared, Editable): collaborator has full can_edit_content there, and it is
+//     the only deck using the dedicated "Vocab" note type -- WRITABLE for the collaborator, so
+//     "Vocab" shows up in their editable section with a working Edit link.
+//
+// Safe to re-run: an already-seeded deck (non-zero card count) is left alone, and an existing
+// access grant or note type is left alone too.
 package main
 
 import (
@@ -50,6 +62,8 @@ const (
 	basicDeckName  = "Test Deck A"
 	clozeDeckName  = "Test Deck B"
 	sharedDeckName = "Test Deck C (Shared)"
+	vocabDeckName  = "Test Deck D (Shared, Editable)"
+	vocabTypeName  = "Vocab"
 
 	// Small caps so a fresh seed exercises #172's daily-cap / "Keep studying" path without
 	// requiring dozens of reviews first.
@@ -124,10 +138,14 @@ func run() error {
 		log.Print("test user already has an avatar, skipping avatar seeding")
 	}
 
-	for _, name := range []string{basicDeckName, clozeDeckName, sharedDeckName} {
+	for _, name := range []string{basicDeckName, clozeDeckName, sharedDeckName, vocabDeckName} {
 		if err := ensureDeck(ctx, pool, user.ID, name); err != nil {
 			return fmt.Errorf("ensure deck %q: %w", name, err)
 		}
+	}
+	if err := ensureNoteType(ctx, pool, user.ID, vocabTypeName, baseCardCSS,
+		[]string{"Word", "Definition"}, "Card 1", "{{Word}}", "{{FrontSide}}<hr>{{Definition}}"); err != nil {
+		return fmt.Errorf("ensure %s note type: %w", vocabTypeName, err)
 	}
 
 	q := db.New(pool)
@@ -135,7 +153,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("list decks: %w", err)
 	}
-	noteTypes, err := q.ListNoteTypesForOwner(ctx, user.ID)
+	noteTypes, err := q.ListNoteTypesForUser(ctx, user.ID)
 	if err != nil {
 		return fmt.Errorf("list note types: %w", err)
 	}
@@ -205,12 +223,45 @@ func run() error {
 	}
 
 	// Read-only-ish grant: enough to exercise the access page's varied flags (#83) without
-	// also handing the collaborator can_manage_access or can_delete.
+	// also handing the collaborator can_manage_access or can_delete. Deliberately no
+	// can_edit_content -- combined with Deck A below (no access at all), this makes "Basic"
+	// not WRITABLE for the collaborator, exercising both branches of the #192 notetypes-list
+	// denial reason at once (docs/plans/192-note-type-authority.md): Deck C is visible but not
+	// editable (named in the reason), Deck A is invisible entirely (only counted).
 	if err := ensureDeckAccess(ctx, pool, db.GrantDeckAccessParams{
 		DeckID: sharedDeck.ID, CallerUserID: user.ID, TargetUserID: collaborator.ID,
 		CanView: true, CanStudy: true,
 	}); err != nil {
 		return fmt.Errorf("ensure collaborator access to %q: %w", sharedDeckName, err)
+	}
+
+	vocabDeck, ok := findDeck(decks, vocabDeckName)
+	if !ok {
+		return fmt.Errorf("deck %q not found after ensureDeck", vocabDeckName)
+	}
+	vocabType, ok := findNoteType(noteTypes, vocabTypeName)
+	if !ok {
+		return fmt.Errorf("note type %q not found after ensureNoteType", vocabTypeName)
+	}
+	if vocabDeck.CardCount == 0 {
+		if err := seedSampleNotes(ctx, pool, user.ID, vocabDeck.ID, vocabType.ID, vocabTypeName, vocabSamples); err != nil {
+			return fmt.Errorf("seed vocab notes: %w", err)
+		}
+		log.Printf("seeded sample notes in %s", vocabDeckName)
+		if err := seedDueCards(ctx, pool, user.ID, vocabDeck.ID, seedDueCardCount); err != nil {
+			return fmt.Errorf("seed due cards in %s: %w", vocabDeckName, err)
+		}
+	} else {
+		log.Printf("%s already has cards, skipping note seeding", vocabDeckName)
+	}
+
+	// Full content-edit grant, and Vocab is used nowhere else -- WRITABLE for the collaborator
+	// (#192), so their notetypes list shows Vocab as editable with a working Edit link.
+	if err := ensureDeckAccess(ctx, pool, db.GrantDeckAccessParams{
+		DeckID: vocabDeck.ID, CallerUserID: user.ID, TargetUserID: collaborator.ID,
+		CanView: true, CanStudy: true, CanEditContent: true,
+	}); err != nil {
+		return fmt.Errorf("ensure collaborator access to %q: %w", vocabDeckName, err)
 	}
 
 	return nil
@@ -322,6 +373,33 @@ func ensureDeck(ctx context.Context, pool *pgxpool.Pool, ownerID pgtype.UUID, na
 	return nil
 }
 
+// ensureNoteType creates a single-template, non-cloze note type for the owner if one of that
+// name doesn't already exist -- the #192 demo fixtures need a note type distinct from the
+// signup-seeded Basic/Cloze pair. Safe to re-run: an existing note type of the same name is left
+// alone, CSS included (matching ensureDeck/ensureNoteTypeCSS's re-run tolerance).
+func ensureNoteType(ctx context.Context, pool *pgxpool.Pool, ownerID pgtype.UUID, name, css string, fieldNames []string, templateName, qfmt, afmt string) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	_, err = db.CreateNoteTypeWithFieldsAndTemplates(ctx, tx, ownerID, name, css, false, 0, fieldNames,
+		[]db.TemplateEdit{{Name: templateName, Qfmt: qfmt, Afmt: afmt}})
+	if err != nil {
+		if db.IsUniqueViolation(err, "note_types_owner_id_name_key") {
+			log.Printf("note type already exists: %s", name)
+			return nil
+		}
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	log.Printf("created note type: %s", name)
+	return nil
+}
+
 // seedDueCards puts the first n of deckID's cards into Review state, due on seedDueDate, for
 // userID -- so a fresh deck has a couple of genuinely due cards to review, not just New ones.
 // ON CONFLICT DO NOTHING: never overwrites real progress from manual testing on a deck that
@@ -370,25 +448,25 @@ func findDeck(decks []db.ListDecksForUserRow, name string) (db.ListDecksForUserR
 
 // ensureNoteTypeCSS backfills a note type's CSS the first time seed runs against it, then leaves
 // it alone -- re-running seed must not clobber CSS someone edited by hand in the running app.
-func ensureNoteTypeCSS(ctx context.Context, q *db.Queries, nt db.ListNoteTypesForOwnerRow, wantCSS string) error {
+func ensureNoteTypeCSS(ctx context.Context, q *db.Queries, nt db.ListNoteTypesForUserRow, wantCSS string) error {
 	if nt.Css != "" {
 		return nil
 	}
 	if _, err := q.UpdateNoteTypeRow(ctx, db.UpdateNoteTypeRowParams{
-		Name: nt.Name, Css: wantCSS, SortFieldIdx: nt.SortFieldIdx, ID: nt.ID, OwnerID: nt.OwnerID,
+		Name: nt.Name, Css: wantCSS, SortFieldIdx: nt.SortFieldIdx, ID: nt.ID, UserID: nt.OwnerID,
 	}); err != nil {
 		return fmt.Errorf("update note type css: %w", err)
 	}
 	return nil
 }
 
-func findNoteType(noteTypes []db.ListNoteTypesForOwnerRow, name string) (db.ListNoteTypesForOwnerRow, bool) {
+func findNoteType(noteTypes []db.ListNoteTypesForUserRow, name string) (db.ListNoteTypesForUserRow, bool) {
 	for _, nt := range noteTypes {
 		if nt.Name == name {
 			return nt, true
 		}
 	}
-	return db.ListNoteTypesForOwnerRow{}, false
+	return db.ListNoteTypesForUserRow{}, false
 }
 
 // basicSamples has more than DefaultNewPerDay (20, internal/review/preset.go) entries so a fresh
@@ -445,6 +523,18 @@ var clozeSamples = [][2]string{
 	{"The plural of mouse is {{c1::mice}}", ""},
 	{"Gravity pulls objects toward {{c1::Earth}}", ""},
 	{"The freezing point of water is {{c1::0}} degrees Celsius", ""},
+}
+
+// vocabSamples is Word/Definition-shaped, for the dedicated "Vocab" note type (#192 demo).
+var vocabSamples = [][2]string{
+	{"Ephemeral", "Lasting for a very short time"},
+	{"Ubiquitous", "Present, appearing, or found everywhere"},
+	{"Serendipity", "The occurrence of events by chance in a happy way"},
+	{"Mellifluous", "Sweet or musical; pleasant to hear"},
+	{"Pernicious", "Having a harmful effect, especially gradually"},
+	{"Cacophony", "A harsh, discordant mixture of sounds"},
+	{"Ineffable", "Too great to be expressed in words"},
+	{"Quintessential", "Representing the most perfect example of a quality"},
 }
 
 func seedSampleNotes(ctx context.Context, pool *pgxpool.Pool, userID, deckID, noteTypeID pgtype.UUID, typeName string, samples [][2]string) error {

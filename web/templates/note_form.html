@@ -19,7 +19,15 @@
 <form method="get" action="/decks/{{.Deck.ID}}/notes/new">
     <label for="note_type_id">Note type</label>
     <select id="note_type_id" name="note_type_id" required>
-        {{range .NoteTypes}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+        {{$inDeck := false}}
+        {{$other := false}}
+        {{range .NoteTypes}}{{if .InThisDeck}}{{$inDeck = true}}{{else}}{{$other = true}}{{end}}{{end}}
+        {{if $inDeck}}<optgroup label="Used in this deck">
+            {{range .NoteTypes}}{{if .InThisDeck}}<option value="{{.ID}}">{{.Name}}</option>{{end}}{{end}}
+        </optgroup>{{end}}
+        {{if $other}}<optgroup label="Other note types">
+            {{range .NoteTypes}}{{if not .InThisDeck}}<option value="{{.ID}}">{{.Name}}</option>{{end}}{{end}}
+        </optgroup>{{end}}
     </select>
     <button type="submit">Continue</button>
 </form>

@@ -341,8 +341,9 @@ func TestNotePreview_CSSIsSanitised(t *testing.T) {
 // TestNotePreview_SharedDeck_CollaboratorCanPreview is the regression test for the shared-deck
 // preview bug: buildNotePreview used to resolve the note's *current* note type with
 // GetNoteTypeForOwner, so a collaborator editing a note on someone else's deck always got
-// pgx.ErrNoRows -> 404, even though Save on the same form worked. The note-type lookup now
-// mirrors POST /notes/{id}/edit -- unscoped for the current note type, owner-scoped for a change.
+// pgx.ErrNoRows -> 404, even though Save on the same form worked. The note-type lookup is now
+// READABLE-scoped (GetNoteTypeForRead, docs/plans/192-note-type-authority.md) for both the
+// current note type and any note-type-change target.
 func TestNotePreview_SharedDeck_CollaboratorCanPreview(t *testing.T) {
 	tx := beginTx(t)
 	handler, a := newTestHandler(t, tx, auth.Config{})

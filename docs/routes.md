@@ -63,26 +63,30 @@ contract for `POST /api/reviews/batch` is pinned down there in full and is not r
 
 ## Note types — `notetypes.go` (Phase 1, step 5) -- built (#54)
 
-Owner-scoped (`note_types.owner_id`), not deck-scoped — a note type is reusable across all of
-its owner's decks.
+`note_types.owner_id` is a namespace key only (`UNIQUE (owner_id, name)`, re-import idempotence)
+— it is never consulted for authorization. Authority instead derives from the decks whose notes
+use the note type (docs/plans/192-note-type-authority.md), so a note type is reusable across
+every deck that can reach it, not just its owner's:
+
+- **READABLE** (read access below): owns it, or holds `can_view` on any deck holding a note that
+  uses it.
+- **WRITABLE** (write access below): holds `can_view`+`can_edit_content` on *every* deck holding
+  a note that uses it, and (some note uses it, or the caller owns it) — a note type backing zero
+  notes has no decks to check, so WRITABLE there falls through to ownership.
 
 | Method | Path | Access | Purpose |
 |---|---|---|---|
-| GET | `/note-types` | owns row | List the caller's own note types |
+| GET | `/note-types` | READABLE | List note types: an editable section (WRITABLE) and a read-only section for the rest, each read-only row explaining why (a blocking deck named if visible, counted if not) |
 | GET | `/note-types/new` | — | New note-type form (fields + templates builder) |
 | POST | `/note-types` | — | Create |
-| GET | `/note-types/{id}/edit` | owns row | Edit form |
-| POST | `/note-types/{id}/edit` | owns row | Update name/css and remap fields/templates: rename, reorder, remove, and add, in any combination (#89). **A removal or reorder while the note type has any notes shows a confirmation page** (note/deck/other-user counts, what's discarded) before applying — a field removal permanently discards that field's content from every note; a template removal hard-deletes its cards (`user_card_state` cascades, `review_log` survives orphaned). Applies immediately, no confirmation, for a pure rename/append or for any change while the note type has zero notes |
-| POST | `/note-types/{id}/delete` | owns row | Delete — blocked while any note references it, enforced by `notes.note_type_id ON DELETE RESTRICT`; `fields` and `templates` cascade |
+| GET | `/note-types/{id}/edit` | READABLE | Edit form if WRITABLE, else a read-only view (fields/templates/CSS shown, no submit) |
+| POST | `/note-types/{id}/edit` | WRITABLE | Update name/css and remap fields/templates: rename, reorder, remove, and add, in any combination (#89). **A removal or reorder while the note type has any notes shows a confirmation page** (note count, the affected decks by name — safe by construction, WRITABLE implies `can_view` on all of them — and other-user count, what's discarded) before applying — a field removal permanently discards that field's content from every note; a template removal hard-deletes its cards (`user_card_state` cascades, `review_log` survives orphaned). Applies immediately, no confirmation, for a pure rename/append or for any change while the note type has zero notes |
+| POST | `/note-types/{id}/delete` | owns row | Delete — stays owner-scoped rather than WRITABLE (a note type with no notes has no decks, so WRITABLE would fall through to the owner anyway, and staying owner-scoped keeps the existing `notes.note_type_id ON DELETE RESTRICT` 23503 -> 409 error shape instead of a 404); `fields` and `templates` cascade |
 
-**Open question — not a route table decision, needs a call before Milestone 2's deck sharing:**
-rendering a note
-in a shared deck requires reading its note type's fields/templates, but `note_types` has no
-`deck_access`-style row — only `owner_id`. A user with only `can_view`/`can_study` on a deck
-whose notes use someone else's note type currently has no path to read it. Either note-type
-read needs a second authorization path ("owns it, OR it backs a note in a deck I have access
-to"), or note types need to be copied/forked into the sharing deck's own scope on first share.
-Neither is decided.
+**The frozen case** — a note type spanning two decks with no common editor, reachable via
+`MoveNote` — denies WRITABLE to everyone, including the owner. Fail-closed and accepted for now;
+the escape hatch ("make a copy for this deck") is tracked separately in
+[#203](https://github.com/Jolls/deckshare/issues/203).
 
 ---
 
@@ -223,11 +227,8 @@ Mirrors architecture.md §11 "Explicitly not doing":
 
 ## Open questions
 
-Collected from above, so they're visible in one place:
-
-1. **Note-type read access under sharing** (Notes/note-types section) — a user with only
-   `can_view`/`can_study` on a deck has no read path to a note type they don't own that backs
-   one of its notes.
+None currently — the last one (note-type read access under sharing) was resolved by
+docs/plans/192-note-type-authority.md; see the note-types section above.
 
 **Explicitly not routed:** no account-deletion route. User deletion is blocked at the FK level
 by design ([#51](https://github.com/Jolls/deckshare/issues/51)) — a user's decks, notes, note types,

@@ -11,6 +11,34 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const canEditNoteType = `-- name: CanEditNoteType :one
+SELECT
+  NOT EXISTS (
+    SELECT 1 FROM (SELECT DISTINCT n.deck_id FROM notes n WHERE n.note_type_id = nt.id) d
+    WHERE NOT EXISTS (
+      SELECT 1 FROM deck_access da
+      WHERE da.deck_id = d.deck_id AND da.user_id = $1
+        AND da.can_view AND da.can_edit_content))
+  AND (EXISTS (SELECT 1 FROM notes n WHERE n.note_type_id = nt.id) OR nt.owner_id = $1)
+  AS can_edit
+FROM note_types nt WHERE nt.id = $2
+`
+
+type CanEditNoteTypeParams struct {
+	UserID pgtype.UUID
+	ID     pgtype.UUID
+}
+
+// Non-locking WRITABLE check for display purposes only -- e.g. GET /note-types/{id}/edit
+// deciding between the edit form and the read-only view. The real edit transaction still
+// re-acquires LockNoteTypeForEdit's row lock properly; this must never gate a write.
+func (q *Queries) CanEditNoteType(ctx context.Context, arg CanEditNoteTypeParams) (pgtype.Bool, error) {
+	row := q.db.QueryRow(ctx, canEditNoteType, arg.UserID, arg.ID)
+	var can_edit pgtype.Bool
+	err := row.Scan(&can_edit)
+	return can_edit, err
+}
+
 const countNotesOfNoteType = `-- name: CountNotesOfNoteType :one
 SELECT count(*) FROM notes WHERE note_type_id = $1
 `
@@ -66,7 +94,10 @@ type DeleteNoteTypeParams struct {
 }
 
 // notes.note_type_id ON DELETE RESTRICT blocks this while any note exists (routes.md);
-// fields and templates cascade. The handler turns 23503 into 409.
+// fields and templates cascade. The handler turns 23503 into 409. Delete stays owner-scoped: a
+// note type with no notes has no decks, so WRITABLE would fall through to the owner anyway
+// (docs/plans/192-note-type-authority.md), and staying owner-scoped keeps the existing 23503 ->
+// 409 error shape rather than a 404.
 func (q *Queries) DeleteNoteType(ctx context.Context, arg DeleteNoteTypeParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteNoteType, arg.ID, arg.OwnerID)
 	if err != nil {
@@ -94,17 +125,25 @@ func (q *Queries) GetNoteType(ctx context.Context, id pgtype.UUID) (NoteType, er
 	return i, err
 }
 
-const getNoteTypeForOwner = `-- name: GetNoteTypeForOwner :one
-SELECT id, owner_id, name, css, is_cloze, sort_field_idx, anki_id FROM note_types WHERE id = $1 AND owner_id = $2
+const getNoteTypeForRead = `-- name: GetNoteTypeForRead :one
+SELECT nt.id, nt.owner_id, nt.name, nt.css, nt.is_cloze, nt.sort_field_idx, nt.anki_id FROM note_types nt
+WHERE nt.id = $1
+  AND (
+    nt.owner_id = $2
+    OR EXISTS (
+      SELECT 1 FROM notes n
+      JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = $2 AND da.can_view
+      WHERE n.note_type_id = nt.id)
+  )
 `
 
-type GetNoteTypeForOwnerParams struct {
-	ID      pgtype.UUID
-	OwnerID pgtype.UUID
+type GetNoteTypeForReadParams struct {
+	ID     pgtype.UUID
+	UserID pgtype.UUID
 }
 
-func (q *Queries) GetNoteTypeForOwner(ctx context.Context, arg GetNoteTypeForOwnerParams) (NoteType, error) {
-	row := q.db.QueryRow(ctx, getNoteTypeForOwner, arg.ID, arg.OwnerID)
+func (q *Queries) GetNoteTypeForRead(ctx context.Context, arg GetNoteTypeForReadParams) (NoteType, error) {
+	row := q.db.QueryRow(ctx, getNoteTypeForRead, arg.ID, arg.UserID)
 	var i NoteType
 	err := row.Scan(
 		&i.ID,
@@ -118,9 +157,73 @@ func (q *Queries) GetNoteTypeForOwner(ctx context.Context, arg GetNoteTypeForOwn
 	return i, err
 }
 
-const listFieldCompatibleNoteTypesForOwner = `-- name: ListFieldCompatibleNoteTypesForOwner :many
+const listDecksUsingNoteType = `-- name: ListDecksUsingNoteType :many
+SELECT d.id AS deck_id, d.name,
+  EXISTS (
+    SELECT 1 FROM deck_access da WHERE da.deck_id = d.id AND da.user_id = $1 AND da.can_view
+  ) AS visible,
+  EXISTS (
+    SELECT 1 FROM deck_access da
+    WHERE da.deck_id = d.id AND da.user_id = $1 AND da.can_view AND da.can_edit_content
+  ) AS editable
+FROM decks d
+WHERE d.id IN (SELECT DISTINCT n.deck_id FROM notes n WHERE n.note_type_id = $2)
+ORDER BY d.name
+`
+
+type ListDecksUsingNoteTypeParams struct {
+	UserID     pgtype.UUID
+	NoteTypeID pgtype.UUID
+}
+
+type ListDecksUsingNoteTypeRow struct {
+	DeckID   pgtype.UUID
+	Name     string
+	Visible  bool
+	Editable bool
+}
+
+// The decks whose notes use note_type_id, for the structural-change confirmation page and the
+// notetypes list's denial messages. visible = the caller holds can_view on that deck (whether or
+// not the name may be rendered -- the caller must not render name when visible is false).
+// editable = the caller holds can_view+can_edit_content, i.e. this deck alone does not block
+// WRITABLE; a row with editable false is one of the (possibly several) decks actually blocking
+// the caller's edit. On the confirmation page every row has both true -- reaching it requires
+// WRITABLE, which implies can_view+can_edit_content on every deck using the note type.
+func (q *Queries) ListDecksUsingNoteType(ctx context.Context, arg ListDecksUsingNoteTypeParams) ([]ListDecksUsingNoteTypeRow, error) {
+	rows, err := q.db.Query(ctx, listDecksUsingNoteType, arg.UserID, arg.NoteTypeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDecksUsingNoteTypeRow
+	for rows.Next() {
+		var i ListDecksUsingNoteTypeRow
+		if err := rows.Scan(
+			&i.DeckID,
+			&i.Name,
+			&i.Visible,
+			&i.Editable,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFieldCompatibleNoteTypesForUser = `-- name: ListFieldCompatibleNoteTypesForUser :many
 SELECT nt.id, nt.owner_id, nt.name, nt.css, nt.is_cloze, nt.sort_field_idx, nt.anki_id FROM note_types nt
-WHERE nt.owner_id = $1
+WHERE (
+    nt.owner_id = $1
+    OR EXISTS (
+      SELECT 1 FROM notes n
+      JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = $1 AND da.can_view
+      WHERE n.note_type_id = nt.id)
+  )
   AND nt.is_cloze = $2
   AND (SELECT array_agg(f.name ORDER BY f.ordinal) FROM fields f WHERE f.note_type_id = nt.id)
       = (SELECT array_agg(f2.name ORDER BY f2.ordinal) FROM fields f2
@@ -128,18 +231,18 @@ WHERE nt.owner_id = $1
 ORDER BY nt.name
 `
 
-type ListFieldCompatibleNoteTypesForOwnerParams struct {
-	OwnerID           pgtype.UUID
+type ListFieldCompatibleNoteTypesForUserParams struct {
+	UserID            pgtype.UUID
 	IsCloze           bool
 	CurrentNoteTypeID pgtype.UUID
 }
 
-// Note types owned by owner_id that a note currently on current_note_type_id could switch to
+// Note types readable by user_id that a note currently on current_note_type_id could switch to
 // without cross-field-set remapping (#138 v1): same is_cloze flag, and the same field names in
 // the same ordinal order. Deliberately includes current_note_type_id itself (harmless no-op
 // selection) so the caller/template doesn't need a special case to pre-select the current value.
-func (q *Queries) ListFieldCompatibleNoteTypesForOwner(ctx context.Context, arg ListFieldCompatibleNoteTypesForOwnerParams) ([]NoteType, error) {
-	rows, err := q.db.Query(ctx, listFieldCompatibleNoteTypesForOwner, arg.OwnerID, arg.IsCloze, arg.CurrentNoteTypeID)
+func (q *Queries) ListFieldCompatibleNoteTypesForUser(ctx context.Context, arg ListFieldCompatibleNoteTypesForUserParams) ([]NoteType, error) {
+	rows, err := q.db.Query(ctx, listFieldCompatibleNoteTypesForUser, arg.UserID, arg.IsCloze, arg.CurrentNoteTypeID)
 	if err != nil {
 		return nil, err
 	}
@@ -166,12 +269,24 @@ func (q *Queries) ListFieldCompatibleNoteTypesForOwner(ctx context.Context, arg 
 	return items, nil
 }
 
-const listNoteTypesForOwner = `-- name: ListNoteTypesForOwner :many
-SELECT nt.id, nt.owner_id, nt.name, nt.css, nt.is_cloze, nt.sort_field_idx, nt.anki_id, (SELECT count(*) FROM notes n WHERE n.note_type_id = nt.id) AS note_count
-FROM note_types nt WHERE nt.owner_id = $1 ORDER BY nt.name
+const listNoteTypesForNoteForm = `-- name: ListNoteTypesForNoteForm :many
+SELECT nt.id, nt.owner_id, nt.name, nt.css, nt.is_cloze, nt.sort_field_idx, nt.anki_id,
+  (SELECT count(*) FROM notes n WHERE n.note_type_id = nt.id AND n.deck_id = $1) > 0 AS in_this_deck
+FROM note_types nt
+WHERE nt.owner_id = $2
+   OR EXISTS (
+     SELECT 1 FROM notes n
+     JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = $2 AND da.can_view
+     WHERE n.note_type_id = nt.id)
+ORDER BY in_this_deck DESC, nt.name
 `
 
-type ListNoteTypesForOwnerRow struct {
+type ListNoteTypesForNoteFormParams struct {
+	DeckID pgtype.UUID
+	UserID pgtype.UUID
+}
+
+type ListNoteTypesForNoteFormRow struct {
 	ID           pgtype.UUID
 	OwnerID      pgtype.UUID
 	Name         string
@@ -179,18 +294,21 @@ type ListNoteTypesForOwnerRow struct {
 	IsCloze      bool
 	SortFieldIdx int32
 	AnkiID       pgtype.Int8
-	NoteCount    int64
+	InThisDeck   bool
 }
 
-func (q *Queries) ListNoteTypesForOwner(ctx context.Context, ownerID pgtype.UUID) ([]ListNoteTypesForOwnerRow, error) {
-	rows, err := q.db.Query(ctx, listNoteTypesForOwner, ownerID)
+// The READABLE note types for deck_id's new-note-form picker, flagging which ones a note in
+// deck_id already uses -- lets a collaborator with only can_edit_content on someone else's deck
+// select that deck's existing note types even though they own none of them.
+func (q *Queries) ListNoteTypesForNoteForm(ctx context.Context, arg ListNoteTypesForNoteFormParams) ([]ListNoteTypesForNoteFormRow, error) {
+	rows, err := q.db.Query(ctx, listNoteTypesForNoteForm, arg.DeckID, arg.UserID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListNoteTypesForOwnerRow
+	var items []ListNoteTypesForNoteFormRow
 	for rows.Next() {
-		var i ListNoteTypesForOwnerRow
+		var i ListNoteTypesForNoteFormRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OwnerID,
@@ -199,7 +317,7 @@ func (q *Queries) ListNoteTypesForOwner(ctx context.Context, ownerID pgtype.UUID
 			&i.IsCloze,
 			&i.SortFieldIdx,
 			&i.AnkiID,
-			&i.NoteCount,
+			&i.InThisDeck,
 		); err != nil {
 			return nil, err
 		}
@@ -211,20 +329,105 @@ func (q *Queries) ListNoteTypesForOwner(ctx context.Context, ownerID pgtype.UUID
 	return items, nil
 }
 
-const lockNoteTypeForOwner = `-- name: LockNoteTypeForOwner :one
-SELECT id, owner_id, name, css, is_cloze, sort_field_idx, anki_id FROM note_types WHERE id = $1 AND owner_id = $2 FOR UPDATE
+const listNoteTypesForUser = `-- name: ListNoteTypesForUser :many
+
+SELECT nt.id, nt.owner_id, nt.name, nt.css, nt.is_cloze, nt.sort_field_idx, nt.anki_id,
+  (SELECT count(*) FROM notes n WHERE n.note_type_id = nt.id) AS note_count,
+  (SELECT count(DISTINCT n.deck_id) FROM notes n WHERE n.note_type_id = nt.id) AS deck_count,
+  (
+    NOT EXISTS (
+      SELECT 1 FROM (SELECT DISTINCT n.deck_id FROM notes n WHERE n.note_type_id = nt.id) d
+      WHERE NOT EXISTS (
+        SELECT 1 FROM deck_access da
+        WHERE da.deck_id = d.deck_id AND da.user_id = $1
+          AND da.can_view AND da.can_edit_content))
+    AND (EXISTS (SELECT 1 FROM notes n WHERE n.note_type_id = nt.id) OR nt.owner_id = $1)
+  ) AS can_edit
+FROM note_types nt
+WHERE nt.owner_id = $1
+   OR EXISTS (
+     SELECT 1 FROM notes n
+     JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = $1 AND da.can_view
+     WHERE n.note_type_id = nt.id)
+ORDER BY nt.name
 `
 
-type LockNoteTypeForOwnerParams struct {
-	ID      pgtype.UUID
-	OwnerID pgtype.UUID
+type ListNoteTypesForUserRow struct {
+	ID           pgtype.UUID
+	OwnerID      pgtype.UUID
+	Name         string
+	Css          string
+	IsCloze      bool
+	SortFieldIdx int32
+	AnkiID       pgtype.Int8
+	NoteCount    int64
+	DeckCount    int64
+	CanEdit      pgtype.Bool
+}
+
+// Authority for a note type derives from the decks whose notes use it, never from
+// note_types.owner_id -- see docs/plans/192-note-type-authority.md. owner_id is a namespace key
+// only (UNIQUE (owner_id, name), re-import idempotence, CLAUDE.md §2.2).
+//
+// READABLE(nt, user): owns it, or holds can_view on any deck holding a note that uses it.
+// WRITABLE(nt, user): no deck holding a note that uses it lacks can_view+can_edit_content for
+// user, and (some note uses it, or user owns it) -- the trailing owner clause is load-bearing:
+// NOT EXISTS over an empty deck set is vacuously true, so without it an unused note type would
+// be writable by everyone.
+func (q *Queries) ListNoteTypesForUser(ctx context.Context, userID pgtype.UUID) ([]ListNoteTypesForUserRow, error) {
+	rows, err := q.db.Query(ctx, listNoteTypesForUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNoteTypesForUserRow
+	for rows.Next() {
+		var i ListNoteTypesForUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Name,
+			&i.Css,
+			&i.IsCloze,
+			&i.SortFieldIdx,
+			&i.AnkiID,
+			&i.NoteCount,
+			&i.DeckCount,
+			&i.CanEdit,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockNoteTypeForEdit = `-- name: LockNoteTypeForEdit :one
+SELECT nt.id, nt.owner_id, nt.name, nt.css, nt.is_cloze, nt.sort_field_idx, nt.anki_id FROM note_types nt
+WHERE nt.id = $1
+  AND NOT EXISTS (
+    SELECT 1 FROM (SELECT DISTINCT n.deck_id FROM notes n WHERE n.note_type_id = nt.id) d
+    WHERE NOT EXISTS (
+      SELECT 1 FROM deck_access da
+      WHERE da.deck_id = d.deck_id AND da.user_id = $2
+        AND da.can_view AND da.can_edit_content))
+  AND (EXISTS (SELECT 1 FROM notes n WHERE n.note_type_id = nt.id) OR nt.owner_id = $2)
+FOR UPDATE
+`
+
+type LockNoteTypeForEditParams struct {
+	ID     pgtype.UUID
+	UserID pgtype.UUID
 }
 
 // Locks the note type row for the duration of an edit transaction, serialising it against a
 // concurrent edit of the same note type (docs/plans/54's TOCTOU note: the noteCount read below
 // and the structural field/template writes must not straddle a concurrent change).
-func (q *Queries) LockNoteTypeForOwner(ctx context.Context, arg LockNoteTypeForOwnerParams) (NoteType, error) {
-	row := q.db.QueryRow(ctx, lockNoteTypeForOwner, arg.ID, arg.OwnerID)
+func (q *Queries) LockNoteTypeForEdit(ctx context.Context, arg LockNoteTypeForEditParams) (NoteType, error) {
+	row := q.db.QueryRow(ctx, lockNoteTypeForEdit, arg.ID, arg.UserID)
 	var i NoteType
 	err := row.Scan(
 		&i.ID,
@@ -238,38 +441,40 @@ func (q *Queries) LockNoteTypeForOwner(ctx context.Context, arg LockNoteTypeForO
 	return i, err
 }
 
-const noteTypeImpactSummary = `-- name: NoteTypeImpactSummary :one
-SELECT
-  (SELECT count(DISTINCT n.deck_id) FROM notes n WHERE n.note_type_id = $1) AS deck_count,
-  (SELECT count(DISTINCT da.user_id) FROM notes n
-     JOIN deck_access da ON da.deck_id = n.deck_id
-     WHERE n.note_type_id = $1 AND da.user_id != $2) AS other_user_count
+const noteTypeOtherUserCount = `-- name: NoteTypeOtherUserCount :one
+SELECT count(DISTINCT da.user_id) FROM notes n
+JOIN deck_access da ON da.deck_id = n.deck_id
+WHERE n.note_type_id = $1 AND da.user_id != $2
 `
 
-type NoteTypeImpactSummaryParams struct {
+type NoteTypeOtherUserCountParams struct {
 	NoteTypeID pgtype.UUID
 	OwnerID    pgtype.UUID
 }
 
-type NoteTypeImpactSummaryRow struct {
-	DeckCount      int64
-	OtherUserCount int64
-}
-
-// Non-locking preview reads for the #89 structural-change confirmation page. Same tolerance as
+// Non-locking preview read for the #89 structural-change confirmation page. Same tolerance as
 // #138's ListCardsForNote: a stale preview here is never a correctness problem, since the actual
-// mutation re-reads everything fresh under LockNoteTypeForOwner's row lock.
-func (q *Queries) NoteTypeImpactSummary(ctx context.Context, arg NoteTypeImpactSummaryParams) (NoteTypeImpactSummaryRow, error) {
-	row := q.db.QueryRow(ctx, noteTypeImpactSummary, arg.NoteTypeID, arg.OwnerID)
-	var i NoteTypeImpactSummaryRow
-	err := row.Scan(&i.DeckCount, &i.OtherUserCount)
-	return i, err
+// mutation re-reads everything fresh under LockNoteTypeForEdit's row lock. deck_count isn't
+// selected here -- the confirmation page gets the affected decks' names from
+// ListDecksUsingNoteType instead (docs/plans/192-note-type-authority.md).
+func (q *Queries) NoteTypeOtherUserCount(ctx context.Context, arg NoteTypeOtherUserCountParams) (int64, error) {
+	row := q.db.QueryRow(ctx, noteTypeOtherUserCount, arg.NoteTypeID, arg.OwnerID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const updateNoteTypeRow = `-- name: UpdateNoteTypeRow :execrows
-UPDATE note_types SET name = $1, css = $2,
+UPDATE note_types nt SET name = $1, css = $2,
                       sort_field_idx = $3
-WHERE id = $4 AND owner_id = $5
+WHERE nt.id = $4
+  AND NOT EXISTS (
+    SELECT 1 FROM (SELECT DISTINCT n.deck_id FROM notes n WHERE n.note_type_id = nt.id) d
+    WHERE NOT EXISTS (
+      SELECT 1 FROM deck_access da
+      WHERE da.deck_id = d.deck_id AND da.user_id = $5
+        AND da.can_view AND da.can_edit_content))
+  AND (EXISTS (SELECT 1 FROM notes n WHERE n.note_type_id = nt.id) OR nt.owner_id = $5)
 `
 
 type UpdateNoteTypeRowParams struct {
@@ -277,7 +482,7 @@ type UpdateNoteTypeRowParams struct {
 	Css          string
 	SortFieldIdx int32
 	ID           pgtype.UUID
-	OwnerID      pgtype.UUID
+	UserID       pgtype.UUID
 }
 
 // is_cloze is immutable after creation: flipping it changes what every existing note's cards
@@ -288,7 +493,7 @@ func (q *Queries) UpdateNoteTypeRow(ctx context.Context, arg UpdateNoteTypeRowPa
 		arg.Css,
 		arg.SortFieldIdx,
 		arg.ID,
-		arg.OwnerID,
+		arg.UserID,
 	)
 	if err != nil {
 		return 0, err

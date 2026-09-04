@@ -36,7 +36,7 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 
 		noteTypeIDStr := r.URL.Query().Get("note_type_id")
 		if noteTypeIDStr == "" {
-			noteTypes, err := q.ListNoteTypesForOwner(r.Context(), user.ID)
+			noteTypes, err := q.ListNoteTypesForNoteForm(r.Context(), db.ListNoteTypesForNoteFormParams{DeckID: deckID, UserID: user.ID})
 			if err != nil {
 				serverError(w)
 				return
@@ -51,7 +51,7 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			notFoundPage(w, pages, user)
 			return
 		}
-		nt, err := q.GetNoteTypeForOwner(r.Context(), db.GetNoteTypeForOwnerParams{ID: noteTypeID, OwnerID: user.ID})
+		nt, err := q.GetNoteTypeForRead(r.Context(), db.GetNoteTypeForReadParams{ID: noteTypeID, UserID: user.ID})
 		if handleQueryErrPage(w, pages, user, err) {
 			return
 		}
@@ -82,7 +82,7 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		}
 
 		q := db.New(store)
-		nt, err := q.GetNoteTypeForOwner(r.Context(), db.GetNoteTypeForOwnerParams{ID: noteTypeID, OwnerID: user.ID})
+		nt, err := q.GetNoteTypeForRead(r.Context(), db.GetNoteTypeForReadParams{ID: noteTypeID, UserID: user.ID})
 		if handleQueryErrPage(w, pages, user, err) {
 			return
 		}
@@ -179,8 +179,8 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			serverError(w)
 			return
 		}
-		compatible, err := q.ListFieldCompatibleNoteTypesForOwner(r.Context(), db.ListFieldCompatibleNoteTypesForOwnerParams{
-			OwnerID: user.ID, IsCloze: nt.IsCloze, CurrentNoteTypeID: note.NoteTypeID,
+		compatible, err := q.ListFieldCompatibleNoteTypesForUser(r.Context(), db.ListFieldCompatibleNoteTypesForUserParams{
+			UserID: user.ID, IsCloze: nt.IsCloze, CurrentNoteTypeID: note.NoteTypeID,
 		})
 		if err != nil {
 			serverError(w)
@@ -249,7 +249,7 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 				return
 			}
 
-			targetNT, err = q.GetNoteTypeForOwner(r.Context(), db.GetNoteTypeForOwnerParams{ID: targetNoteTypeID, OwnerID: user.ID})
+			targetNT, err = q.GetNoteTypeForRead(r.Context(), db.GetNoteTypeForReadParams{ID: targetNoteTypeID, UserID: user.ID})
 			if handleQueryErrPage(w, pages, user, err) {
 				return
 			}
@@ -401,7 +401,7 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 // fieldsCompatible implements the #138 v1 field-compatibility rule for a note-type change: the
 // same is_cloze flag, and the same field names in the same ordinal order (which implies the same
 // count). This is the authoritative, Go-side check -- the GET edit page's dropdown is populated
-// from ListFieldCompatibleNoteTypesForOwner, but the POST handler never trusts that the submitted
+// from ListFieldCompatibleNoteTypesForUser, but the POST handler never trusts that the submitted
 // note_type_id actually came from that list.
 func fieldsCompatible(fromNT db.NoteType, fromFields []db.Field, toNT db.NoteType, toFields []db.Field) bool {
 	if fromNT.IsCloze != toNT.IsCloze {

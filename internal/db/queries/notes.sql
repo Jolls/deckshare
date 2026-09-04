@@ -10,13 +10,22 @@ LIMIT 200;
 
 -- Owner_id comes from the DECK, not the caller: notes.owner_id is denormalised from
 -- decks.owner_id and, as of migration 00015, a composite FK rejects any other value.
+-- The note type only needs to be READABLE (docs/plans/192-note-type-authority.md), not owned:
+-- a collaborator with can_edit_content on this deck may author a note using any note type they
+-- can read, including one already in use elsewhere on this deck that they don't own
+-- (ListNoteTypesForNoteForm's "Used in this deck" picker offers exactly those).
 -- name: CreateNote :one
 INSERT INTO notes (guid, owner_id, note_type_id, deck_id, fields, tags, checksum)
 SELECT sqlc.arg(guid), d.owner_id, nt.id, d.id, sqlc.arg(fields), sqlc.arg(tags), sqlc.arg(checksum)
 FROM decks d
 JOIN deck_access da ON da.deck_id = d.id AND da.user_id = sqlc.arg(user_id)
                    AND da.can_view AND da.can_edit_content
-JOIN note_types nt ON nt.id = sqlc.arg(note_type_id) AND nt.owner_id = sqlc.arg(user_id)
+JOIN note_types nt ON nt.id = sqlc.arg(note_type_id)
+                   AND (nt.owner_id = sqlc.arg(user_id)
+                        OR EXISTS (
+                          SELECT 1 FROM notes rn
+                          JOIN deck_access rda ON rda.deck_id = rn.deck_id AND rda.user_id = sqlc.arg(user_id) AND rda.can_view
+                          WHERE rn.note_type_id = nt.id))
 WHERE d.id = sqlc.arg(deck_id)
 RETURNING *;
 

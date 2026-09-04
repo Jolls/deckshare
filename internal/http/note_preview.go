@@ -54,7 +54,7 @@ func registerNotePreviewRoutes(mux *http.ServeMux, store db.Beginner, fragments 
 		}
 		fieldValues := r.PostForm["field[]"]
 
-		view, err := buildNotePreview(r.Context(), q, user.ID, noteTypeID, note.NoteTypeID, fieldValues, r.PostForm.Get("tags"), note.DeckID, deck.Name)
+		view, err := buildNotePreview(r.Context(), q, user.ID, noteTypeID, fieldValues, r.PostForm.Get("tags"), note.DeckID, deck.Name)
 		if !respondNotePreview(w, err) {
 			return
 		}
@@ -85,9 +85,7 @@ func registerNotePreviewRoutes(mux *http.ServeMux, store db.Beginner, fragments 
 		}
 		fieldValues := r.PostForm["field[]"]
 
-		// No note exists yet, so there is no "current" note type to read unscoped -- every note
-		// type offered on the new-note form is one the caller owns.
-		view, err := buildNotePreview(r.Context(), q, user.ID, noteTypeID, pgtype.UUID{}, fieldValues, r.PostForm.Get("tags"), deckID, deck.Name)
+		view, err := buildNotePreview(r.Context(), q, user.ID, noteTypeID, fieldValues, r.PostForm.Get("tags"), deckID, deck.Name)
 		if !respondNotePreview(w, err) {
 			return
 		}
@@ -134,22 +132,14 @@ type notePreviewView struct {
 // must have already authorised deckID via GetNoteForContentEdit/GetDeckForContentEdit before
 // calling this.
 //
-// The note-type lookup mirrors POST /notes/{id}/edit exactly: the note's *current* note type is
-// read unscoped, because a collaborator editing a shared deck legitimately renders a note type
-// owned by someone else (the edit page itself does the same at notes.go's GetNoteType call).
-// Any *other* note type -- i.e. a note-type change staged in the dropdown, and every note type
-// on the new-note form -- stays owner-scoped, since note types are owner-scoped by invariant
-// §2.2. currentNoteTypeID is the zero UUID on the new-note route, where no note exists yet.
-func buildNotePreview(ctx context.Context, q *db.Queries, ownerID pgtype.UUID, noteTypeID pgtype.UUID,
-	currentNoteTypeID pgtype.UUID, fieldValues []string, tagsRaw string, deckID pgtype.UUID, deckName string,
+// The note-type lookup is READABLE-scoped (docs/plans/192-note-type-authority.md), the same as
+// every other read of a note type: a collaborator editing a shared deck legitimately renders a
+// note type they don't own, whether it's the note's current note type or one staged in the
+// change dropdown.
+func buildNotePreview(ctx context.Context, q *db.Queries, userID pgtype.UUID, noteTypeID pgtype.UUID,
+	fieldValues []string, tagsRaw string, deckID pgtype.UUID, deckName string,
 ) (notePreviewView, error) {
-	var nt db.NoteType
-	var err error
-	if currentNoteTypeID.Valid && noteTypeID == currentNoteTypeID {
-		nt, err = q.GetNoteType(ctx, noteTypeID)
-	} else {
-		nt, err = q.GetNoteTypeForOwner(ctx, db.GetNoteTypeForOwnerParams{ID: noteTypeID, OwnerID: ownerID})
-	}
+	nt, err := q.GetNoteTypeForRead(ctx, db.GetNoteTypeForReadParams{ID: noteTypeID, UserID: userID})
 	if err != nil {
 		return notePreviewView{}, err
 	}
