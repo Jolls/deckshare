@@ -48,12 +48,12 @@ func (q *Queries) GetDeckForAccessManage(ctx context.Context, arg GetDeckForAcce
 
 const grantDeckAccess = `-- name: GrantDeckAccess :execrows
 INSERT INTO deck_access (deck_id, user_id, can_view, can_study, can_edit_content,
-                         can_edit_settings, can_manage_access, can_delete)
+                         can_edit_settings, can_manage_access, can_delete, can_view_progress)
 SELECT da.deck_id, $1, $2, $3,
        $4, $5, $6,
-       $7
+       $7, $8
 FROM deck_access da
-WHERE da.deck_id = $8 AND da.user_id = $9
+WHERE da.deck_id = $9 AND da.user_id = $10
   AND da.can_view AND da.can_manage_access
 `
 
@@ -65,6 +65,7 @@ type GrantDeckAccessParams struct {
 	CanEditSettings bool
 	CanManageAccess bool
 	CanDelete       bool
+	CanViewProgress bool
 	DeckID          pgtype.UUID
 	CallerUserID    pgtype.UUID
 }
@@ -86,6 +87,7 @@ func (q *Queries) GrantDeckAccess(ctx context.Context, arg GrantDeckAccessParams
 		arg.CanEditSettings,
 		arg.CanManageAccess,
 		arg.CanDelete,
+		arg.CanViewProgress,
 		arg.DeckID,
 		arg.CallerUserID,
 	)
@@ -97,8 +99,8 @@ func (q *Queries) GrantDeckAccess(ctx context.Context, arg GrantDeckAccessParams
 
 const grantFullDeckAccess = `-- name: GrantFullDeckAccess :exec
 INSERT INTO deck_access (deck_id, user_id, can_view, can_study, can_edit_content,
-                         can_edit_settings, can_manage_access, can_delete)
-VALUES ($1, $2, true, true, true, true, true, true)
+                         can_edit_settings, can_manage_access, can_delete, can_view_progress)
+VALUES ($1, $2, true, true, true, true, true, true, true)
 `
 
 type GrantFullDeckAccessParams struct {
@@ -116,7 +118,7 @@ func (q *Queries) GrantFullDeckAccess(ctx context.Context, arg GrantFullDeckAcce
 const listDeckAccessForDeck = `-- name: ListDeckAccessForDeck :many
 SELECT u.id AS user_id, u.email, u.display_name,
        da.can_view, da.can_study, da.can_edit_content,
-       da.can_edit_settings, da.can_manage_access, da.can_delete
+       da.can_edit_settings, da.can_manage_access, da.can_delete, da.can_view_progress
 FROM deck_access da
 JOIN users u ON u.id = da.user_id
 WHERE da.deck_id = $1
@@ -133,6 +135,7 @@ type ListDeckAccessForDeckRow struct {
 	CanEditSettings bool
 	CanManageAccess bool
 	CanDelete       bool
+	CanViewProgress bool
 }
 
 // The collaborator list for one deck. Authorisation happens in GetDeckForAccessManage above; a
@@ -156,6 +159,7 @@ func (q *Queries) ListDeckAccessForDeck(ctx context.Context, deckID pgtype.UUID)
 			&i.CanEditSettings,
 			&i.CanManageAccess,
 			&i.CanDelete,
+			&i.CanViewProgress,
 		); err != nil {
 			return nil, err
 		}

@@ -2,8 +2,8 @@
 -- this, not a separate code path.
 -- name: GrantFullDeckAccess :exec
 INSERT INTO deck_access (deck_id, user_id, can_view, can_study, can_edit_content,
-                         can_edit_settings, can_manage_access, can_delete)
-VALUES ($1, $2, true, true, true, true, true, true);
+                         can_edit_settings, can_manage_access, can_delete, can_view_progress)
+VALUES ($1, $2, true, true, true, true, true, true, true);
 
 -- Authorise-and-fetch for the access-management page, the same shape as decks.sql's
 -- GetDeckForSettingsEdit. No row means "absent OR invisible OR not permitted" -- deliberately
@@ -23,7 +23,7 @@ WHERE d.id = sqlc.arg(deck_id);
 -- name: ListDeckAccessForDeck :many
 SELECT u.id AS user_id, u.email, u.display_name,
        da.can_view, da.can_study, da.can_edit_content,
-       da.can_edit_settings, da.can_manage_access, da.can_delete
+       da.can_edit_settings, da.can_manage_access, da.can_delete, da.can_view_progress
 FROM deck_access da
 JOIN users u ON u.id = da.user_id
 WHERE da.deck_id = sqlc.arg(deck_id)
@@ -39,10 +39,10 @@ ORDER BY u.email;
 -- deck_access_pkey, which the handler turns into a 409.
 -- name: GrantDeckAccess :execrows
 INSERT INTO deck_access (deck_id, user_id, can_view, can_study, can_edit_content,
-                         can_edit_settings, can_manage_access, can_delete)
+                         can_edit_settings, can_manage_access, can_delete, can_view_progress)
 SELECT da.deck_id, sqlc.arg(target_user_id), sqlc.arg(can_view), sqlc.arg(can_study),
        sqlc.arg(can_edit_content), sqlc.arg(can_edit_settings), sqlc.arg(can_manage_access),
-       sqlc.arg(can_delete)
+       sqlc.arg(can_delete), sqlc.arg(can_view_progress)
 FROM deck_access da
 WHERE da.deck_id = sqlc.arg(deck_id) AND da.user_id = sqlc.arg(caller_user_id)
   AND da.can_view AND da.can_manage_access;

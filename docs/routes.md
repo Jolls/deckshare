@@ -20,11 +20,12 @@ contract for `POST /api/reviews/batch` is pinned down there in full and is not r
   `POST /x/{id}/delete`.
 - **Auth**: every route requires a valid session unless marked **public**.
 - **Permission** lists the `deck_access` flag(s) the query layer must check (CLAUDE.md §9) —
-  never a handler-level guard alone. `deck_access` grants six independent booleans per
+  never a handler-level guard alone. `deck_access` grants seven independent booleans per
   `(user_id, deck_id)` — `can_view`, `can_study`, `can_edit_content`, `can_edit_settings`,
-  `can_manage_access`, `can_delete` — not a role enum; see [schema.md](schema.md) for what each
-  one grants. A route can require more than one flag. Blank means not deck-scoped:
-  session-only, or gated by row ownership instead (e.g. a note type's `owner_id`).
+  `can_manage_access`, `can_delete`, `can_view_progress` — not a role enum; see
+  [schema.md](schema.md) for what each one grants. A route can require more than one flag. Blank
+  means not deck-scoped: session-only, or gated by row ownership instead (e.g. a note type's
+  `owner_id`).
 - **Phase / step** cites architecture.md §11's build order, so route work can be sequenced
   against it.
 - **Response headers are global, not per-route.** `internal/http/security.go`'s `securityHeaders`
@@ -53,7 +54,7 @@ contract for `POST /api/reviews/batch` is pinned down there in full and is not r
 |---|---|---|---|
 | GET | `/decks` | — | List decks reachable via `deck_access` |
 | GET | `/decks/new` | — | New-deck form |
-| POST | `/decks` | — | Create deck; creator gets a `deck_access` row with all six flags true |
+| POST | `/decks` | — | Create deck; creator gets a `deck_access` row with all seven flags true |
 | GET | `/decks/{id}` | `can_view` | Detail: notes list, note/card counts. Due counts deferred to step 7 (the reviewer) — they need `StudyDayStart`/`StudyDayEnd`, which don't exist yet, and there are no `user_card_state` rows at all before step 7 regardless |
 | GET | `/decks/{id}/edit` | `can_edit_settings` | Edit form: name, description, and new-cards-per-day (#101) |
 | POST | `/decks/{id}/edit` | `can_edit_settings` | Update name, description, and new-cards-per-day (#101) |
@@ -138,7 +139,7 @@ access until Milestone 2 (architecture.md §11).
 | Method | Path | Permission | Purpose |
 |---|---|---|---|
 | GET | `/decks/{id}/access` | `can_manage_access` | List collaborators and their permission flags |
-| POST | `/decks/{id}/access` | `can_manage_access` | Grant access (email + choice of the six flags) |
+| POST | `/decks/{id}/access` | `can_manage_access` | Grant access (email + choice of the seven flags) |
 | POST | `/decks/{id}/access/{userId}/edit` | `can_manage_access` | Change a collaborator's flags |
 | POST | `/decks/{id}/access/{userId}/delete` | `can_manage_access` | Revoke access (delete the row) |
 | POST | `/decks/{id}/access/{userId}/reset` | `can_manage_access` | Reset a collaborator's scheduling progress on this deck (deletes their `user_card_state` rows for it; `review_log` untouched — [#189](https://github.com/Jolls/deckshare/issues/189)) |
@@ -157,6 +158,22 @@ same transaction, under a deck row lock, returning `ErrLastAccessHolder` when it
 deck — the handler answers **409**. Two consequences: a deck's sole member cannot revoke their
 own access (they delete the deck instead), and `decks.owner_id` is not a permission source and
 exempts nobody from the guard.
+
+---
+
+## Progress — `progress.go` (Milestone 3, [#87](https://github.com/Jolls/deckshare/issues/87))
+
+The instructor dashboard: per-student retention, due counts, and cohort lapse hotspots for one
+deck. Full reasoning in docs/plans/87-instructor-dashboard.md.
+
+| Method | Path | Permission | Purpose |
+|---|---|---|---|
+| GET | `/decks/{id}/progress` | `can_view`, `can_view_progress` | Per-student retention (Recall now, computed in Go from `user_card_state` via `fsrs.Retrievability`; Pass rate 30d / Reviews 30d, from `review_log`), per-student due counts (day-boundary computed per student, since `users.timezone`/`day_start_hour` vary across the roster), and cohort lapse hotspots (again-rate per card, floored at ≥5 reviews across ≥3 students). Roster = holders of `can_study` on this deck. `?sort=` and `?page=` are query params, no client-side JS; `?cohort=` is reserved for #86 and ignored until it lands |
+
+Aggregates only, never a named student's individual `review_log` rows, and never another deck —
+`can_view_progress` is deck-scoped exactly like every other flag (docs/schema.md's amendment to
+"Access control at the query layer"). No write route exists here; resetting a student's progress
+already exists behind `can_manage_access` (`POST /decks/{id}/access/{userId}/reset`, above).
 
 ---
 

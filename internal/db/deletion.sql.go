@@ -207,8 +207,9 @@ SET can_view          = $1,
     can_edit_content  = $3,
     can_edit_settings = $4,
     can_manage_access = $5,
-    can_delete        = $6
-WHERE deck_id = $7 AND user_id = $8
+    can_delete        = $6,
+    can_view_progress = $7
+WHERE deck_id = $8 AND user_id = $9
 `
 
 type UpdateDeckAccessRowParams struct {
@@ -218,6 +219,7 @@ type UpdateDeckAccessRowParams struct {
 	CanEditSettings bool
 	CanManageAccess bool
 	CanDelete       bool
+	CanViewProgress bool
 	DeckID          pgtype.UUID
 	TargetUserID    pgtype.UUID
 }
@@ -230,6 +232,7 @@ func (q *Queries) UpdateDeckAccessRow(ctx context.Context, arg UpdateDeckAccessR
 		arg.CanEditSettings,
 		arg.CanManageAccess,
 		arg.CanDelete,
+		arg.CanViewProgress,
 		arg.DeckID,
 		arg.TargetUserID,
 	)

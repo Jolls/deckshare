@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.29] - 2026-09-04
+
+### Added
+- Instructor dashboard: a new `deck_access.can_view_progress` permission grants deck-scoped,
+  aggregate-only, read-only progress reporting, and `GET /decks/{id}/progress` shows per-student
+  recall/pass-rate/due counts and cohort lapse hotspots for holders of it
+  ([#87](https://github.com/Jolls/deckshare/issues/87)).
+
 ## [0.2.28] - 2026-09-03
 
 ### Changed

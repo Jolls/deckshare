@@ -35,6 +35,27 @@ func (q *Queries) CountDeckContents(ctx context.Context, arg CountDeckContentsPa
 	return i, err
 }
 
+const countOtherProgressViewers = `-- name: CountOtherProgressViewers :one
+SELECT count(*) FILTER (WHERE user_id <> $1) AS viewer_count
+FROM deck_access
+WHERE deck_id = $2 AND can_view_progress
+`
+
+type CountOtherProgressViewersParams struct {
+	UserID pgtype.UUID
+	DeckID pgtype.UUID
+}
+
+// The disclosure line on the deck page (#87 §0.4): how many users, other than the viewer, hold
+// can_view_progress on this deck. Not authorised on its own -- the caller already holds can_view
+// via GetDeckForUser before rendering the page this feeds.
+func (q *Queries) CountOtherProgressViewers(ctx context.Context, arg CountOtherProgressViewersParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countOtherProgressViewers, arg.UserID, arg.DeckID)
+	var viewer_count int64
+	err := row.Scan(&viewer_count)
+	return viewer_count, err
+}
+
 const createDeck = `-- name: CreateDeck :one
 INSERT INTO decks (owner_id, name, description) VALUES ($1, $2, $3) RETURNING id, owner_id, name, description, preset, created_at, modified_at, anki_id
 `
@@ -133,7 +154,7 @@ func (q *Queries) GetDeckForSettingsEdit(ctx context.Context, arg GetDeckForSett
 }
 
 const getDeckForUser = `-- name: GetDeckForUser :one
-SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id, da.can_edit_content, da.can_edit_settings, da.can_manage_access
+SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id, da.can_edit_content, da.can_edit_settings, da.can_manage_access, da.can_view_progress
 FROM decks d
 JOIN deck_access da ON da.deck_id = d.id AND da.user_id = $1 AND da.can_view
 WHERE d.id = $2
@@ -156,6 +177,7 @@ type GetDeckForUserRow struct {
 	CanEditContent  bool
 	CanEditSettings bool
 	CanManageAccess bool
+	CanViewProgress bool
 }
 
 func (q *Queries) GetDeckForUser(ctx context.Context, arg GetDeckForUserParams) (GetDeckForUserRow, error) {
@@ -173,6 +195,7 @@ func (q *Queries) GetDeckForUser(ctx context.Context, arg GetDeckForUserParams) 
 		&i.CanEditContent,
 		&i.CanEditSettings,
 		&i.CanManageAccess,
+		&i.CanViewProgress,
 	)
 	return i, err
 }

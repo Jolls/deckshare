@@ -8,7 +8,7 @@ JOIN deck_access da ON da.deck_id = d.id AND da.user_id = sqlc.arg(user_id) AND 
 ORDER BY d.name;
 
 -- name: GetDeckForUser :one
-SELECT d.*, da.can_edit_content, da.can_edit_settings, da.can_manage_access
+SELECT d.*, da.can_edit_content, da.can_edit_settings, da.can_manage_access, da.can_view_progress
 FROM decks d
 JOIN deck_access da ON da.deck_id = d.id AND da.user_id = sqlc.arg(user_id) AND da.can_view
 WHERE d.id = sqlc.arg(deck_id);
@@ -41,6 +41,14 @@ SELECT (SELECT count(*) FROM notes n WHERE n.deck_id = sqlc.arg(deck_id)) AS not
        (SELECT count(*) FROM cards c WHERE c.deck_id = sqlc.arg(deck_id)) AS card_count
 FROM deck_access da
 WHERE da.deck_id = sqlc.arg(deck_id) AND da.user_id = sqlc.arg(user_id) AND da.can_view;
+
+-- The disclosure line on the deck page (#87 §0.4): how many users, other than the viewer, hold
+-- can_view_progress on this deck. Not authorised on its own -- the caller already holds can_view
+-- via GetDeckForUser before rendering the page this feeds.
+-- name: CountOtherProgressViewers :one
+SELECT count(*) FILTER (WHERE user_id <> sqlc.arg(user_id)) AS viewer_count
+FROM deck_access
+WHERE deck_id = sqlc.arg(deck_id) AND can_view_progress;
 
 -- name: CreateDeck :one
 INSERT INTO decks (owner_id, name, description) VALUES ($1, $2, $3) RETURNING *;

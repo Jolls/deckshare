@@ -186,6 +186,58 @@ func TestLastReviewAfterNow(t *testing.T) {
 	}
 }
 
+func TestRetrievability(t *testing.T) {
+	p := mustDefaultParams(t)
+	now := fixedNow()
+
+	t.Run("new card is 0", func(t *testing.T) {
+		r, err := Retrievability(p, CardState{State: New}, now)
+		if err != nil {
+			t.Fatalf("Retrievability: %v", err)
+		}
+		if r != 0 {
+			t.Errorf("r = %v, want 0", r)
+		}
+	})
+
+	t.Run("no LastReview is 0", func(t *testing.T) {
+		r, err := Retrievability(p, CardState{State: Review, Stability: 10, Difficulty: 5}, now)
+		if err != nil {
+			t.Fatalf("Retrievability: %v", err)
+		}
+		if r != 0 {
+			t.Errorf("r = %v, want 0", r)
+		}
+	})
+
+	t.Run("at LastReview is approximately 1", func(t *testing.T) {
+		prior := CardState{State: Review, Stability: 10, Difficulty: 5, LastReview: now}
+		r, err := Retrievability(p, prior, now)
+		if err != nil {
+			t.Fatalf("Retrievability: %v", err)
+		}
+		if r < 0.99 || r > 1.0 {
+			t.Errorf("r = %v, want ~1.0", r)
+		}
+	})
+
+	t.Run("decays below desiredRetention past the scheduled interval", func(t *testing.T) {
+		prior := CardState{State: Review, Stability: 10, Difficulty: 5, LastReview: now}
+		outcome, err := Schedule(p, prior, Good, now)
+		if err != nil {
+			t.Fatalf("Schedule: %v", err)
+		}
+		past := outcome.CardStateAt(now).Due.Add(24 * time.Hour)
+		r, err := Retrievability(p, outcome.CardStateAt(now), past)
+		if err != nil {
+			t.Fatalf("Retrievability: %v", err)
+		}
+		if r >= p.DesiredRetention() {
+			t.Errorf("r = %v, want < desiredRetention %v (a day past the scheduled due date)", r, p.DesiredRetention())
+		}
+	})
+}
+
 func TestNewCardOutcomes(t *testing.T) {
 	p := mustDefaultParams(t)
 	now := fixedNow()

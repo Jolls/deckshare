@@ -1,0 +1,142 @@
+-- The instructor dashboard (#87, docs/plans/87-instructor-dashboard.md). Every query here
+-- authorises on can_view_progress -- the one exception to "no permission flag grants read of
+-- another user's user_card_state" (docs/schema.md) -- and returns aggregates only, never a
+-- named student's individual review_log rows (§0.3 of the plan).
+
+-- Authorise-and-fetch, same no-row contract as GetDeckForAccessManage (decks.sql/deck_access.sql):
+-- absent, invisible, and not-permitted all collapse to zero rows -> pgx.ErrNoRows -> 404.
+-- can_edit_content is carried alongside so the handler can decide whether a lapse-hotspot card
+-- links to the note editor (§2.2 of the plan) without a second query.
+-- name: GetDeckForProgress :one
+SELECT d.*, da.can_edit_content
+FROM decks d
+JOIN deck_access da ON da.deck_id = d.id AND da.user_id = sqlc.arg(user_id)
+                   AND da.can_view AND da.can_view_progress
+WHERE d.id = sqlc.arg(deck_id);
+
+-- The roster (holders of can_study on this deck) with per-student queue counts and the
+-- review_log pass-rate/review-count aggregates (§1.1, §1.3 of the plan). The study-day window
+-- differs per student (users.timezone/day_start_hour), so day_window folds GetStudyDayWindow's
+-- date_trunc/make_interval arithmetic into a CTE joined per roster member, rather than taking a
+-- single scalar the way CountQueueForDeck does. total_count is a window-function count of the
+-- whole roster (evaluated before LIMIT/OFFSET apply), so the handler can page without a second
+-- round trip. Ordering is by email only -- a fixed, stable key for pagination; the display sort
+-- (?sort=, default Recall ascending) is applied in Go once Recall is folded from
+-- ListStudentCardStateForDeck below, since Recall is never computed in SQL (§1.2).
+-- name: ListStudentProgressForDeck :many
+WITH roster AS (
+    SELECT da.user_id, u.email, u.display_name, u.timezone, u.day_start_hour
+    FROM deck_access da
+    JOIN users u ON u.id = da.user_id
+    WHERE da.deck_id = sqlc.arg(deck_id) AND da.can_view AND da.can_study
+), day_window AS (
+    SELECT r.user_id,
+           ((date_trunc('day', (sqlc.arg(now)::timestamptz AT TIME ZONE r.timezone)
+                                - make_interval(hours => r.day_start_hour::int))
+             + make_interval(hours => r.day_start_hour::int)) AT TIME ZONE r.timezone)::timestamptz
+               AS study_day_start
+    FROM roster r
+), total_cards AS (
+    -- Scalar, computed once rather than per roster member -- new_count below is derived from it
+    -- (total minus seen) instead of scanning a CROSS JOIN of every (student, card) pair just to
+    -- find the never-seen ones, which cost roster_size * cards_in_deck rows for a quantity that's
+    -- arithmetic on two counts already in hand.
+    SELECT count(*)::bigint AS total FROM cards WHERE deck_id = sqlc.arg(deck_id)
+), queue AS (
+    -- Only cards this student has actually studied -- bounded by seen-card rows, not by the full
+    -- roster * deck-card product. LEFT JOIN onto the full roster in the outer SELECT (not here)
+    -- is what keeps a never-studied student in the result with every count at zero rather than
+    -- disappearing because they match no user_card_state row.
+    SELECT r.user_id,
+           count(*)                                         AS seen_count,
+           -- Matches CountQueueForDeck's (reviews.sql) suspended/buried exclusions -- otherwise a
+           -- suspended or buried learning-state card would count here but not on the student's
+           -- own /decks/{id} queue, disagreeing about the same card at the same instant.
+           count(*) FILTER (
+               WHERE ucs.state IN (1, 3)
+                 AND NOT COALESCE(ucs.suspended, false)
+                 AND (ucs.buried_until IS NULL OR ucs.buried_until <= dw.study_day_start::date)
+           )                                                AS learning_count,
+           count(*) FILTER (
+               WHERE ucs.state = 2
+                 AND NOT COALESCE(ucs.suspended, false)
+                 AND (ucs.buried_until IS NULL OR ucs.buried_until <= dw.study_day_start::date)
+                 AND ucs.due <= sqlc.arg(now)::timestamptz + make_interval(mins => sqlc.arg(look_ahead_minutes)::int)
+                 AND (ucs.last_review IS NULL OR ucs.last_review < dw.study_day_start)
+           )                                                AS due_count,
+           max(ucs.last_review)::timestamptz                AS last_studied
+    FROM roster r
+    JOIN day_window dw ON dw.user_id = r.user_id
+    JOIN user_card_state ucs ON ucs.user_id = r.user_id
+    JOIN cards c ON c.id = ucs.card_id AND c.deck_id = sqlc.arg(deck_id)
+    GROUP BY r.user_id
+), reviewstats AS (
+    -- Pass rate 30d / Reviews 30d (§1.1): review-state answers only, matching what
+    -- CountReviewedToday (reviews.sql) already treats as a review.
+    SELECT r.user_id,
+           count(*) FILTER (WHERE rl.rating > 1) AS pass_count,
+           count(*)                              AS review_count
+    FROM roster r
+    JOIN cards c2 ON c2.deck_id = sqlc.arg(deck_id)
+    JOIN review_log rl ON rl.user_id = r.user_id AND rl.card_id = c2.id
+    WHERE rl.state_before = 2
+      AND rl.reviewed_at >= sqlc.arg(now)::timestamptz - make_interval(days => sqlc.arg(window_days)::int)
+    GROUP BY r.user_id
+)
+SELECT r.user_id, r.email, r.display_name,
+       COALESCE(q.seen_count, 0)::bigint              AS seen_count,
+       (tc.total - COALESCE(q.seen_count, 0))::bigint AS new_count,
+       COALESCE(q.learning_count, 0)::bigint          AS learning_count,
+       COALESCE(q.due_count, 0)::bigint                AS due_count,
+       q.last_studied,
+       COALESCE(rs.pass_count, 0)::bigint   AS pass_count,
+       COALESCE(rs.review_count, 0)::bigint AS review_count,
+       count(*) OVER ()::bigint            AS total_count
+FROM roster r
+CROSS JOIN total_cards tc
+LEFT JOIN queue q ON q.user_id = r.user_id
+LEFT JOIN reviewstats rs ON rs.user_id = r.user_id
+ORDER BY r.email
+LIMIT sqlc.arg(limit_count) OFFSET sqlc.arg(offset_count);
+
+-- Narrow rows for the Recall fold in Go (§1.2, §1.3 of the plan): one row per (student, seen
+-- card) on this deck, for exactly the paged students -- never the whole roster. Ordered by
+-- user_id so the handler folds in one pass. difficulty is carried alongside stability/state/
+-- last_review (beyond the plan's literal sketch) because fsrs.Retrievability shares toLibCard's
+-- validation with Schedule/PreviewAll (internal/fsrs/schedule.go), which rejects a non-New state
+-- with a below-minimum difficulty -- a real stored difficulty is always valid once a card has
+-- left New, so this is just supplying what the shared mapping requires, not a second check.
+-- name: ListStudentCardStateForDeck :many
+SELECT ucs.user_id, ucs.stability, ucs.difficulty, ucs.state, ucs.last_review
+FROM user_card_state ucs
+JOIN cards c ON c.id = ucs.card_id
+WHERE c.deck_id = sqlc.arg(deck_id) AND ucs.user_id = ANY(sqlc.arg(user_ids)::uuid[])
+ORDER BY ucs.user_id;
+
+-- Cohort again-rate per card (§1.4 of the plan): review-state answers only, restricted to
+-- current can_study roster members (a non-roster collaborator's reviews never leak in), with a
+-- floor of min_reviews reviews across min_students distinct students so one bad night can't top
+-- the chart. The INNER joins to cards/notes drop any review_log row whose card no longer exists
+-- (review_log.card_id has no FK, docs/schema.md) from both numerator and denominator together.
+-- Grouping by (rl.card_id, n.id) rather than n.fields directly lets Postgres recognise n.fields
+-- as functionally dependent on the note's primary key.
+-- name: ListLapseHotspotsForDeck :many
+SELECT rl.card_id,
+       n.id                                                                       AS note_id,
+       (n.fields ->> 0)::text                                                     AS label,
+       count(DISTINCT rl.user_id)                                                 AS student_count,
+       count(*)                                                                   AS review_count,
+       ((count(*) FILTER (WHERE rl.rating = 1))::float8 / count(*)::float8)::float8 AS again_rate
+FROM review_log rl
+JOIN cards c ON c.id = rl.card_id
+JOIN notes n ON n.id = c.note_id
+JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = rl.user_id
+                   AND da.can_view AND da.can_study
+WHERE c.deck_id = sqlc.arg(deck_id)
+  AND rl.state_before = 2
+  AND rl.reviewed_at >= sqlc.arg(now)::timestamptz - make_interval(days => sqlc.arg(window_days)::int)
+GROUP BY rl.card_id, n.id
+HAVING count(*) >= sqlc.arg(min_reviews)::int
+   AND count(DISTINCT rl.user_id) >= sqlc.arg(min_students)::int
+ORDER BY again_rate DESC, review_count DESC
+LIMIT sqlc.arg(limit_count);

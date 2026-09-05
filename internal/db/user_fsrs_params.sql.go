@@ -55,6 +55,56 @@ func (q *Queries) GetEffectiveFsrsParams(ctx context.Context, arg GetEffectiveFs
 	return i, err
 }
 
+const getEffectiveFsrsParamsForUsers = `-- name: GetEffectiveFsrsParamsForUsers :many
+SELECT DISTINCT ON (user_id) user_id, fsrs_version, params, desired_retention
+FROM user_fsrs_params
+WHERE user_id = ANY($1::uuid[]) AND (deck_id = $2 OR deck_id IS NULL)
+ORDER BY user_id, deck_id NULLS LAST
+`
+
+type GetEffectiveFsrsParamsForUsersParams struct {
+	UserIds []pgtype.UUID
+	DeckID  pgtype.UUID
+}
+
+type GetEffectiveFsrsParamsForUsersRow struct {
+	UserID           pgtype.UUID
+	FsrsVersion      int16
+	Params           []byte
+	DesiredRetention float64
+}
+
+// Batched form of GetEffectiveFsrsParams for a page of users on one deck (#87's instructor
+// dashboard): one round trip instead of one query per student. DISTINCT ON keeps the
+// highest-priority row per user -- same deck_id NULLS LAST precedence as above, applied per user
+// rather than per single arg. A user with neither a per-deck override nor a global row is simply
+// absent from the result; the caller falls back to library defaults for them, same as
+// GetEffectiveFsrsParams's pgx.ErrNoRows case.
+func (q *Queries) GetEffectiveFsrsParamsForUsers(ctx context.Context, arg GetEffectiveFsrsParamsForUsersParams) ([]GetEffectiveFsrsParamsForUsersRow, error) {
+	rows, err := q.db.Query(ctx, getEffectiveFsrsParamsForUsers, arg.UserIds, arg.DeckID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetEffectiveFsrsParamsForUsersRow
+	for rows.Next() {
+		var i GetEffectiveFsrsParamsForUsersRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.FsrsVersion,
+			&i.Params,
+			&i.DesiredRetention,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getGlobalFsrsRetention = `-- name: GetGlobalFsrsRetention :one
 SELECT desired_retention FROM user_fsrs_params WHERE user_id = $1 AND deck_id IS NULL
 `

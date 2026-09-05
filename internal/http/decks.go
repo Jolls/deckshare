@@ -214,9 +214,18 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		}
 		newRemaining := review.NewRemaining(review.NewPerDay(deck.Preset), introducedToday)
 		totalRemaining := review.RevRemaining(review.RevPerDay(deck.Preset), introducedToday+reviewedToday)
+		// The disclosure line (#87 §0.4): how many other users can see this viewer's progress on
+		// this deck. Not gated on deck.CanViewProgress -- it is about who can see the *viewer's*
+		// progress, not whether the viewer themselves holds the flag.
+		otherProgressViewers, err := q.CountOtherProgressViewers(r.Context(), db.CountOtherProgressViewersParams{UserID: user.ID, DeckID: deckID})
+		if err != nil {
+			serverError(w)
+			return
+		}
 		render(w, pages["deck"], http.StatusOK, map[string]any{
 			"User": user, "Deck": deck, "Counts": counts, "Notes": notes,
-			"DesiredRetention": params.DesiredRetention(),
+			"DesiredRetention":     params.DesiredRetention(),
+			"OtherProgressViewers": otherProgressViewers,
 			"Queue": queueCounts{
 				New: min(queueRow.NewCount, int64(newRemaining)), Learning: queueRow.LearningCount, Due: queueRow.DueCount,
 				Left: review.LeftToStudy(queueRow.NewCount, queueRow.LearningCount, queueRow.DueCount, review.ParsePriority(deck.Preset), newRemaining, totalRemaining),

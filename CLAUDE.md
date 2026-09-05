@@ -155,11 +155,13 @@ These are the load-bearing choices. Each one is cheap now and a rewrite later.
 - **Authorisation is explicit at the query layer.** Every query touching a deck takes a
   `user_id` and joins `deck_access`. Do not rely on handler-level guards alone — a shared deck
   means "readable by some users" is the normal case, not the exception.
-- **No cross-user reads without a `deck_access` row. No exceptions.** There is no public-deck
-  carve-out and no visibility flag — a deck is reachable by exactly the users with a row, and
-  no combination of that row's permission flags ever grants read of another user's
-  `user_card_state`. One authorisation path, so there is only one thing to get right and one
-  thing to test.
+- **No cross-user reads without a `deck_access` row.** There is no public-deck carve-out and no
+  general visibility flag — a deck is reachable by exactly the users with a row, and no
+  combination of that row's permission flags ever grants read of another user's
+  `user_card_state` **except `can_view_progress`, deck-scoped and aggregate-only** (#87,
+  docs/plans/87-instructor-dashboard.md §0.3). One authorisation path, so there is only one
+  thing to get right and one thing to test — the exception narrows what it can read, it does
+  not add a second path.
 - Naming: `snake_case` in SQL, Go-idiomatic field casing in generated structs — `sqlc` handles
   the mapping.
 - Comment density matches surrounding code. The `apkg` package earns comments (it encodes

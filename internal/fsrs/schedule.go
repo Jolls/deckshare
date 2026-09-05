@@ -206,6 +206,25 @@ func PreviewAll(p Params, prior CardState, now time.Time) (Preview, error) {
 	}, nil
 }
 
+// Retrievability is the probability prior's owner still recalls this card at now, on prior's own
+// forgetting curve -- zero for a never-seen card and for one with no LastReview, matching the
+// library (go-fsrs's Retrievability, fsrs.go:67). Pure, like everything else in this package
+// (CLAUDE.md §17): the caller maps the user_card_state row, this package never sees a database.
+func Retrievability(p Params, prior CardState, now time.Time) (float64, error) {
+	if !p.valid {
+		return 0, ErrUnvalidatedParams
+	}
+	card, err := toLibCard(prior)
+	if err != nil {
+		return 0, err
+	}
+	r, err := p.engine().Retrievability(card, now)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %v", ErrSchedule, err)
+	}
+	return r, nil
+}
+
 // libStabilityMin and libDifficultyMin mirror go-fsrs's unexported sMin/dMin (arithmetic.go:8,10),
 // the bounds its validateCard applies to a non-New card. Checked here so the error names our
 // field rather than theirs; keep them in step with the library on upgrade.
