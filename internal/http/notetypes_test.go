@@ -921,9 +921,9 @@ func TestNoteTypeAccess_ClassroomCase_EditDeniedWithoutNamingInvisibleBlockingDe
 
 // The denial reason can name a visible blocking deck and count an invisible one in the same
 // message -- both branches of noteTypeDenialReason firing together. This is also what
-// cmd/seed's fixtures show for real: "Basic" backs notes in Test Deck A (the collaborator
-// account has no access at all) and Test Deck C (view-only), so its reason on a seeded dev DB
-// reads the same way.
+// cmd/seed's fixtures show for real: "Basic" backs notes in Teacher A Solo (a student has no
+// access at all) and Shared Classroom (view-only for a student), so a student's reason on a
+// seeded dev DB reads the same way.
 func TestNoteTypeAccess_ClassroomCase_DenialReasonMixesNamedAndCountedBlockingDecks(t *testing.T) {
 	tx := beginTx(t)
 	handler, a := newTestHandler(t, tx, auth.Config{})

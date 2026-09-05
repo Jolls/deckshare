@@ -1,19 +1,26 @@
-// Command seed populates a freshly-migrated local database with a test user, several test decks,
-// and a few sample notes/cards in each -- so a manually-tested or reset dev DB has something to
-// review, not just empty decks. Signup already seeds the user's Basic/Cloze note types
-// (internal/auth/notetypes.go); this adds decks and notes on top. It also creates a second test
-// user and two decks shared between them, so the deck access management page (#83) and the
-// note-type-authority split (#192, docs/plans/192-note-type-authority.md) both have something to
-// show without granting access by hand:
+// Command seed populates a freshly-migrated local database with a "messy classroom" (#206):
+// two teachers with overlapping rosters, a deck they co-own, and decks owned outside any
+// teacher's control -- so multiuser access control has something realistic to exercise instead
+// of a single owner's decks. Signup already seeds each user's own Basic/Cloze note types
+// (internal/auth/notetypes.go); this adds decks, notes, and deck_access grants on top:
 //
-//   - Test Deck C (Shared): collaborator has can_view+can_study only. Its notes use "Basic",
-//     which is also used in owner-only Test Deck A -- so for the collaborator, "Basic" is
-//     READABLE (via Deck C) but not WRITABLE, and its notetypes-list denial reason exercises
-//     both branches at once: Deck C is visible but not editable (named), Deck A is invisible
-//     entirely (only counted).
-//   - Test Deck D (Shared, Editable): collaborator has full can_edit_content there, and it is
-//     the only deck using the dedicated "Vocab" note type -- WRITABLE for the collaborator, so
-//     "Vocab" shows up in their editable section with a working Edit link.
+//   - Teacher A has students C & D; Teacher B has students D & E. Student D is the overlap;
+//     Student E has no deck of their own.
+//   - "Shared Classroom" is owned by Teacher A, with Teacher B granted full deck_access
+//     (co-owner in every respect that matters -- can_edit_content, can_manage_access,
+//     can_delete, can_view_progress) and Students C, D, E granted can_view+can_study (the
+//     union of both teachers' rosters). Teacher B's can_edit_content here, on a note type
+//     ("Basic") Teacher B does not own, is the #192 note-type-authority demo: WRITABLE via
+//     deck access, not ownership. It also carries the #87 instructor-dashboard demo: two
+//     instructors, four reviewers' due counts and lapse-hotspot history.
+//   - "Teacher A Solo" is owned by Teacher A alone, using the same "Basic" note type as Shared
+//     Classroom -- invisible to every student. A student's view+study-only grant on Shared
+//     Classroom makes "Basic" a named, visible-but-not-editable blocker, while Teacher A Solo
+//     is an invisible, counted-only one: #192's denial reason naming one blocking deck and
+//     counting another in the same message.
+//   - "Student C Personal" and "Student D Personal" are owned outright by their students, no
+//     grants to anyone -- the no-cross-user-reads invariant (CLAUDE.md §2) has fixture data to
+//     violate if it ever regresses. Cloze/Basic respectively, so both note types stay in play.
 //
 // Safe to re-run: an already-seeded deck (non-zero card count) is left alone, and an existing
 // access grant or note type is left alone too.
@@ -51,26 +58,22 @@ import (
 var seedAvatarJPEG []byte
 
 const (
-	testEmail       = "test@test.com"
-	testPassword    = "password"
-	testDisplayName = "Test User"
+	teacherAEmail       = "teachera@ds.com"
+	teacherADisplayName = "Teacher A"
+	teacherBEmail       = "teacherb@ds.com"
+	teacherBDisplayName = "Teacher B"
+	studentCEmail       = "studentc@ds.com"
+	studentCDisplayName = "Student C"
+	studentDEmail       = "studentd@ds.com"
+	studentDDisplayName = "Student D"
+	studentEEmail       = "studente@ds.com"
+	studentEDisplayName = "Student E"
+	seedPassword        = "password"
 
-	collaboratorEmail       = "collaborator@test.com"
-	collaboratorPassword    = "password"
-	collaboratorDisplayName = "Test Collaborator"
-
-	// A second student on Test Deck C, so the instructor dashboard (#87) has a roster bigger
-	// than one and enough distinct reviewers to clear the lapse-hotspot's ≥3-student floor
-	// (owner + collaborator + collaborator2).
-	collaborator2Email       = "collaborator2@test.com"
-	collaborator2Password    = "password"
-	collaborator2DisplayName = "Test Collaborator 2"
-
-	basicDeckName  = "Test Deck A"
-	clozeDeckName  = "Test Deck B"
-	sharedDeckName = "Test Deck C (Shared)"
-	vocabDeckName  = "Test Deck D (Shared, Editable)"
-	vocabTypeName  = "Vocab"
+	sharedClassroomDeckName = "Shared Classroom"
+	teacherASoloDeckName    = "Teacher A Solo"
+	studentCDeckName        = "Student C Personal"
+	studentDDeckName        = "Student D Personal"
 
 	// Small caps so a fresh seed exercises #172's daily-cap / "Keep studying" path without
 	// requiring dozens of reviews first.
@@ -81,9 +84,9 @@ const (
 	// state and due, rather than New.
 	seedDueCardCount = 2
 
-	// baseCardCSS/clozeBoldCSS: signup seeds the test user's Basic/Cloze note types with empty
-	// CSS (internal/auth/notetypes.go), so a reseed has nothing to visually check note-type
-	// CSS against (e.g. #194: the reviewer's visible card missing the deckshare-card scope class,
+	// baseCardCSS/clozeBoldCSS: signup seeds each user's Basic/Cloze note types with empty CSS
+	// (internal/auth/notetypes.go), so a reseed has nothing to visually check note-type CSS
+	// against (e.g. #194: the reviewer's visible card missing the deckshare-card scope class,
 	// which silently drops every note-type CSS rule). Backfilled here rather than by changing
 	// what signup seeds, since this is test-fixture content, not a product default.
 	baseCardCSS = ".card {\n" +
@@ -128,176 +131,200 @@ func run() error {
 		return fmt.Errorf("init auth: %w", err)
 	}
 
-	user, err := ensureUser(ctx, pool, authSvc, testEmail, testPassword, testDisplayName)
+	teacherA, err := ensureUser(ctx, pool, authSvc, teacherAEmail, seedPassword, teacherADisplayName)
 	if err != nil {
-		return fmt.Errorf("ensure test user: %w", err)
+		return fmt.Errorf("ensure teacher A: %w", err)
 	}
-	collaborator, err := ensureUser(ctx, pool, authSvc, collaboratorEmail, collaboratorPassword, collaboratorDisplayName)
+	teacherB, err := ensureUser(ctx, pool, authSvc, teacherBEmail, seedPassword, teacherBDisplayName)
 	if err != nil {
-		return fmt.Errorf("ensure collaborator user: %w", err)
+		return fmt.Errorf("ensure teacher B: %w", err)
 	}
-	collaborator2, err := ensureUser(ctx, pool, authSvc, collaborator2Email, collaborator2Password, collaborator2DisplayName)
+	studentC, err := ensureUser(ctx, pool, authSvc, studentCEmail, seedPassword, studentCDisplayName)
 	if err != nil {
-		return fmt.Errorf("ensure second collaborator user: %w", err)
+		return fmt.Errorf("ensure student C: %w", err)
+	}
+	studentD, err := ensureUser(ctx, pool, authSvc, studentDEmail, seedPassword, studentDDisplayName)
+	if err != nil {
+		return fmt.Errorf("ensure student D: %w", err)
+	}
+	studentE, err := ensureUser(ctx, pool, authSvc, studentEEmail, seedPassword, studentEDisplayName)
+	if err != nil {
+		return fmt.Errorf("ensure student E: %w", err)
 	}
 
-	if !user.AvatarSha256.Valid {
-		if err := ensureAvatar(ctx, pool, user.ID); err != nil {
-			return fmt.Errorf("ensure test user avatar: %w", err)
+	if !teacherA.AvatarSha256.Valid {
+		if err := ensureAvatar(ctx, pool, teacherA.ID); err != nil {
+			return fmt.Errorf("ensure teacher A avatar: %w", err)
 		}
 	} else {
-		log.Print("test user already has an avatar, skipping avatar seeding")
+		log.Print("teacher A already has an avatar, skipping avatar seeding")
 	}
 
-	for _, name := range []string{basicDeckName, clozeDeckName, sharedDeckName, vocabDeckName} {
-		if err := ensureDeck(ctx, pool, user.ID, name); err != nil {
+	for _, name := range []string{sharedClassroomDeckName, teacherASoloDeckName} {
+		if err := ensureDeck(ctx, pool, teacherA.ID, name); err != nil {
 			return fmt.Errorf("ensure deck %q: %w", name, err)
 		}
 	}
-	if err := ensureNoteType(ctx, pool, user.ID, vocabTypeName, baseCardCSS,
-		[]string{"Word", "Definition"}, "Card 1", "{{Word}}", "{{FrontSide}}<hr>{{Definition}}"); err != nil {
-		return fmt.Errorf("ensure %s note type: %w", vocabTypeName, err)
+	if err := ensureDeck(ctx, pool, studentC.ID, studentCDeckName); err != nil {
+		return fmt.Errorf("ensure deck %q: %w", studentCDeckName, err)
+	}
+	if err := ensureDeck(ctx, pool, studentD.ID, studentDDeckName); err != nil {
+		return fmt.Errorf("ensure deck %q: %w", studentDDeckName, err)
 	}
 
 	q := db.New(pool)
-	decks, err := q.ListDecksForUser(ctx, user.ID)
+
+	teacherADecks, err := q.ListDecksForUser(ctx, teacherA.ID)
 	if err != nil {
-		return fmt.Errorf("list decks: %w", err)
+		return fmt.Errorf("list teacher A decks: %w", err)
 	}
-	noteTypes, err := q.ListNoteTypesForUser(ctx, user.ID)
+	sharedClassroomDeck, ok := findDeck(teacherADecks, sharedClassroomDeckName)
+	if !ok {
+		return fmt.Errorf("deck %q not found after ensureDeck", sharedClassroomDeckName)
+	}
+	teacherASoloDeck, ok := findDeck(teacherADecks, teacherASoloDeckName)
+	if !ok {
+		return fmt.Errorf("deck %q not found after ensureDeck", teacherASoloDeckName)
+	}
+
+	studentCDecks, err := q.ListDecksForUser(ctx, studentC.ID)
 	if err != nil {
-		return fmt.Errorf("list note types: %w", err)
+		return fmt.Errorf("list student C decks: %w", err)
+	}
+	studentCDeck, ok := findDeck(studentCDecks, studentCDeckName)
+	if !ok {
+		return fmt.Errorf("deck %q not found after ensureDeck", studentCDeckName)
 	}
 
-	basicDeck, ok := findDeck(decks, basicDeckName)
-	if !ok {
-		return fmt.Errorf("deck %q not found after ensureDeck", basicDeckName)
+	studentDDecks, err := q.ListDecksForUser(ctx, studentD.ID)
+	if err != nil {
+		return fmt.Errorf("list student D decks: %w", err)
 	}
-	clozeDeck, ok := findDeck(decks, clozeDeckName)
+	studentDDeck, ok := findDeck(studentDDecks, studentDDeckName)
 	if !ok {
-		return fmt.Errorf("deck %q not found after ensureDeck", clozeDeckName)
-	}
-	basicType, ok := findNoteType(noteTypes, "Basic")
-	if !ok {
-		return errors.New(`note type "Basic" not found -- signup seeding may have failed`)
-	}
-	clozeType, ok := findNoteType(noteTypes, "Cloze")
-	if !ok {
-		return errors.New(`note type "Cloze" not found -- signup seeding may have failed`)
+		return fmt.Errorf("deck %q not found after ensureDeck", studentDDeckName)
 	}
 
-	if err := ensureNoteTypeCSS(ctx, q, basicType, baseCardCSS); err != nil {
-		return fmt.Errorf("ensure Basic note type css: %w", err)
+	teacherANoteTypes, err := q.ListNoteTypesForUser(ctx, teacherA.ID)
+	if err != nil {
+		return fmt.Errorf("list teacher A note types: %w", err)
 	}
-	if err := ensureNoteTypeCSS(ctx, q, clozeType, baseCardCSS+clozeBoldCSS); err != nil {
-		return fmt.Errorf("ensure Cloze note type css: %w", err)
+	teacherABasic, ok := findNoteType(teacherANoteTypes, "Basic")
+	if !ok {
+		return errors.New(`note type "Basic" not found for teacher A -- signup seeding may have failed`)
+	}
+	if err := ensureNoteTypeCSS(ctx, q, teacherABasic, baseCardCSS); err != nil {
+		return fmt.Errorf("ensure teacher A Basic note type css: %w", err)
 	}
 
-	if basicDeck.CardCount == 0 {
-		if err := seedSampleNotes(ctx, pool, user.ID, basicDeck.ID, basicType.ID, "Basic", basicSamples); err != nil {
-			return fmt.Errorf("seed basic notes: %w", err)
+	studentCNoteTypes, err := q.ListNoteTypesForUser(ctx, studentC.ID)
+	if err != nil {
+		return fmt.Errorf("list student C note types: %w", err)
+	}
+	studentCCloze, ok := findNoteType(studentCNoteTypes, "Cloze")
+	if !ok {
+		return errors.New(`note type "Cloze" not found for student C -- signup seeding may have failed`)
+	}
+	if err := ensureNoteTypeCSS(ctx, q, studentCCloze, baseCardCSS+clozeBoldCSS); err != nil {
+		return fmt.Errorf("ensure student C Cloze note type css: %w", err)
+	}
+
+	studentDNoteTypes, err := q.ListNoteTypesForUser(ctx, studentD.ID)
+	if err != nil {
+		return fmt.Errorf("list student D note types: %w", err)
+	}
+	studentDBasic, ok := findNoteType(studentDNoteTypes, "Basic")
+	if !ok {
+		return errors.New(`note type "Basic" not found for student D -- signup seeding may have failed`)
+	}
+	if err := ensureNoteTypeCSS(ctx, q, studentDBasic, baseCardCSS); err != nil {
+		return fmt.Errorf("ensure student D Basic note type css: %w", err)
+	}
+
+	if sharedClassroomDeck.CardCount == 0 {
+		if err := seedSampleNotes(ctx, pool, teacherA.ID, sharedClassroomDeck.ID, teacherABasic.ID, "Basic", basicSamples); err != nil {
+			return fmt.Errorf("seed shared classroom notes: %w", err)
 		}
-		log.Printf("seeded sample notes in %s", basicDeckName)
-		if err := seedDueCards(ctx, pool, user.ID, basicDeck.ID, seedDueCardCount); err != nil {
-			return fmt.Errorf("seed due cards in %s: %w", basicDeckName, err)
+		log.Printf("seeded sample notes in %s", sharedClassroomDeckName)
+		if err := seedDueCards(ctx, pool, teacherA.ID, sharedClassroomDeck.ID, seedDueCardCount); err != nil {
+			return fmt.Errorf("seed due cards in %s: %w", sharedClassroomDeckName, err)
 		}
 	} else {
-		log.Printf("%s already has cards, skipping note seeding", basicDeckName)
+		log.Printf("%s already has cards, skipping note seeding", sharedClassroomDeckName)
 	}
 
-	if clozeDeck.CardCount == 0 {
-		if err := seedSampleNotes(ctx, pool, user.ID, clozeDeck.ID, clozeType.ID, "Cloze", clozeSamples); err != nil {
-			return fmt.Errorf("seed cloze notes: %w", err)
+	if teacherASoloDeck.CardCount == 0 {
+		if err := seedSampleNotes(ctx, pool, teacherA.ID, teacherASoloDeck.ID, teacherABasic.ID, "Basic", basicSamples); err != nil {
+			return fmt.Errorf("seed teacher A solo notes: %w", err)
 		}
-		log.Printf("seeded sample notes in %s", clozeDeckName)
-		if err := seedDueCards(ctx, pool, user.ID, clozeDeck.ID, seedDueCardCount); err != nil {
-			return fmt.Errorf("seed due cards in %s: %w", clozeDeckName, err)
+		log.Printf("seeded sample notes in %s", teacherASoloDeckName)
+		if err := seedDueCards(ctx, pool, teacherA.ID, teacherASoloDeck.ID, seedDueCardCount); err != nil {
+			return fmt.Errorf("seed due cards in %s: %w", teacherASoloDeckName, err)
 		}
 	} else {
-		log.Printf("%s already has cards, skipping note seeding", clozeDeckName)
+		log.Printf("%s already has cards, skipping note seeding", teacherASoloDeckName)
 	}
 
-	sharedDeck, ok := findDeck(decks, sharedDeckName)
-	if !ok {
-		return fmt.Errorf("deck %q not found after ensureDeck", sharedDeckName)
-	}
-	if sharedDeck.CardCount == 0 {
-		if err := seedSampleNotes(ctx, pool, user.ID, sharedDeck.ID, basicType.ID, "Basic", basicSamples); err != nil {
-			return fmt.Errorf("seed shared deck notes: %w", err)
+	if studentCDeck.CardCount == 0 {
+		if err := seedSampleNotes(ctx, pool, studentC.ID, studentCDeck.ID, studentCCloze.ID, "Cloze", clozeSamples); err != nil {
+			return fmt.Errorf("seed student C notes: %w", err)
 		}
-		log.Printf("seeded sample notes in %s", sharedDeckName)
-		if err := seedDueCards(ctx, pool, user.ID, sharedDeck.ID, seedDueCardCount); err != nil {
-			return fmt.Errorf("seed due cards in %s: %w", sharedDeckName, err)
+		log.Printf("seeded sample notes in %s", studentCDeckName)
+		if err := seedDueCards(ctx, pool, studentC.ID, studentCDeck.ID, seedDueCardCount); err != nil {
+			return fmt.Errorf("seed due cards in %s: %w", studentCDeckName, err)
 		}
 	} else {
-		log.Printf("%s already has cards, skipping note seeding", sharedDeckName)
+		log.Printf("%s already has cards, skipping note seeding", studentCDeckName)
 	}
-	// Both students too, so the instructor dashboard's (#87) Due column isn't owner-only. Each
-	// call below has its own idempotency guard (seedDueCards' ON CONFLICT, seedLapseHotspotReviews'
+
+	if studentDDeck.CardCount == 0 {
+		if err := seedSampleNotes(ctx, pool, studentD.ID, studentDDeck.ID, studentDBasic.ID, "Basic", basicSamples); err != nil {
+			return fmt.Errorf("seed student D notes: %w", err)
+		}
+		log.Printf("seeded sample notes in %s", studentDDeckName)
+		if err := seedDueCards(ctx, pool, studentD.ID, studentDDeck.ID, seedDueCardCount); err != nil {
+			return fmt.Errorf("seed due cards in %s: %w", studentDDeckName, err)
+		}
+	} else {
+		log.Printf("%s already has cards, skipping note seeding", studentDDeckName)
+	}
+
+	// Students, too, so the instructor dashboard's (#87) Due column isn't owner-only. Each call
+	// below has its own idempotency guard (seedDueCards' ON CONFLICT, seedLapseHotspotReviews'
 	// own existence check), so -- unlike the notes above -- these run on every seed invocation,
-	// not just the first: this package's doc comment promises the whole script is safe to re-run,
-	// and Deck C already had cards on this dev database before these two students existed here.
-	if err := seedDueCards(ctx, pool, collaborator.ID, sharedDeck.ID, seedDueCardCount); err != nil {
-		return fmt.Errorf("seed due cards for collaborator in %s: %w", sharedDeckName, err)
-	}
-	if err := seedDueCards(ctx, pool, collaborator2.ID, sharedDeck.ID, seedDueCardCount); err != nil {
-		return fmt.Errorf("seed due cards for second collaborator in %s: %w", sharedDeckName, err)
-	}
-	if err := seedLapseHotspotReviews(ctx, pool, sharedDeck.ID, user.ID, collaborator.ID, collaborator2.ID); err != nil {
-		return fmt.Errorf("seed lapse hotspot reviews in %s: %w", sharedDeckName, err)
-	}
-
-	// Read-only-ish grant: enough to exercise the access page's varied flags (#83) without
-	// also handing the collaborator can_manage_access or can_delete. Deliberately no
-	// can_edit_content -- combined with Deck A below (no access at all), this makes "Basic"
-	// not WRITABLE for the collaborator, exercising both branches of the #192 notetypes-list
-	// denial reason at once (docs/plans/192-note-type-authority.md): Deck C is visible but not
-	// editable (named in the reason), Deck A is invisible entirely (only counted).
-	// CanViewProgress here too (#87): lets collaborator@test.com demonstrate a non-owner
-	// instructor's view of /decks/{id}/progress, alongside the owner's (deck creators hold it
-	// automatically via GrantFullDeckAccess).
-	if err := ensureDeckAccess(ctx, pool, db.GrantDeckAccessParams{
-		DeckID: sharedDeck.ID, CallerUserID: user.ID, TargetUserID: collaborator.ID,
-		CanView: true, CanStudy: true, CanViewProgress: true,
-	}); err != nil {
-		return fmt.Errorf("ensure collaborator access to %q: %w", sharedDeckName, err)
-	}
-	// Second student: can_study only, no can_view_progress -- an ordinary roster member, not an
-	// instructor.
-	if err := ensureDeckAccess(ctx, pool, db.GrantDeckAccessParams{
-		DeckID: sharedDeck.ID, CallerUserID: user.ID, TargetUserID: collaborator2.ID,
-		CanView: true, CanStudy: true,
-	}); err != nil {
-		return fmt.Errorf("ensure second collaborator access to %q: %w", sharedDeckName, err)
-	}
-
-	vocabDeck, ok := findDeck(decks, vocabDeckName)
-	if !ok {
-		return fmt.Errorf("deck %q not found after ensureDeck", vocabDeckName)
-	}
-	vocabType, ok := findNoteType(noteTypes, vocabTypeName)
-	if !ok {
-		return fmt.Errorf("note type %q not found after ensureNoteType", vocabTypeName)
-	}
-	if vocabDeck.CardCount == 0 {
-		if err := seedSampleNotes(ctx, pool, user.ID, vocabDeck.ID, vocabType.ID, vocabTypeName, vocabSamples); err != nil {
-			return fmt.Errorf("seed vocab notes: %w", err)
+	// not just the first: this package's doc comment promises the whole script is safe to
+	// re-run, and Shared Classroom may already have had cards on this dev database before these
+	// students existed here.
+	for _, student := range []db.User{studentC, studentD, studentE} {
+		if err := seedDueCards(ctx, pool, student.ID, sharedClassroomDeck.ID, seedDueCardCount); err != nil {
+			return fmt.Errorf("seed due cards for student in %s: %w", sharedClassroomDeckName, err)
 		}
-		log.Printf("seeded sample notes in %s", vocabDeckName)
-		if err := seedDueCards(ctx, pool, user.ID, vocabDeck.ID, seedDueCardCount); err != nil {
-			return fmt.Errorf("seed due cards in %s: %w", vocabDeckName, err)
-		}
-	} else {
-		log.Printf("%s already has cards, skipping note seeding", vocabDeckName)
+	}
+	if err := seedLapseHotspotReviews(ctx, pool, sharedClassroomDeck.ID,
+		[]pgtype.UUID{teacherA.ID, studentC.ID, studentD.ID, studentE.ID}); err != nil {
+		return fmt.Errorf("seed lapse hotspot reviews in %s: %w", sharedClassroomDeckName, err)
 	}
 
-	// Full content-edit grant, and Vocab is used nowhere else -- WRITABLE for the collaborator
-	// (#192), so their notetypes list shows Vocab as editable with a working Edit link.
+	// Co-owner grant: Teacher B gets every deck_access flag Teacher A (the creator) has, making
+	// Teacher B a co-owner in every respect that matters -- content, settings, access
+	// management, deletion, and progress visibility (#87, #206). Teacher B's can_edit_content
+	// here, on "Basic" (which Teacher B does not own), is the #192 WRITABLE-via-access demo.
 	if err := ensureDeckAccess(ctx, pool, db.GrantDeckAccessParams{
-		DeckID: vocabDeck.ID, CallerUserID: user.ID, TargetUserID: collaborator.ID,
-		CanView: true, CanStudy: true, CanEditContent: true,
+		DeckID: sharedClassroomDeck.ID, CallerUserID: teacherA.ID, TargetUserID: teacherB.ID,
+		CanView: true, CanStudy: true, CanEditContent: true, CanEditSettings: true,
+		CanManageAccess: true, CanDelete: true, CanViewProgress: true,
 	}); err != nil {
-		return fmt.Errorf("ensure collaborator access to %q: %w", vocabDeckName, err)
+		return fmt.Errorf("ensure teacher B co-owner access to %q: %w", sharedClassroomDeckName, err)
+	}
+	// Roster grants: the union of both teachers' students (A: C & D, B: D & E) can view+study
+	// the shared deck, but not edit it.
+	for _, student := range []db.User{studentC, studentD, studentE} {
+		if err := ensureDeckAccess(ctx, pool, db.GrantDeckAccessParams{
+			DeckID: sharedClassroomDeck.ID, CallerUserID: teacherA.ID, TargetUserID: student.ID,
+			CanView: true, CanStudy: true,
+		}); err != nil {
+			return fmt.Errorf("ensure student access to %q: %w", sharedClassroomDeckName, err)
+		}
 	}
 
 	return nil
@@ -376,7 +403,7 @@ func ensureAvatar(ctx context.Context, pool *pgxpool.Pool, userID pgtype.UUID) e
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	log.Print("seeded test user avatar")
+	log.Print("seeded avatar")
 	return nil
 }
 
@@ -406,33 +433,6 @@ func ensureDeck(ctx context.Context, pool *pgxpool.Pool, ownerID pgtype.UUID, na
 		return fmt.Errorf("commit: %w", err)
 	}
 	log.Printf("created deck: %s", name)
-	return nil
-}
-
-// ensureNoteType creates a single-template, non-cloze note type for the owner if one of that
-// name doesn't already exist -- the #192 demo fixtures need a note type distinct from the
-// signup-seeded Basic/Cloze pair. Safe to re-run: an existing note type of the same name is left
-// alone, CSS included (matching ensureDeck/ensureNoteTypeCSS's re-run tolerance).
-func ensureNoteType(ctx context.Context, pool *pgxpool.Pool, ownerID pgtype.UUID, name, css string, fieldNames []string, templateName, qfmt, afmt string) error {
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	_, err = db.CreateNoteTypeWithFieldsAndTemplates(ctx, tx, ownerID, name, css, false, 0, fieldNames,
-		[]db.TemplateEdit{{Name: templateName, Qfmt: qfmt, Afmt: afmt}})
-	if err != nil {
-		if db.IsUniqueViolation(err, "note_types_owner_id_name_key") {
-			log.Printf("note type already exists: %s", name)
-			return nil
-		}
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit: %w", err)
-	}
-	log.Printf("created note type: %s", name)
 	return nil
 }
 
@@ -473,17 +473,22 @@ func seedDueCards(ctx context.Context, pool *pgxpool.Pool, userID, deckID pgtype
 	return nil
 }
 
-// seedLapseHotspotReviews records every one of the three users failing the shared deck's
-// first due card, so the instructor dashboard (#87, GET /decks/{id}/progress) has a lapse
-// hotspot to show without a manual review session: 5 review-state "Again" answers across 3
-// distinct students clears the ≥5-review/≥3-student floor (internal/http/progress.go's
-// hotspotMinReviews/hotspotMinStudents). review_log has no ON CONFLICT re-run guard the way
-// seedDueCards' user_card_state upsert does (a client-generated id is what makes a real grade
-// idempotent, and this seed data has none), so this checks for its own prior work instead and
-// skips if found -- safe to call on every seed invocation, matching this package's "safe to
-// re-run" promise. Timestamps ride seedDueCards' fixed seedDueLastReview date, so they stay
-// inside the dashboard's rolling 30-day window for as long as that date does.
-func seedLapseHotspotReviews(ctx context.Context, pool *pgxpool.Pool, deckID, ownerID, collaboratorID, collaborator2ID pgtype.UUID) error {
+// seedLapseHotspotReviews records every one of reviewerIDs failing the shared deck's first due
+// card, so the instructor dashboard (#87, GET /decks/{id}/progress) has a lapse hotspot to show
+// without a manual review session: the first reviewer answers twice and the rest once each, so
+// len(reviewerIDs)+1 "Again" answers clear the ≥5-review/≥3-student floor (internal/http/progress.go's
+// hotspotMinReviews/hotspotMinStudents) as long as reviewerIDs has at least 3 distinct entries.
+// review_log has no ON CONFLICT re-run guard the way seedDueCards' user_card_state upsert does
+// (a client-generated id is what makes a real grade idempotent, and this seed data has none), so
+// this checks for its own prior work instead and skips if found -- safe to call on every seed
+// invocation, matching this package's "safe to re-run" promise. Timestamps ride seedDueCards'
+// fixed seedDueLastReview date, so they stay inside the dashboard's rolling 30-day window for as
+// long as that date does.
+func seedLapseHotspotReviews(ctx context.Context, pool *pgxpool.Pool, deckID pgtype.UUID, reviewerIDs []pgtype.UUID) error {
+	if len(reviewerIDs) < 3 {
+		return fmt.Errorf("need at least 3 distinct reviewers to clear the lapse hotspot floor, got %d", len(reviewerIDs))
+	}
+
 	var cardID pgtype.UUID
 	if err := pool.QueryRow(ctx, `SELECT id FROM cards WHERE deck_id = $1 ORDER BY id LIMIT 1`, deckID).Scan(&cardID); err != nil {
 		return fmt.Errorf("find hotspot card: %w", err)
@@ -491,7 +496,7 @@ func seedLapseHotspotReviews(ctx context.Context, pool *pgxpool.Pool, deckID, ow
 	var alreadySeeded bool
 	if err := pool.QueryRow(ctx,
 		`SELECT count(*) > 0 FROM review_log WHERE card_id = $1 AND user_id = $2`,
-		cardID, collaborator2ID,
+		cardID, reviewerIDs[len(reviewerIDs)-1],
 	).Scan(&alreadySeeded); err != nil {
 		return fmt.Errorf("check for existing hotspot reviews: %w", err)
 	}
@@ -500,15 +505,13 @@ func seedLapseHotspotReviews(ctx context.Context, pool *pgxpool.Pool, deckID, ow
 		return nil
 	}
 
-	reviews := []struct {
+	type review struct {
 		userID pgtype.UUID
 		offset time.Duration
-	}{
-		{ownerID, 0},
-		{ownerID, time.Minute},
-		{collaboratorID, 0},
-		{collaboratorID, time.Minute},
-		{collaborator2ID, 0},
+	}
+	reviews := []review{{reviewerIDs[0], 0}, {reviewerIDs[0], time.Minute}}
+	for _, id := range reviewerIDs[1:] {
+		reviews = append(reviews, review{id, 0})
 	}
 	for _, rv := range reviews {
 		if _, err := pool.Exec(ctx, `
@@ -610,18 +613,6 @@ var clozeSamples = [][2]string{
 	{"The plural of mouse is {{c1::mice}}", ""},
 	{"Gravity pulls objects toward {{c1::Earth}}", ""},
 	{"The freezing point of water is {{c1::0}} degrees Celsius", ""},
-}
-
-// vocabSamples is Word/Definition-shaped, for the dedicated "Vocab" note type (#192 demo).
-var vocabSamples = [][2]string{
-	{"Ephemeral", "Lasting for a very short time"},
-	{"Ubiquitous", "Present, appearing, or found everywhere"},
-	{"Serendipity", "The occurrence of events by chance in a happy way"},
-	{"Mellifluous", "Sweet or musical; pleasant to hear"},
-	{"Pernicious", "Having a harmful effect, especially gradually"},
-	{"Cacophony", "A harsh, discordant mixture of sounds"},
-	{"Ineffable", "Too great to be expressed in words"},
-	{"Quintessential", "Representing the most perfect example of a quality"},
 }
 
 func seedSampleNotes(ctx context.Context, pool *pgxpool.Pool, userID, deckID, noteTypeID pgtype.UUID, typeName string, samples [][2]string) error {

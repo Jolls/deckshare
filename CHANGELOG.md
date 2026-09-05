@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.30] - 2026-09-05
+
+### Changed
+- `cmd/seed` now seeds a "messy classroom": two teachers with overlapping student rosters
+  co-owning a shared deck, plus decks owned outright by two students, replacing the prior
+  single-owner/collaborator fixture set so multiuser access control has realistic test data
+  ([#206](https://github.com/Jolls/deckshare/issues/206)).
+
 ## [0.2.29] - 2026-09-04
 
 ### Added
