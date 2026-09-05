@@ -139,7 +139,7 @@ access until Milestone 2 (architecture.md §11).
 | Method | Path | Permission | Purpose |
 |---|---|---|---|
 | GET | `/decks/{id}/access` | `can_manage_access` | List collaborators and their permission flags |
-| POST | `/decks/{id}/access` | `can_manage_access` | Grant access (email + choice of the seven flags) |
+| POST | `/decks/{id}/access` | `can_manage_access` | Grant access (email + choice of the eight flags) |
 | POST | `/decks/{id}/access/{userId}/edit` | `can_manage_access` | Change a collaborator's flags |
 | POST | `/decks/{id}/access/{userId}/delete` | `can_manage_access` | Revoke access (delete the row) |
 | POST | `/decks/{id}/access/{userId}/reset` | `can_manage_access` | Reset a collaborator's scheduling progress on this deck (deletes their `user_card_state` rows for it; `review_log` untouched — [#189](https://github.com/Jolls/deckshare/issues/189)) |
@@ -174,6 +174,30 @@ Aggregates only, never a named student's individual `review_log` rows, and never
 `can_view_progress` is deck-scoped exactly like every other flag (docs/schema.md's amendment to
 "Access control at the query layer"). No write route exists here; resetting a student's progress
 already exists behind `can_manage_access` (`POST /decks/{id}/access/{userId}/reset`, above).
+
+---
+
+## Flags — `flags.go` ([#207](https://github.com/Jolls/deckshare/issues/207))
+
+A student flags a card mid-review with a text comment; the deck owner (or anyone else holding
+`can_view_flags`, deck_access's eighth independent permission) reviews and resolves it. Unlike
+`can_view_progress`, this is a new table (`card_flags`), not a read of `user_card_state`/
+`review_log`, so no invariant needed amending — the flag is simply orthogonal to the other seven.
+
+| Method | Path | Permission | Purpose |
+|---|---|---|---|
+| POST | `/decks/{id}/cards/flags` | `can_view`, `can_study` | Create/replace the caller's open flag on one card. `cardId` rides as a form field, not a path segment — the reviewer only knows the current card client-side at request time (`#review-stage`'s dataset). Resubmitting while a flag is still open replaces the comment rather than creating a second row. Answers an htmx fragment ("Flagged ✓"), never a redirect — this is called from inside the reviewer and must not navigate the page away mid-session |
+| GET | `/decks/{id}/flags` | `can_view_flags` | List flags for the deck, `?status=open\|resolved` (default `open`) |
+| POST | `/decks/{id}/flags/{flagId}/resolve` | `can_view_flags` | Mark one flag resolved |
+
+No rendered-content snapshot is stored on the flag — the list page reads the note's *current*
+first field as a label (same expression `ListLapseHotspotsForDeck`, progress.sql, already uses),
+so if the owner has already fixed the note by the time they look, they see the fixed version.
+`card_flags.card_id` cascades on card delete (migration `00019_card_flags.sql`) — unlike
+`review_log.card_id`, which has no FK by decision (docs/schema.md) — because a flag carries no
+protected-training-data status (§2.5 doesn't apply here): if editing the note regenerates its
+cards, the simplest thing is for the flag to go with it. `/study` (the cross-deck mixed session)
+does not get a flag control in this pass — its queued cards don't carry a per-card deck id.
 
 ---
 

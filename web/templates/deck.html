@@ -15,6 +15,7 @@
     {{if .Deck.CanEditSettings}}<a href="/decks/{{.Deck.ID}}/edit" role="button" class="outline btn-sm">Edit deck</a>{{end}}
     {{if .Deck.CanManageAccess}}<a href="/decks/{{.Deck.ID}}/access" role="button" class="outline btn-sm">Manage access</a>{{end}}
     {{if .Deck.CanViewProgress}}<a href="/decks/{{.Deck.ID}}/progress" role="button" class="outline btn-sm">Progress</a>{{end}}
+    {{if .Deck.CanViewFlags}}<a href="/decks/{{.Deck.ID}}/flags" role="button" class="outline btn-sm">Flags{{if gt .OpenFlags 0}} ({{.OpenFlags}}){{end}}</a>{{end}}
     <a href="/decks/{{.Deck.ID}}/export" role="button" class="outline btn-sm">Export</a>
     <a href="/decks" role="button" class="outline btn-sm">Back to decks</a>
 </nav>

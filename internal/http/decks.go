@@ -222,10 +222,18 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			serverError(w)
 			return
 		}
+		// Feeds the Flags nav badge (deck.html), gated there on CanViewFlags -- queried
+		// unconditionally, same as otherProgressViewers above, rather than branching on the flag.
+		openFlags, err := q.CountOpenFlagsForDeck(r.Context(), deckID)
+		if err != nil {
+			serverError(w)
+			return
+		}
 		render(w, pages["deck"], http.StatusOK, map[string]any{
 			"User": user, "Deck": deck, "Counts": counts, "Notes": notes,
 			"DesiredRetention":     params.DesiredRetention(),
 			"OtherProgressViewers": otherProgressViewers,
+			"OpenFlags":            openFlags,
 			"Queue": queueCounts{
 				New: min(queueRow.NewCount, int64(newRemaining)), Learning: queueRow.LearningCount, Due: queueRow.DueCount,
 				Left: review.LeftToStudy(queueRow.NewCount, queueRow.LearningCount, queueRow.DueCount, review.ParsePriority(deck.Preset), newRemaining, totalRemaining),

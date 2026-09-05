@@ -18,6 +18,18 @@ type Card struct {
 	ImportDuePosition pgtype.Int4
 }
 
+type CardFlag struct {
+	ID               pgtype.UUID
+	CardID           pgtype.UUID
+	DeckID           pgtype.UUID
+	FlaggedByUserID  pgtype.UUID
+	Comment          string
+	Status           string
+	CreatedAt        pgtype.Timestamptz
+	ResolvedAt       pgtype.Timestamptz
+	ResolvedByUserID pgtype.UUID
+}
+
 type Deck struct {
 	ID          pgtype.UUID
 	OwnerID     pgtype.UUID
@@ -40,6 +52,7 @@ type DeckAccess struct {
 	CanDelete       bool
 	CreatedAt       pgtype.Timestamptz
 	CanViewProgress bool
+	CanViewFlags    bool
 }
 
 type Field struct {
