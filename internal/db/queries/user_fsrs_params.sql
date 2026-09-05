@@ -10,6 +10,18 @@ WHERE user_id = sqlc.arg(user_id) AND (deck_id = sqlc.arg(deck_id) OR deck_id IS
 ORDER BY deck_id NULLS LAST
 LIMIT 1;
 
+-- Batched form of GetEffectiveFsrsParams for a page of users on one deck (#87's instructor
+-- dashboard): one round trip instead of one query per student. DISTINCT ON keeps the
+-- highest-priority row per user -- same deck_id NULLS LAST precedence as above, applied per user
+-- rather than per single arg. A user with neither a per-deck override nor a global row is simply
+-- absent from the result; the caller falls back to library defaults for them, same as
+-- GetEffectiveFsrsParams's pgx.ErrNoRows case.
+-- name: GetEffectiveFsrsParamsForUsers :many
+SELECT DISTINCT ON (user_id) user_id, fsrs_version, params, desired_retention
+FROM user_fsrs_params
+WHERE user_id = ANY(sqlc.arg(user_ids)::uuid[]) AND (deck_id = sqlc.arg(deck_id) OR deck_id IS NULL)
+ORDER BY user_id, deck_id NULLS LAST;
+
 -- name: GetGlobalFsrsRetention :one
 SELECT desired_retention FROM user_fsrs_params WHERE user_id = $1 AND deck_id IS NULL;
 

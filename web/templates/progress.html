@@ -1,0 +1,66 @@
+{{define "content"}}
+<h1>Progress — {{.Deck.Name}}</h1>
+<p>{{.RosterSize}} student{{if ne .RosterSize 1}}s{{end}} · as of {{.AsOf.Format "2006-01-02 15:04 MST"}}</p>
+{{if or (gt .Page 0) .HasNextPage}}<p><small>Sorting applies to this page only.</small></p>{{end}}
+
+<table>
+    <thead>
+        <tr>
+            <th><a href="?sort=name">Student</a></th>
+            <th>Seen</th><th>New</th><th>Learning</th>
+            <th><a href="?sort=due">Due</a></th>
+            <th>Recall now</th><th>Pass rate 30d</th>
+            <th><a href="?sort=reviews">Reviews 30d</a></th>
+            <th>Last studied</th>
+        </tr>
+    </thead>
+    <tbody>
+        {{range .Students}}
+        <tr>
+            <td>{{.Email}}{{if .DisplayName}} ({{.DisplayName}}){{end}}</td>
+            <td>{{.Seen}}</td>
+            <td>{{.New}}</td>
+            <td>{{.Learning}}</td>
+            <td>{{.Due}}</td>
+            <td>{{.RecallDisplay}}</td>
+            <td>{{.PassRateDisplay}}</td>
+            <td>{{.Reviews}}</td>
+            <td>{{.LastStudiedDisplay}}</td>
+        </tr>
+        {{else}}
+        <tr><td colspan="9">No students hold study access to this deck yet.</td></tr>
+        {{end}}
+    </tbody>
+</table>
+
+<nav class="button-nav">
+    {{if gt .Page 0}}<a href="?page={{.PrevPage}}" role="button" class="outline btn-sm">Previous</a>{{end}}
+    {{if .HasNextPage}}<a href="?page={{.NextPage}}" role="button" class="outline btn-sm">Next</a>{{end}}
+</nav>
+
+<section>
+    <h2>Lapse hotspots</h2>
+    {{if .Hotspots}}
+    <table>
+        <thead>
+            <tr><th>Card</th><th>Students</th><th>Reviews</th><th>Again rate</th></tr>
+        </thead>
+        <tbody>
+            {{range .Hotspots}}
+            <tr>
+                <td>{{if $.Deck.CanEditContent}}<a href="/notes/{{.NoteID}}/edit">{{.Label}}</a>{{else}}{{.Label}}{{end}}</td>
+                <td>{{.Students}}</td>
+                <td>{{.Reviews}}</td>
+                <td>{{.AgainRateDisplay}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    {{else}}
+    <p>No cards meet the reporting threshold yet.</p>
+    {{end}}
+    <p><small>Shown only for cards with at least {{.HotspotMinReviews}} reviews across at least {{.HotspotMinStudents}} students.</small></p>
+</section>
+
+{{template "backToDeck" .Deck}}
+{{end}}

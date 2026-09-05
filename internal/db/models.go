@@ -39,6 +39,7 @@ type DeckAccess struct {
 	CanManageAccess bool
 	CanDelete       bool
 	CreatedAt       pgtype.Timestamptz
+	CanViewProgress bool
 }
 
 type Field struct {

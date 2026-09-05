@@ -2,6 +2,7 @@
 <h1>{{.Deck.Name}}</h1>
 {{if .Deck.Description}}<p>{{.Deck.Description}}</p>{{end}}
 <p>{{.Counts.NoteCount}} notes, {{.Counts.CardCount}} cards</p>
+{{if gt .OtherProgressViewers 0}}<p>Progress visible to {{.OtherProgressViewers}} instructor{{if ne .OtherProgressViewers 1}}s{{end}}.</p>{{end}}
 <p class="deck-stats-row">
     <a href="/decks/{{.Deck.ID}}/review" role="button">Study</a>
     <span>New: {{.Queue.New}} · Learning: {{.Queue.Learning}} · Due: {{.Queue.Due}} · Left today: {{.Queue.Left}}</span>
@@ -13,6 +14,7 @@
     {{end}}
     {{if .Deck.CanEditSettings}}<a href="/decks/{{.Deck.ID}}/edit" role="button" class="outline btn-sm">Edit deck</a>{{end}}
     {{if .Deck.CanManageAccess}}<a href="/decks/{{.Deck.ID}}/access" role="button" class="outline btn-sm">Manage access</a>{{end}}
+    {{if .Deck.CanViewProgress}}<a href="/decks/{{.Deck.ID}}/progress" role="button" class="outline btn-sm">Progress</a>{{end}}
     <a href="/decks/{{.Deck.ID}}/export" role="button" class="outline btn-sm">Export</a>
     <a href="/decks" role="button" class="outline btn-sm">Back to decks</a>
 </nav>

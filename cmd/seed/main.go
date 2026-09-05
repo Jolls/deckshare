@@ -59,6 +59,13 @@ const (
 	collaboratorPassword    = "password"
 	collaboratorDisplayName = "Test Collaborator"
 
+	// A second student on Test Deck C, so the instructor dashboard (#87) has a roster bigger
+	// than one and enough distinct reviewers to clear the lapse-hotspot's ≥3-student floor
+	// (owner + collaborator + collaborator2).
+	collaborator2Email       = "collaborator2@test.com"
+	collaborator2Password    = "password"
+	collaborator2DisplayName = "Test Collaborator 2"
+
 	basicDeckName  = "Test Deck A"
 	clozeDeckName  = "Test Deck B"
 	sharedDeckName = "Test Deck C (Shared)"
@@ -128,6 +135,10 @@ func run() error {
 	collaborator, err := ensureUser(ctx, pool, authSvc, collaboratorEmail, collaboratorPassword, collaboratorDisplayName)
 	if err != nil {
 		return fmt.Errorf("ensure collaborator user: %w", err)
+	}
+	collaborator2, err := ensureUser(ctx, pool, authSvc, collaborator2Email, collaborator2Password, collaborator2DisplayName)
+	if err != nil {
+		return fmt.Errorf("ensure second collaborator user: %w", err)
 	}
 
 	if !user.AvatarSha256.Valid {
@@ -221,6 +232,20 @@ func run() error {
 	} else {
 		log.Printf("%s already has cards, skipping note seeding", sharedDeckName)
 	}
+	// Both students too, so the instructor dashboard's (#87) Due column isn't owner-only. Each
+	// call below has its own idempotency guard (seedDueCards' ON CONFLICT, seedLapseHotspotReviews'
+	// own existence check), so -- unlike the notes above -- these run on every seed invocation,
+	// not just the first: this package's doc comment promises the whole script is safe to re-run,
+	// and Deck C already had cards on this dev database before these two students existed here.
+	if err := seedDueCards(ctx, pool, collaborator.ID, sharedDeck.ID, seedDueCardCount); err != nil {
+		return fmt.Errorf("seed due cards for collaborator in %s: %w", sharedDeckName, err)
+	}
+	if err := seedDueCards(ctx, pool, collaborator2.ID, sharedDeck.ID, seedDueCardCount); err != nil {
+		return fmt.Errorf("seed due cards for second collaborator in %s: %w", sharedDeckName, err)
+	}
+	if err := seedLapseHotspotReviews(ctx, pool, sharedDeck.ID, user.ID, collaborator.ID, collaborator2.ID); err != nil {
+		return fmt.Errorf("seed lapse hotspot reviews in %s: %w", sharedDeckName, err)
+	}
 
 	// Read-only-ish grant: enough to exercise the access page's varied flags (#83) without
 	// also handing the collaborator can_manage_access or can_delete. Deliberately no
@@ -228,11 +253,22 @@ func run() error {
 	// not WRITABLE for the collaborator, exercising both branches of the #192 notetypes-list
 	// denial reason at once (docs/plans/192-note-type-authority.md): Deck C is visible but not
 	// editable (named in the reason), Deck A is invisible entirely (only counted).
+	// CanViewProgress here too (#87): lets collaborator@test.com demonstrate a non-owner
+	// instructor's view of /decks/{id}/progress, alongside the owner's (deck creators hold it
+	// automatically via GrantFullDeckAccess).
 	if err := ensureDeckAccess(ctx, pool, db.GrantDeckAccessParams{
 		DeckID: sharedDeck.ID, CallerUserID: user.ID, TargetUserID: collaborator.ID,
-		CanView: true, CanStudy: true,
+		CanView: true, CanStudy: true, CanViewProgress: true,
 	}); err != nil {
 		return fmt.Errorf("ensure collaborator access to %q: %w", sharedDeckName, err)
+	}
+	// Second student: can_study only, no can_view_progress -- an ordinary roster member, not an
+	// instructor.
+	if err := ensureDeckAccess(ctx, pool, db.GrantDeckAccessParams{
+		DeckID: sharedDeck.ID, CallerUserID: user.ID, TargetUserID: collaborator2.ID,
+		CanView: true, CanStudy: true,
+	}); err != nil {
+		return fmt.Errorf("ensure second collaborator access to %q: %w", sharedDeckName, err)
 	}
 
 	vocabDeck, ok := findDeck(decks, vocabDeckName)
@@ -434,6 +470,57 @@ func seedDueCards(ctx context.Context, pool *pgxpool.Pool, userID, deckID pgtype
 			return fmt.Errorf("mark card %s due: %w", cardID.String(), err)
 		}
 	}
+	return nil
+}
+
+// seedLapseHotspotReviews records every one of the three users failing the shared deck's
+// first due card, so the instructor dashboard (#87, GET /decks/{id}/progress) has a lapse
+// hotspot to show without a manual review session: 5 review-state "Again" answers across 3
+// distinct students clears the ≥5-review/≥3-student floor (internal/http/progress.go's
+// hotspotMinReviews/hotspotMinStudents). review_log has no ON CONFLICT re-run guard the way
+// seedDueCards' user_card_state upsert does (a client-generated id is what makes a real grade
+// idempotent, and this seed data has none), so this checks for its own prior work instead and
+// skips if found -- safe to call on every seed invocation, matching this package's "safe to
+// re-run" promise. Timestamps ride seedDueCards' fixed seedDueLastReview date, so they stay
+// inside the dashboard's rolling 30-day window for as long as that date does.
+func seedLapseHotspotReviews(ctx context.Context, pool *pgxpool.Pool, deckID, ownerID, collaboratorID, collaborator2ID pgtype.UUID) error {
+	var cardID pgtype.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM cards WHERE deck_id = $1 ORDER BY id LIMIT 1`, deckID).Scan(&cardID); err != nil {
+		return fmt.Errorf("find hotspot card: %w", err)
+	}
+	var alreadySeeded bool
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) > 0 FROM review_log WHERE card_id = $1 AND user_id = $2`,
+		cardID, collaborator2ID,
+	).Scan(&alreadySeeded); err != nil {
+		return fmt.Errorf("check for existing hotspot reviews: %w", err)
+	}
+	if alreadySeeded {
+		log.Print("lapse hotspot review history already seeded, skipping")
+		return nil
+	}
+
+	reviews := []struct {
+		userID pgtype.UUID
+		offset time.Duration
+	}{
+		{ownerID, 0},
+		{ownerID, time.Minute},
+		{collaboratorID, 0},
+		{collaboratorID, time.Minute},
+		{collaborator2ID, 0},
+	}
+	for _, rv := range reviews {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO review_log
+				(user_id, card_id, rating, reviewed_at, state_before, learning_steps_before,
+				 elapsed_days_before, scheduled_days_after, review_kind)
+			VALUES ($1, $2, 1, $3, 2, 0, 7, 1, 0)`,
+			rv.userID, cardID, seedDueLastReview.Add(rv.offset)); err != nil {
+			return fmt.Errorf("seed hotspot review for user %s: %w", rv.userID.String(), err)
+		}
+	}
+	log.Print("seeded lapse hotspot review history")
 	return nil
 }
 

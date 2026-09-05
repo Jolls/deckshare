@@ -97,10 +97,11 @@ decks       id, owner_id, name, description,
             -- UNIQUE (owner_id, name)   <- re-import reuses the owner's deck of that name
 deck_access deck_id, user_id, created_at,
             can_view bool, can_study bool, can_edit_content bool,
-            can_edit_settings bool, can_manage_access bool, can_delete bool
+            can_edit_settings bool, can_manage_access bool, can_delete bool,
+            can_view_progress bool
             -- PRIMARY KEY (deck_id, user_id)
             -- the ONLY thing that makes a deck reachable by a second user
-            -- six independent per-(user, deck) permissions, not a role enum -- see below
+            -- seven independent per-(user, deck) permissions, not a role enum -- see below
 ```
 
 `decks.preset` holds Anki's `dconf` shape, extended with fields of our own:
@@ -175,7 +176,7 @@ duplicates every early user's decks on their next import. One guid is one note p
 per deck: re-importing the same collection into a second deck finds the existing note rather
 than forking its identity.
 
-`deck_access` grants six independent permissions per `(user_id, deck_id)` — a row can hold any
+`deck_access` grants seven independent permissions per `(user_id, deck_id)` — a row can hold any
 combination, there is no role enum and no implied hierarchy:
 
 | Flag | Grants |
@@ -186,13 +187,14 @@ combination, there is no role enum and no implied hierarchy:
 | `can_edit_settings` | Edit deck metadata (name, description, preset), export the deck |
 | `can_manage_access` | Grant/revoke/change other users' `deck_access` rows |
 | `can_delete` | Delete the deck |
+| `can_view_progress` | Read deck-scoped, aggregate-only, read-only rollups of other users' `user_card_state`/`review_log` on this one deck (#87) — the instructor dashboard, `GET /decks/{id}/progress`. The one exception to "no permission flag grants read of another user's `user_card_state`," below |
 
-`can_view` is a practical prerequisite for the other five to mean anything, but that's an
+`can_view` is a practical prerequisite for the other six to mean anything, but that's an
 application-level convention (a grant form defaults it on alongside any other flag) — nothing
 at the database level enforces the nesting, by design. The full per-route mapping lives in
 [routes.md](routes.md).
 
-A deck's creator gets all six flags on creation. A personal, single-user deck is just the
+A deck's creator gets all seven flags on creation. A personal, single-user deck is just the
 trivial case of this — one user, fully permissioned — not a separate code path.
 
 **Last-holder guard — enforced in the query layer.** A deck must always retain at least one
@@ -456,10 +458,14 @@ Every query touching a deck takes a `user_id` and joins `deck_access`. Handler-l
 not sufficient — a shared deck means "readable by some users" is the normal case, not the
 exception.
 
-**No cross-user reads without a `deck_access` row, and there are no exceptions.** There is no
-visibility flag and no public-deck carve-out: a deck is reachable by exactly the users holding
-a row, and no combination of that row's permission flags ever grants read of another user's
-`user_card_state`. One authorisation path means one thing to get right and one thing to test.
+**No cross-user reads without a `deck_access` row.** There is no visibility flag and no
+public-deck carve-out: a deck is reachable by exactly the users holding a row, and no combination
+of that row's permission flags ever grants read of another user's `user_card_state` **except
+`can_view_progress`, which grants deck-scoped, aggregate-only, read-only reads** — never a named
+student's individual `review_log` rows, never another deck ([#87](https://github.com/Jolls/deckshare/issues/87),
+docs/plans/87-instructor-dashboard.md §0.3). One authorisation path means one thing to get right
+and one thing to test; the exception is narrow enough to keep that true — it widens *what* one
+flag on the one existing path can read, it does not add a second path.
 
 **A deck that exists but the caller can't see should respond identically to a deck that doesn't
 exist — 404, not 403.** Collapsing "not found" and "found but forbidden" into one outcome at the
