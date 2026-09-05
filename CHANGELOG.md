@@ -3,6 +3,23 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+The minor number tracks the build-order milestone
+([architecture.md §11](docs/architecture.md#11-build-order)): `0.1.x` was Milestone 1
+(single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
+The patch number increments with every PR (CLAUDE.md §14).
+
+## [0.3.0] - 2026-09-05
+
+### Changed
+- Development moves to Milestone 3 — classroom
+  ([architecture.md §11](docs/architecture.md#11-build-order)). The instructor dashboard
+  landed in 0.2.29 ([#87](https://github.com/Jolls/deckshare/issues/87)); cohorts
+  ([#86](https://github.com/Jolls/deckshare/issues/86)) are what remains of the milestone.
+  Three Milestone 2 items are still open and are not blockers for it: full-collection
+  `.colpkg` export ([#84](https://github.com/Jolls/deckshare/issues/84)), configurable
+  new-card gather order ([#197](https://github.com/Jolls/deckshare/issues/197)), and the
+  paste-in LLM-card text format (no issue filed).
+
 ## [0.2.31] - 2026-09-05
 
 ### Added
