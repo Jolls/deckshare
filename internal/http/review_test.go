@@ -706,7 +706,9 @@ func TestReviewBatch_MalformedIs400(t *testing.T) {
 		}
 	})
 
-	if n := countRows(t, tx, `SELECT count(*) FROM review_log`); n != 0 {
+	// Scoped to this test's own card, not table-wide: a dev database seeded by cmd/seed already
+	// holds review_log rows, and DB-backed tests must tolerate that (CLAUDE.md §16, #141).
+	if n := countRows(t, tx, `SELECT count(*) FROM review_log WHERE card_id = $1`, cardID); n != 0 {
 		t.Errorf("review_log count = %d, want 0 (nothing in this test should have been written)", n)
 	}
 }
@@ -796,7 +798,8 @@ func TestReviewRoutes_AccessControl(t *testing.T) {
 			t.Errorf("expected forbidden status in body: %s", w.Body.String())
 		}
 	}
-	if n := countRows(t, tx, `SELECT count(*) FROM review_log`); n != 0 {
+	// Scoped to this test's own card, same reason as TestReviewBatch_MalformedIs400's count.
+	if n := countRows(t, tx, `SELECT count(*) FROM review_log WHERE card_id = $1`, cardID); n != 0 {
 		t.Errorf("review_log count = %d, want 0 (forbidden attempts write nothing)", n)
 	}
 
