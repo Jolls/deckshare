@@ -561,8 +561,10 @@ func TestImport_MediaReimportIsIdempotent(t *testing.T) {
 		t.Fatalf("second Import: %v", err)
 	}
 
+	// Scoped to this test's own blob, not table-wide: a dev database seeded by cmd/seed already
+	// holds the avatar blob, and DB-backed tests must tolerate that (CLAUDE.md §16, #141).
 	var count int
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM media_blobs`).Scan(&count); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM media_blobs WHERE sha256 = $1`, m.SHA256).Scan(&count); err != nil {
 		t.Fatalf("counting media_blobs: %v", err)
 	}
 	if count != 1 {

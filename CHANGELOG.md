@@ -8,6 +8,21 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.1] - 2026-09-05
+
+### Added
+- `cmd/seed` now seeds card flags on each side of the sharing seam — one open and one already
+  resolved on the shared classroom deck (reported by students, read by either teacher) and the
+  same pair on a student's own personal deck — so the flags list, both of its status tabs, and
+  the deck-page badge have fixture data on a fresh seed
+  ([#207](https://github.com/Jolls/deckshare/issues/207)).
+
+### Fixed
+- Three DB-backed tests asserted table-wide `count(*)` on `review_log` and `media_blobs`, so they
+  failed against any database `cmd/seed` had populated; each is now scoped to the rows the test
+  itself created (CLAUDE.md §16, same class as
+  [#141](https://github.com/Jolls/deckshare/issues/141)).
+
 ## [0.3.0] - 2026-09-05
 
 ### Changed

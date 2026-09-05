@@ -21,6 +21,11 @@
 //   - "Student C Personal" and "Student D Personal" are owned outright by their students, no
 //     grants to anyone -- the no-cross-user-reads invariant (CLAUDE.md §2) has fixture data to
 //     violate if it ever regresses. Cloze/Basic respectively, so both note types stay in play.
+//   - Card flags (#207) on each side of the sharing seam, one open and one already resolved per
+//     side: Students D and E report on Shared Classroom, where the reader holds can_view_flags
+//     (Teacher A as creator, Teacher B via the co-owner grant) and is never the reporter, while
+//     Student C reports on their own personal deck, where reporter and reader are the same
+//     person and no grant is involved.
 //
 // Safe to re-run: an already-seeded deck (non-zero card count) is left alone, and an existing
 // access grant or note type is left alone too.
@@ -307,12 +312,13 @@ func run() error {
 
 	// Co-owner grant: Teacher B gets every deck_access flag Teacher A (the creator) has, making
 	// Teacher B a co-owner in every respect that matters -- content, settings, access
-	// management, deletion, and progress visibility (#87, #206). Teacher B's can_edit_content
-	// here, on "Basic" (which Teacher B does not own), is the #192 WRITABLE-via-access demo.
+	// management, deletion, progress visibility (#87, #206) and flag review (#207). Teacher B's
+	// can_edit_content here, on "Basic" (which Teacher B does not own), is the #192
+	// WRITABLE-via-access demo.
 	if err := ensureDeckAccess(ctx, pool, db.GrantDeckAccessParams{
 		DeckID: sharedClassroomDeck.ID, CallerUserID: teacherA.ID, TargetUserID: teacherB.ID,
 		CanView: true, CanStudy: true, CanEditContent: true, CanEditSettings: true,
-		CanManageAccess: true, CanDelete: true, CanViewProgress: true,
+		CanManageAccess: true, CanDelete: true, CanViewProgress: true, CanViewFlags: true,
 	}); err != nil {
 		return fmt.Errorf("ensure teacher B co-owner access to %q: %w", sharedClassroomDeckName, err)
 	}
@@ -325,6 +331,32 @@ func run() error {
 		}); err != nil {
 			return fmt.Errorf("ensure student access to %q: %w", sharedClassroomDeckName, err)
 		}
+	}
+
+	// Flags on each side of the sharing seam (#207), one open and one already resolved per side
+	// so both of the flags page's status tabs have rows. On the shared deck the reader (Teacher
+	// A, or Teacher B via the co-owner grant above) is someone other than the reporter, and two
+	// different students report, so the list is not single-reporter; on Student C's personal
+	// deck reporter and reader are the same person and no grant is involved at all. Seeded after
+	// the grants, so every flag is written by a student who already has can_study on the deck --
+	// the same order the app enforces (GetCardForFlag, flags.sql).
+	if err := ensureCardFlag(ctx, pool, sharedClassroomDeck.ID, studentD.ID, 1,
+		"The answer here doesn't match what we covered in class -- can you double-check it?",
+		pgtype.UUID{}); err != nil {
+		return fmt.Errorf("ensure open flag in %s: %w", sharedClassroomDeckName, err)
+	}
+	if err := ensureCardFlag(ctx, pool, sharedClassroomDeck.ID, studentE.ID, 2,
+		"Typo in the question -- it was missing a word.", teacherA.ID); err != nil {
+		return fmt.Errorf("ensure resolved flag in %s: %w", sharedClassroomDeckName, err)
+	}
+	if err := ensureCardFlag(ctx, pool, studentCDeck.ID, studentC.ID, 1,
+		"Reword this one -- the cloze deletion gives the answer away.",
+		pgtype.UUID{}); err != nil {
+		return fmt.Errorf("ensure open flag in %s: %w", studentCDeckName, err)
+	}
+	if err := ensureCardFlag(ctx, pool, studentCDeck.ID, studentC.ID, 2,
+		"Too easy now -- rewrote it as two separate cards.", studentC.ID); err != nil {
+		return fmt.Errorf("ensure resolved flag in %s: %w", studentCDeckName, err)
 	}
 
 	return nil
@@ -524,6 +556,59 @@ func seedLapseHotspotReviews(ctx context.Context, pool *pgxpool.Pool, deckID pgt
 		}
 	}
 	log.Print("seeded lapse hotspot review history")
+	return nil
+}
+
+// ensureCardFlag records one flag from flaggerID on the card at cardOffset within deckID, so a
+// fresh seed has student feedback waiting on GET /decks/{id}/flags and a non-zero nav badge on
+// the deck page (#207) without a manual review session. Cards are offset past the first, which
+// is seedLapseHotspotReviews' hotspot; giving each flag its own card keeps the list readable and
+// is what lets the open and resolved fixtures on one deck coexist, since the open-flag partial
+// index (migration 00019) is per (card, user).
+//
+// A valid resolvedBy makes the flag resolved rather than open, populating the resolved filter's
+// tab; it must be a user holding can_view_flags on the deck, since that is who the app would let
+// press Resolve. Resolved fixtures are backdated to seedDueLastReview so they sort as history
+// behind the open ones, on the same fixed-date reasoning as seedDueDate -- a relative timestamp
+// would drift with each reseed.
+//
+// Skips if this (card, user) has ever been flagged, resolved flags included -- so re-running
+// seed after resolving the seeded flag by hand during manual testing does not silently reopen
+// it. Same self-check shape as seedLapseHotspotReviews, and for the same reason: card_flags'
+// only uniqueness is that open-flag partial index, which by design says nothing about resolved
+// rows.
+func ensureCardFlag(ctx context.Context, pool *pgxpool.Pool, deckID, flaggerID pgtype.UUID, cardOffset int, comment string, resolvedBy pgtype.UUID) error {
+	var cardID pgtype.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT id FROM cards WHERE deck_id = $1 ORDER BY id OFFSET $2 LIMIT 1`, deckID, cardOffset,
+	).Scan(&cardID); err != nil {
+		return fmt.Errorf("find card to flag: %w", err)
+	}
+
+	status := "open"
+	createdAt := pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
+	var resolvedAt pgtype.Timestamptz
+	if resolvedBy.Valid {
+		status = "resolved"
+		createdAt = pgtype.Timestamptz{Time: seedDueLastReview, Valid: true}
+		resolvedAt = pgtype.Timestamptz{Time: seedDueLastReview.AddDate(0, 0, 1), Valid: true}
+	}
+
+	tag, err := pool.Exec(ctx, `
+		INSERT INTO card_flags (card_id, deck_id, flagged_by_user_id, comment, status,
+		                        created_at, resolved_at, resolved_by_user_id)
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8
+		WHERE NOT EXISTS (
+			SELECT 1 FROM card_flags WHERE card_id = $1 AND flagged_by_user_id = $3
+		)`, cardID, deckID, flaggerID, comment, status, createdAt, resolvedAt, resolvedBy)
+	if err != nil {
+		return fmt.Errorf("insert card flag: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		log.Printf("%s card flag already seeded, skipping", status)
+		return nil
+	}
+	log.Printf("seeded %s card flag", status)
 	return nil
 }
 
