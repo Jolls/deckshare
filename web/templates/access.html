@@ -6,7 +6,7 @@
     <thead>
         <tr>
             <th>Email</th><th>Name</th>
-            <th>View</th><th>Study</th><th>Edit content</th><th>Edit settings</th><th>Manage access</th><th>Delete</th><th>View progress</th>
+            <th>View</th><th>Study</th><th>Edit content</th><th>Edit settings</th><th>Manage access</th><th>Delete</th><th>View progress</th><th>View flags</th>
             <th></th>
         </tr>
     </thead>
@@ -22,6 +22,7 @@
             <td><input type="checkbox" name="can_manage_access" form="edit-{{.UserID}}" {{if .CanManageAccess}}checked{{end}}></td>
             <td><input type="checkbox" name="can_delete" form="edit-{{.UserID}}" {{if .CanDelete}}checked{{end}}></td>
             <td><input type="checkbox" name="can_view_progress" form="edit-{{.UserID}}" {{if .CanViewProgress}}checked{{end}}></td>
+            <td><input type="checkbox" name="can_view_flags" form="edit-{{.UserID}}" {{if .CanViewFlags}}checked{{end}}></td>
             <td>
                 <button type="submit" form="edit-{{.UserID}}">Save</button>
                 <form method="post" action="/decks/{{$.Deck.ID}}/access/{{.UserID}}/reset" style="display:inline">
@@ -57,12 +58,13 @@
             <label><input type="checkbox" name="can_manage_access"> Manage access</label>
             <label><input type="checkbox" name="can_delete"> Delete</label>
             <label><input type="checkbox" name="can_view_progress"> View progress</label>
+            <label><input type="checkbox" name="can_view_flags"> View flags</label>
         </fieldset>
 
         <button type="submit">Grant access</button>
     </form>
 </section>
 
-<p><a href="/decks/{{.Deck.ID}}/progress">View progress</a></p>
+<p><a href="/decks/{{.Deck.ID}}/progress">View progress</a> · <a href="/decks/{{.Deck.ID}}/flags">View flags</a></p>
 {{template "backToDeck" .Deck}}
 {{end}}

@@ -48,12 +48,13 @@ func (q *Queries) GetDeckForAccessManage(ctx context.Context, arg GetDeckForAcce
 
 const grantDeckAccess = `-- name: GrantDeckAccess :execrows
 INSERT INTO deck_access (deck_id, user_id, can_view, can_study, can_edit_content,
-                         can_edit_settings, can_manage_access, can_delete, can_view_progress)
+                         can_edit_settings, can_manage_access, can_delete, can_view_progress,
+                         can_view_flags)
 SELECT da.deck_id, $1, $2, $3,
        $4, $5, $6,
-       $7, $8
+       $7, $8, $9
 FROM deck_access da
-WHERE da.deck_id = $9 AND da.user_id = $10
+WHERE da.deck_id = $10 AND da.user_id = $11
   AND da.can_view AND da.can_manage_access
 `
 
@@ -66,6 +67,7 @@ type GrantDeckAccessParams struct {
 	CanManageAccess bool
 	CanDelete       bool
 	CanViewProgress bool
+	CanViewFlags    bool
 	DeckID          pgtype.UUID
 	CallerUserID    pgtype.UUID
 }
@@ -88,6 +90,7 @@ func (q *Queries) GrantDeckAccess(ctx context.Context, arg GrantDeckAccessParams
 		arg.CanManageAccess,
 		arg.CanDelete,
 		arg.CanViewProgress,
+		arg.CanViewFlags,
 		arg.DeckID,
 		arg.CallerUserID,
 	)
@@ -99,8 +102,9 @@ func (q *Queries) GrantDeckAccess(ctx context.Context, arg GrantDeckAccessParams
 
 const grantFullDeckAccess = `-- name: GrantFullDeckAccess :exec
 INSERT INTO deck_access (deck_id, user_id, can_view, can_study, can_edit_content,
-                         can_edit_settings, can_manage_access, can_delete, can_view_progress)
-VALUES ($1, $2, true, true, true, true, true, true, true)
+                         can_edit_settings, can_manage_access, can_delete, can_view_progress,
+                         can_view_flags)
+VALUES ($1, $2, true, true, true, true, true, true, true, true)
 `
 
 type GrantFullDeckAccessParams struct {
@@ -108,7 +112,7 @@ type GrantFullDeckAccessParams struct {
 	UserID pgtype.UUID
 }
 
-// A deck's creator gets all six flags (docs/schema.md). A personal deck is the trivial case of
+// A deck's creator gets all eight flags (docs/schema.md). A personal deck is the trivial case of
 // this, not a separate code path.
 func (q *Queries) GrantFullDeckAccess(ctx context.Context, arg GrantFullDeckAccessParams) error {
 	_, err := q.db.Exec(ctx, grantFullDeckAccess, arg.DeckID, arg.UserID)
@@ -118,7 +122,8 @@ func (q *Queries) GrantFullDeckAccess(ctx context.Context, arg GrantFullDeckAcce
 const listDeckAccessForDeck = `-- name: ListDeckAccessForDeck :many
 SELECT u.id AS user_id, u.email, u.display_name,
        da.can_view, da.can_study, da.can_edit_content,
-       da.can_edit_settings, da.can_manage_access, da.can_delete, da.can_view_progress
+       da.can_edit_settings, da.can_manage_access, da.can_delete, da.can_view_progress,
+       da.can_view_flags
 FROM deck_access da
 JOIN users u ON u.id = da.user_id
 WHERE da.deck_id = $1
@@ -136,6 +141,7 @@ type ListDeckAccessForDeckRow struct {
 	CanManageAccess bool
 	CanDelete       bool
 	CanViewProgress bool
+	CanViewFlags    bool
 }
 
 // The collaborator list for one deck. Authorisation happens in GetDeckForAccessManage above; a
@@ -160,6 +166,7 @@ func (q *Queries) ListDeckAccessForDeck(ctx context.Context, deckID pgtype.UUID)
 			&i.CanManageAccess,
 			&i.CanDelete,
 			&i.CanViewProgress,
+			&i.CanViewFlags,
 		); err != nil {
 			return nil, err
 		}

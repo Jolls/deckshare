@@ -41,6 +41,8 @@
 
     document.addEventListener('keydown', onKeydown);
     document.body.addEventListener('htmx:afterSwap', onAfterSwap);
+    document.body.addEventListener('htmx:beforeRequest', onFlagBeforeRequest);
+    document.body.addEventListener('htmx:beforeSwap', onFlagBeforeSwap);
     var stage = document.getElementById('review-stage');
     if (stage) stage.addEventListener('click', onStageClick);
     var studyMore = document.getElementById('study-more');
@@ -138,6 +140,7 @@
     stage.hidden = false;
     stage.dataset.revealed = 'false';
     stage.dataset.cardId = card.cardId;
+    resetFlagControl(stage, card.cardId);
     var revealBtn = stage.querySelector('[data-reveal]');
     if (revealBtn) revealBtn.textContent = 'Show Answer';
     var ratingButtons = stage.querySelector('.rating-buttons');
@@ -152,6 +155,53 @@
 
     updateIntervalLabels(card);
     maybeRequestRefill();
+  }
+
+  // Collapses the flag control (#207) back to its unsubmitted state and points its hidden cardId
+  // input at the card now on screen -- otherwise the previous card's in-progress comment or
+  // "Flagged" confirmation would bleed into the next card's view. Fully decoupled from grading:
+  // nothing here touches state.queue or the flush/backoff machinery.
+  function resetFlagControl(stage, cardId) {
+    var cardIdInput = stage.querySelector('[data-flag-card-id]');
+    if (cardIdInput) cardIdInput.value = cardId;
+    var form = stage.querySelector('[data-flag-form]');
+    if (form) form.hidden = true;
+    var comment = stage.querySelector('[data-flag-comment]');
+    if (comment) comment.value = '';
+    var status = stage.querySelector('[data-flag-status]');
+    if (status) status.textContent = '';
+  }
+
+  // Guards against a stale flag confirmation (#207): the flag POST is fully decoupled from
+  // grading, so a student can reveal+rate (advancing showNext() to a new card, which
+  // resetFlagControl() re-points at) before the flag response for the *previous* card lands.
+  // Without this, htmx would swap "Flagged ✓" into the shared #review-stage's status span
+  // against whatever card is now on screen. flagRequestCardId snapshots which card the request
+  // was actually for; the swap is skipped if the stage has since moved on.
+  var flagRequestCardId = null;
+
+  function isFlagStatusTarget(evt) {
+    return !!(evt.detail && evt.detail.target && evt.detail.target.matches &&
+      evt.detail.target.matches('[data-flag-status]'));
+  }
+
+  function onFlagBeforeRequest(evt) {
+    if (!isFlagStatusTarget(evt)) return;
+    var stage = document.getElementById('review-stage');
+    flagRequestCardId = stage ? stage.dataset.cardId : null;
+  }
+
+  function onFlagBeforeSwap(evt) {
+    if (!isFlagStatusTarget(evt)) return;
+    var stage = document.getElementById('review-stage');
+    if (!stage || stage.dataset.cardId !== flagRequestCardId) {
+      evt.detail.shouldSwap = false;
+      return;
+    }
+    // Submitting collapses the form again, same as toggling it closed -- the confirmation text
+    // swapped into [data-flag-status] is the only thing left visible.
+    var form = stage.querySelector('[data-flag-form]');
+    if (form) form.hidden = true;
   }
 
   function updateIntervalLabels(card) {
@@ -218,6 +268,16 @@
       var stage = document.getElementById('review-stage');
       if (stage && stage.dataset.revealed === 'true') hide();
       else reveal();
+      return;
+    }
+    if (evt.target.closest('[data-flag-toggle]')) {
+      var form = evt.currentTarget.querySelector('[data-flag-form]');
+      if (form) form.hidden = !form.hidden;
+      return;
+    }
+    if (evt.target.closest('[data-flag-cancel]')) {
+      var cancelForm = evt.currentTarget.querySelector('[data-flag-form]');
+      if (cancelForm) cancelForm.hidden = true;
     }
   }
 

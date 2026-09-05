@@ -14,8 +14,8 @@ import (
 	"github.com/Jolls/deckshare/internal/db"
 )
 
-// accessFlags is the seven deck_access permissions as a form carries them. can_view being a
-// practical prerequisite for the other six is an application-level convention that the schema
+// accessFlags is the eight deck_access permissions as a form carries them. can_view being a
+// practical prerequisite for the other seven is an application-level convention that the schema
 // deliberately does not enforce (migrations/00007_deck_access.sql), and this package does not
 // enforce it either -- the form defaults it checked and leaves the choice to the manager.
 type accessFlags struct {
@@ -26,6 +26,7 @@ type accessFlags struct {
 	CanManageAccess bool
 	CanDelete       bool
 	CanViewProgress bool
+	CanViewFlags    bool
 }
 
 func flagsFromForm(form url.Values) accessFlags {
@@ -37,6 +38,7 @@ func flagsFromForm(form url.Values) accessFlags {
 		CanManageAccess: form.Get("can_manage_access") == "on",
 		CanDelete:       form.Get("can_delete") == "on",
 		CanViewProgress: form.Get("can_view_progress") == "on",
+		CanViewFlags:    form.Get("can_view_flags") == "on",
 	}
 }
 
@@ -92,6 +94,7 @@ func registerAccessRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 			CanView: flags.CanView, CanStudy: flags.CanStudy, CanEditContent: flags.CanEditContent,
 			CanEditSettings: flags.CanEditSettings, CanManageAccess: flags.CanManageAccess,
 			CanDelete: flags.CanDelete, CanViewProgress: flags.CanViewProgress,
+			CanViewFlags: flags.CanViewFlags,
 		})
 		if err != nil {
 			if db.IsUniqueViolation(err, "deck_access_pkey") {
@@ -142,6 +145,7 @@ func registerAccessRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 			CanView: flags.CanView, CanStudy: flags.CanStudy, CanEditContent: flags.CanEditContent,
 			CanEditSettings: flags.CanEditSettings, CanManageAccess: flags.CanManageAccess,
 			CanDelete: flags.CanDelete, CanViewProgress: flags.CanViewProgress,
+			CanViewFlags: flags.CanViewFlags,
 		})
 		if !handleAccessChangeErr(w, pages, user, err) {
 			return

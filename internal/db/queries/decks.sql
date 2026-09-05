@@ -8,7 +8,8 @@ JOIN deck_access da ON da.deck_id = d.id AND da.user_id = sqlc.arg(user_id) AND 
 ORDER BY d.name;
 
 -- name: GetDeckForUser :one
-SELECT d.*, da.can_edit_content, da.can_edit_settings, da.can_manage_access, da.can_view_progress
+SELECT d.*, da.can_edit_content, da.can_edit_settings, da.can_manage_access, da.can_view_progress,
+       da.can_view_flags
 FROM decks d
 JOIN deck_access da ON da.deck_id = d.id AND da.user_id = sqlc.arg(user_id) AND da.can_view
 WHERE d.id = sqlc.arg(deck_id);

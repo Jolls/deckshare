@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.31] - 2026-09-05
+
+### Added
+- Flag a card with a comment while studying: a new `deck_access.can_view_flags` permission
+  grants deck-scoped read/resolve access to `card_flags`, students can flag a card mid-review
+  from the reviewer, and `GET /decks/{id}/flags` lists open/resolved feedback for holders of it
+  ([#207](https://github.com/Jolls/deckshare/issues/207)).
+
 ## [0.2.30] - 2026-09-05
 
 ### Changed

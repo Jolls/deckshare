@@ -83,7 +83,8 @@ SET can_view          = sqlc.arg(can_view),
     can_edit_settings = sqlc.arg(can_edit_settings),
     can_manage_access = sqlc.arg(can_manage_access),
     can_delete        = sqlc.arg(can_delete),
-    can_view_progress = sqlc.arg(can_view_progress)
+    can_view_progress = sqlc.arg(can_view_progress),
+    can_view_flags    = sqlc.arg(can_view_flags)
 WHERE deck_id = sqlc.arg(deck_id) AND user_id = sqlc.arg(target_user_id);
 
 -- Resets target_user_id's scheduling progress on one deck. review_log is untouched (#189,

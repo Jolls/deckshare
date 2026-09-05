@@ -154,7 +154,8 @@ func (q *Queries) GetDeckForSettingsEdit(ctx context.Context, arg GetDeckForSett
 }
 
 const getDeckForUser = `-- name: GetDeckForUser :one
-SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id, da.can_edit_content, da.can_edit_settings, da.can_manage_access, da.can_view_progress
+SELECT d.id, d.owner_id, d.name, d.description, d.preset, d.created_at, d.modified_at, d.anki_id, da.can_edit_content, da.can_edit_settings, da.can_manage_access, da.can_view_progress,
+       da.can_view_flags
 FROM decks d
 JOIN deck_access da ON da.deck_id = d.id AND da.user_id = $1 AND da.can_view
 WHERE d.id = $2
@@ -178,6 +179,7 @@ type GetDeckForUserRow struct {
 	CanEditSettings bool
 	CanManageAccess bool
 	CanViewProgress bool
+	CanViewFlags    bool
 }
 
 func (q *Queries) GetDeckForUser(ctx context.Context, arg GetDeckForUserParams) (GetDeckForUserRow, error) {
@@ -196,6 +198,7 @@ func (q *Queries) GetDeckForUser(ctx context.Context, arg GetDeckForUserParams) 
 		&i.CanEditSettings,
 		&i.CanManageAccess,
 		&i.CanViewProgress,
+		&i.CanViewFlags,
 	)
 	return i, err
 }

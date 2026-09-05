@@ -1,0 +1,35 @@
+{{define "content"}}
+<h1>Flags — {{.Deck.Name}}</h1>
+
+<nav class="button-nav">
+    <a href="?status=open" role="button" class="{{if eq .Status "open"}}{{else}}outline{{end}} btn-sm">Open</a>
+    <a href="?status=resolved" role="button" class="{{if eq .Status "resolved"}}{{else}}outline{{end}} btn-sm">Resolved</a>
+</nav>
+
+<table>
+    <thead>
+        <tr><th>Student</th><th>Card</th><th>Comment</th><th>Flagged</th><th></th></tr>
+    </thead>
+    <tbody>
+        {{range .Flags}}
+        <tr>
+            <td>{{.FlaggedByEmail}}{{if .FlaggedByDisplayName}} ({{.FlaggedByDisplayName}}){{end}}</td>
+            <td>{{if $.Deck.CanEditContent}}<a href="/notes/{{.NoteID}}/edit">{{.Label}}</a>{{else}}{{.Label}}{{end}}</td>
+            <td>{{.Comment}}</td>
+            <td>{{.CreatedDisplay}}</td>
+            <td>
+                {{if eq $.Status "open"}}
+                <form method="post" action="/decks/{{$.Deck.ID}}/flags/{{.ID}}/resolve" style="display:inline">
+                    <button type="submit">Resolve</button>
+                </form>
+                {{end}}
+            </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="5">No {{.Status}} flags.</td></tr>
+        {{end}}
+    </tbody>
+</table>
+
+{{template "backToDeck" .Deck}}
+{{end}}

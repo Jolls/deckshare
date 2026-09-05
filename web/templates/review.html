@@ -22,6 +22,20 @@
     <button type="button" data-rating="3">Good <small data-interval-for="3"></small></button>
     <button type="button" data-rating="4">Easy <small data-interval-for="4"></small></button>
   </p>
+  <p class="flag-control">
+    <button type="button" class="outline" data-flag-toggle>🚩 Flag this card</button>
+    <span data-flag-form hidden>
+      <textarea data-flag-comment maxlength="2000" placeholder="What's wrong with this card?"></textarea>
+      <input type="hidden" data-flag-card-id>
+      <button type="button"
+              hx-post="/decks/{{.Deck.ID}}/cards/flags"
+              hx-trigger="click[document.querySelector('[data-flag-comment]').value.trim() !== '']"
+              hx-vals="js:{cardId: document.querySelector('[data-flag-card-id]').value, comment: document.querySelector('[data-flag-comment]').value}"
+              hx-target="[data-flag-status]" hx-swap="innerHTML">Submit</button>
+      <button type="button" data-flag-cancel>Cancel</button>
+    </span>
+    <span data-flag-status></span>
+  </p>
 </section>
 
 <div id="review-queue">{{template "review_cards" .Batch}}</div>
