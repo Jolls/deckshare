@@ -15,8 +15,10 @@ Run `go run ./scripts/run-app {start|stop|status}` from the repo root.
 If DB-backed tests fail on stale state (leftover rows from a prior `run-app`
 session — see issue #95), run
 `go run ./scripts/run-app reset-db` to wipe the `pgdata` volume, bring
-Postgres back up, reapply goose migrations, and seed a test user
-(`test@test.com` / `password`) with two sample decks, a second user
-(`collaborator@test.com` / `password`), and a third deck shared between them
-for testing deck access management (#83). Never improvise `docker compose
+Postgres back up, reapply goose migrations, and seed a "messy classroom"
+(#206): two teachers (`teachera@ds.com` / `teacherb@ds.com`, password
+`password`) co-owning a shared deck, three students (`studentc@ds.com`,
+`studentd@ds.com`, `studente@ds.com`) with overlapping access to it, and two
+decks owned outright by students C and D — for testing deck access management
+(#83) and the instructor dashboard (#87). Never improvise `docker compose
 down -v` by hand.
