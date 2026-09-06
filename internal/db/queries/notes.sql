@@ -140,3 +140,42 @@ WITH v AS (
       ON i.ord = c.ord
 )
 UPDATE notes n SET checksum = v.checksum FROM v WHERE n.id = v.note_id;
+
+-- Bulk selection surface on the deck notes list (#241). Same per-row authorization shape as
+-- DeleteNote above -- da.deck_id = n.deck_id, not trusted from the caller -- so a note id
+-- smuggled into the selection is authorized against its OWN deck, never the route's. Also
+-- scoped to n.deck_id = sqlc.arg(deck_id) so a bulk action launched from one deck's notes list
+-- only ever touches notes actually listed there, even a smuggled id from a different deck the
+-- caller can legitimately edit.
+-- name: BulkDeleteNotes :execrows
+DELETE FROM notes n
+USING deck_access da
+WHERE n.id = ANY(sqlc.arg(note_ids)::uuid[]) AND n.deck_id = sqlc.arg(deck_id)
+  AND da.deck_id = n.deck_id AND da.user_id = sqlc.arg(user_id)
+  AND da.can_view AND da.can_edit_content;
+
+-- Adds tags idempotently and preserves every tag already present: array_agg(DISTINCT ...) over
+-- the union collapses a tag that was already there with the one being added, so replaying the
+-- same bulk add is a no-op the second time.
+-- name: BulkAddNoteTags :execrows
+UPDATE notes n
+SET tags = (SELECT array_agg(DISTINCT t ORDER BY t) FROM unnest(n.tags || sqlc.arg(tags)::text[]) AS t),
+    modified_at = now()
+FROM deck_access da
+WHERE n.id = ANY(sqlc.arg(note_ids)::uuid[]) AND n.deck_id = sqlc.arg(deck_id)
+  AND da.deck_id = n.deck_id AND da.user_id = sqlc.arg(user_id)
+  AND da.can_view AND da.can_edit_content;
+
+-- Removes tags idempotently and leaves every unrelated tag untouched. COALESCE keeps a note
+-- that loses its last tag at '{}' rather than NULL (notes.tags is NOT NULL, migration 00008).
+-- name: BulkRemoveNoteTags :execrows
+UPDATE notes n
+SET tags = COALESCE(
+        (SELECT array_agg(t) FROM unnest(n.tags) AS t WHERE t <> ALL(sqlc.arg(tags)::text[])),
+        '{}'
+    ),
+    modified_at = now()
+FROM deck_access da
+WHERE n.id = ANY(sqlc.arg(note_ids)::uuid[]) AND n.deck_id = sqlc.arg(deck_id)
+  AND da.deck_id = n.deck_id AND da.user_id = sqlc.arg(user_id)
+  AND da.can_view AND da.can_edit_content;

@@ -25,6 +25,12 @@ var errNoClozeMarkers = errors.New("a cloze note must contain at least one {{c1:
 // vast majority of decks; #238's 500-card classroom deck is the case pagination exists for.
 const notesPageSize = 200
 
+// maxBulkSelection bounds a bulk-edit request (#241): the selection UI only ever offers checkboxes
+// for the current page, so this can never legitimately be exceeded -- it exists to reject a
+// hand-crafted request rather than to trim one, matching the #231-flagged risk of an unbounded
+// id = ANY($1).
+const maxBulkSelection = notesPageSize
+
 // noteCursor is the opaque keyset position over ListNotesInDeck's (sort_key, id) teaching order.
 // AtStart, not a sentinel value in sortKey/id, marks the beginning of the list (mirrors
 // review.Cursor's own AtStart field, internal/review/types.go) -- sortKey/id are meaningless
@@ -449,6 +455,115 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		}
 		http.Redirect(w, r, "/decks/"+targetDeckID.String(), http.StatusSeeOther)
 	})))
+
+	mux.Handle("POST /decks/{deckId}/notes/bulk-delete", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, _ := auth.UserFromContext(r.Context())
+		deckID, noteIDs, ok := parseBulkRequest(w, r, pages, user)
+		if !ok {
+			return
+		}
+		q := db.New(store)
+		n, err := q.BulkDeleteNotes(r.Context(), db.BulkDeleteNotesParams{NoteIds: noteIDs, DeckID: deckID, UserID: user.ID})
+		finishBulk(w, r, pages, user, deckID, n, err)
+	})))
+
+	mux.Handle("POST /decks/{deckId}/notes/bulk-tag-add", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, _ := auth.UserFromContext(r.Context())
+		deckID, noteIDs, ok := parseBulkRequest(w, r, pages, user)
+		if !ok {
+			return
+		}
+		tags, ok := parseBulkTags(w, r)
+		if !ok {
+			return
+		}
+		q := db.New(store)
+		n, err := q.BulkAddNoteTags(r.Context(), db.BulkAddNoteTagsParams{Tags: tags, NoteIds: noteIDs, DeckID: deckID, UserID: user.ID})
+		finishBulk(w, r, pages, user, deckID, n, err)
+	})))
+
+	mux.Handle("POST /decks/{deckId}/notes/bulk-tag-remove", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, _ := auth.UserFromContext(r.Context())
+		deckID, noteIDs, ok := parseBulkRequest(w, r, pages, user)
+		if !ok {
+			return
+		}
+		tags, ok := parseBulkTags(w, r)
+		if !ok {
+			return
+		}
+		q := db.New(store)
+		n, err := q.BulkRemoveNoteTags(r.Context(), db.BulkRemoveNoteTagsParams{Tags: tags, NoteIds: noteIDs, DeckID: deckID, UserID: user.ID})
+		finishBulk(w, r, pages, user, deckID, n, err)
+	})))
+}
+
+// parseBulkRequest resolves the {deckId} path param and the "note_id" checkbox selection shared
+// by every bulk-edit route, writing the appropriate error response and reporting ok=false on
+// failure. The caller must return immediately when this reports false.
+func parseBulkRequest(w http.ResponseWriter, r *http.Request, pages map[string]*template.Template, user db.User) (deckID pgtype.UUID, noteIDs []pgtype.UUID, ok bool) {
+	deckID, ok = pathUUID(r, "deckId")
+	if !ok {
+		notFoundPage(w, pages, user)
+		return
+	}
+	if !parseForm(w, r) {
+		return
+	}
+	noteIDs, ok = parseBulkNoteIDs(w, r)
+	return
+}
+
+// parseBulkNoteIDs reads the "note_id" checkbox values off an already-parsed bulk-edit form,
+// writing the 400 response and reporting ok=false for an empty selection, an over-limit
+// selection (maxBulkSelection), or a malformed id. The caller must return immediately when this
+// reports false.
+func parseBulkNoteIDs(w http.ResponseWriter, r *http.Request) (ids []pgtype.UUID, ok bool) {
+	raw := r.PostForm["note_id"]
+	if len(raw) == 0 {
+		http.Error(w, "select at least one note", http.StatusBadRequest)
+		return nil, false
+	}
+	if len(raw) > maxBulkSelection {
+		http.Error(w, fmt.Sprintf("too many notes selected (max %d)", maxBulkSelection), http.StatusBadRequest)
+		return nil, false
+	}
+	ids = make([]pgtype.UUID, len(raw))
+	for i, s := range raw {
+		if err := ids[i].Scan(s); err != nil {
+			badRequest(w)
+			return nil, false
+		}
+	}
+	return ids, true
+}
+
+// parseBulkTags reads and validates the "tags" field shared by bulk-tag-add and
+// bulk-tag-remove, writing the 400 response and reporting ok=false when it's empty. The caller
+// must return immediately when this reports false.
+func parseBulkTags(w http.ResponseWriter, r *http.Request) (tags []string, ok bool) {
+	tags = parseTags(r.PostForm.Get("tags"))
+	if len(tags) == 0 {
+		http.Error(w, "enter at least one tag", http.StatusBadRequest)
+		return nil, false
+	}
+	return tags, true
+}
+
+// finishBulk renders the shared response tail for a bulk-edit route: a 500 on a query error,
+// otherwise the same no-rows-means-404 convention DeleteNote uses (n == 0 cannot be
+// distinguished from "no permission" and is treated the same way), or a redirect back to the
+// deck's notes list on success.
+func finishBulk(w http.ResponseWriter, r *http.Request, pages map[string]*template.Template, user db.User, deckID pgtype.UUID, n int64, err error) {
+	if err != nil {
+		serverError(w)
+		return
+	}
+	if n == 0 {
+		notFoundPage(w, pages, user)
+		return
+	}
+	http.Redirect(w, r, "/decks/"+deckID.String()+"#notes", http.StatusSeeOther)
 }
 
 // fieldsCompatible implements the #138 v1 field-compatibility rule for a note-type change: the

@@ -147,3 +147,16 @@ details > summary ~ * {
 body.hide-account-bar .account-bar {
     display: none;
 }
+
+/* Deck notes list apply-to-many bar (#241): appears once the selection is non-empty. */
+.bulk-action-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+}
+
+.bulk-action-bar[hidden] {
+    display: none;
+}
