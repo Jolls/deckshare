@@ -108,8 +108,12 @@ as a side effect of note writes.
 | POST | `/notes/{id}/preview` | `can_edit_content` | Render the note's card(s) from the posted (possibly unsaved) field values; writes nothing |
 | POST | `/decks/{deckId}/notes/preview` | `can_edit_content` | Same, for the new-note form before the note exists |
 
-The deck-detail notes list (`GET /decks/{id}`, above) is unpaginated — `ORDER BY modified_at
-DESC LIMIT 200`. Follow-up issue: pagination once a deck's note count makes that limit visible.
+The deck-detail notes list (`GET /decks/{id}`, above) is paginated in teaching order —
+`(import_due_position, id)`, the order new cards are actually introduced in, not
+`modified_at DESC` — via an opaque keyset cursor, `?notesCursor=`
+([#90](https://github.com/Jolls/deckshare/issues/90)). Keyset rather than offset: bulk-editing
+the list mutates `modified_at`, which would reshuffle an offset page mid-edit, while
+`import_due_position` never changes after import.
 
 ---
 

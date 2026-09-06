@@ -165,10 +165,28 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			serverError(w)
 			return
 		}
-		notes, err := q.ListNotesInDeck(r.Context(), db.ListNotesInDeckParams{UserID: user.ID, DeckID: deckID})
+		notesCursor, ok := decodeNoteCursor(r.URL.Query().Get("notesCursor"))
+		if !ok {
+			badRequest(w)
+			return
+		}
+		noteRows, err := q.ListNotesInDeck(r.Context(), db.ListNotesInDeckParams{
+			UserID: user.ID, DeckID: deckID,
+			AtStart: notesCursor.atStart, CursorSortKey: notesCursor.sortKey, CursorID: notesCursor.id,
+			LimitCount: notesPageSize + 1, // +1 to detect a next page without a second query
+		})
 		if err != nil {
 			serverError(w)
 			return
+		}
+		hasMoreNotes := len(noteRows) > notesPageSize
+		if hasMoreNotes {
+			noteRows = noteRows[:notesPageSize]
+		}
+		var nextNotesCursor string
+		if hasMoreNotes {
+			last := noteRows[len(noteRows)-1]
+			nextNotesCursor = encodeNoteCursor(noteCursor{sortKey: last.SortKey, id: last.ID})
 		}
 		params, err := review.EffectiveParams(r.Context(), q, user.ID, deckID)
 		if err != nil {
@@ -230,7 +248,9 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			return
 		}
 		render(w, pages["deck"], http.StatusOK, map[string]any{
-			"User": user, "Deck": deck, "Counts": counts, "Notes": notes,
+			"User": user, "Deck": deck, "Counts": counts, "Notes": noteRows,
+			"HasMoreNotes": hasMoreNotes, "NextNotesCursor": nextNotesCursor,
+			"NotesPaged":           !notesCursor.atStart,
 			"DesiredRetention":     params.DesiredRetention(),
 			"OtherProgressViewers": otherProgressViewers,
 			"OpenFlags":            openFlags,

@@ -1,12 +1,31 @@
+-- Teaching-order keyset pagination (#90, needed by #238's release-day pacing: assigning lesson
+-- numbers across a 500-card deck needs more than the old flat 200-row cap). Sort key is the
+-- note's earliest card's import queue position -- (import_due_position, id) is the order new
+-- cards are actually introduced in (reviews.sql), which is what "the first 40 cards" means to a
+-- teacher, not recently-edited-first. A cloze note can hold several cards/positions; MIN takes
+-- the earliest. NULL (manually created cards, or a note with no cards yet) sorts last via the
+-- same 2147483647 sentinel reviews.sql's COALESCE uses for import_due_position, cast to bigint
+-- for headroom against negative Anki due positions. at_start (not a cursor_sort_key/cursor_id
+-- sentinel value) marks the first page, mirroring review.Cursor's own AtStart field
+-- (internal/review/types.go) -- cursor_sort_key/cursor_id are meaningless when at_start is true.
+-- Keyset, not offset (#238 comment): bulk-editing this list mutates modified_at, which would
+-- reshuffle an offset page mid-edit; import_due_position never changes after import.
 -- name: ListNotesInDeck :many
-SELECT n.id, n.fields ->> nt.sort_field_idx AS sort_text, n.tags, n.modified_at, nt.name AS note_type_name,
-       (SELECT count(*) FROM cards c WHERE c.note_id = n.id) AS card_count
-FROM notes n
-JOIN note_types nt ON nt.id = n.note_type_id
-JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = sqlc.arg(user_id) AND da.can_view
-WHERE n.deck_id = sqlc.arg(deck_id)
-ORDER BY n.modified_at DESC
-LIMIT 200;
+WITH ordered_notes AS (
+    SELECT n.id, n.fields ->> nt.sort_field_idx AS sort_text, n.tags, n.modified_at, nt.name AS note_type_name,
+           (SELECT count(*) FROM cards c WHERE c.note_id = n.id) AS card_count,
+           COALESCE((SELECT min(c2.import_due_position) FROM cards c2 WHERE c2.note_id = n.id), 2147483647)::bigint AS sort_key
+    FROM notes n
+    JOIN note_types nt ON nt.id = n.note_type_id
+    JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = sqlc.arg(user_id) AND da.can_view
+    WHERE n.deck_id = sqlc.arg(deck_id)
+)
+SELECT id, sort_text, tags, modified_at, note_type_name, card_count, sort_key
+FROM ordered_notes
+WHERE sqlc.arg(at_start)::boolean
+   OR (sort_key, id) > (sqlc.arg(cursor_sort_key)::bigint, sqlc.arg(cursor_id)::uuid)
+ORDER BY sort_key ASC, id ASC
+LIMIT sqlc.arg(limit_count);
 
 -- Owner_id comes from the DECK, not the caller: notes.owner_id is denormalised from
 -- decks.owner_id and, as of migration 00015, a composite FK rejects any other value.

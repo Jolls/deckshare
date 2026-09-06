@@ -20,7 +20,7 @@
     <a href="/decks" role="button" class="outline btn-sm">Back to decks</a>
 </nav>
 
-<details>
+<details id="notes"{{if .NotesPaged}} open{{end}}>
     <summary>Notes</summary>
     {{if .Notes}}
     <div class="table-scroll">
@@ -47,6 +47,9 @@
         </tbody>
     </table>
     </div>
+    {{if .HasMoreNotes}}<a href="/decks/{{.Deck.ID}}?notesCursor={{.NextNotesCursor}}#notes" role="button" class="outline btn-sm">Next</a>{{end}}
+    {{else if .NotesPaged}}
+    <p>No more notes on this page. <a href="/decks/{{.Deck.ID}}#notes">Back to the start</a>.</p>
     {{else}}
     <p>No notes yet.</p>
     {{end}}

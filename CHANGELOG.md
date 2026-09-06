@@ -8,6 +8,15 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.2] - 2026-09-05
+
+### Changed
+- The deck-detail notes list now pages through an opaque keyset cursor instead of a flat
+  200-row cap, sorted in teaching order (`import_due_position`, the order cards are actually
+  introduced in) rather than `modified_at DESC` — a hard dependency of #238's release-day
+  pacing, which needs to bulk-assign lesson numbers across decks larger than 200 notes
+  ([#90](https://github.com/Jolls/deckshare/issues/90)).
+
 ## [0.3.1] - 2026-09-05
 
 ### Added

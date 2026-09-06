@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -757,5 +758,79 @@ func TestDeckRoutes_DuplicateName_409(t *testing.T) {
 	w := doRequest(handler, "POST", "/decks", "name=Dup", cookie, "http://example.com")
 	if w.Code != http.StatusConflict {
 		t.Errorf("status = %d, want 409", w.Code)
+	}
+}
+
+// #90: once a deck holds more than notesPageSize notes, the deck page's Next link carries a
+// cursor to the remainder, and following it doesn't re-offer a further page.
+func TestDeckRoute_NotesPagination(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	var noteTypeID, templateID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `SELECT id FROM templates WHERE note_type_id = $1`, noteTypeID).Scan(&templateID); err != nil {
+		t.Fatalf("lookup template: %v", err)
+	}
+
+	// Seeded directly rather than through notesPageSize+1 HTTP round trips, with a distinct
+	// import_due_position per note so teaching order (and thus the split across pages) is
+	// unambiguous.
+	const total = notesPageSize + 1
+	for i := 0; i < total; i++ {
+		var noteID string
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO notes (guid, owner_id, note_type_id, deck_id, fields, checksum)
+			 SELECT $1, owner_id, $2, id, '["Q","A"]'::jsonb, 0 FROM decks WHERE id = $3
+			 RETURNING id`,
+			fmt.Sprintf("notes-pagination-guid-%d", i), noteTypeID, deckID,
+		).Scan(&noteID); err != nil {
+			t.Fatalf("insert note %d: %v", i, err)
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO cards (note_id, template_id, ordinal, deck_id, import_due_position) VALUES ($1, $2, 0, $3, $4)`,
+			noteID, templateID, deckID, i,
+		); err != nil {
+			t.Fatalf("insert card %d: %v", i, err)
+		}
+	}
+
+	w := doRequest(handler, "GET", deckPath, "", cookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET %s status = %d, want 200", deckPath, w.Code)
+	}
+	body := w.Body.String()
+	cursorMatch := regexp.MustCompile(`notesCursor=([^"&#]+)`).FindStringSubmatch(body)
+	if cursorMatch == nil {
+		t.Fatalf("page 1 body missing a Next link with notesCursor: %s", body)
+	}
+
+	w2 := doRequest(handler, "GET", deckPath+"?notesCursor="+cursorMatch[1], "", cookie, "")
+	if w2.Code != http.StatusOK {
+		t.Fatalf("GET page 2 status = %d, want 200", w2.Code)
+	}
+	if strings.Contains(w2.Body.String(), "notesCursor=") {
+		t.Errorf("page 2 body has a further Next link, want none (only %d notes left)", total-notesPageSize)
+	}
+}
+
+// A cursor this deck page never produced -- garbage, or one from a different session --
+// answers 400 rather than being silently reinterpreted as some other position.
+func TestDeckRoute_NotesCursor_MalformedReturns400(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+
+	w := doRequest(handler, "GET", deckPath+"?notesCursor=not-valid-base64!!!", "", cookie, "")
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -19,6 +20,58 @@ import (
 )
 
 var errNoClozeMarkers = errors.New("a cloze note must contain at least one {{c1::...}} marker")
+
+// notesPageSize is the deck-detail notes list's page size (#90). One page comfortably covers the
+// vast majority of decks; #238's 500-card classroom deck is the case pagination exists for.
+const notesPageSize = 200
+
+// noteCursor is the opaque keyset position over ListNotesInDeck's (sort_key, id) teaching order.
+// AtStart, not a sentinel value in sortKey/id, marks the beginning of the list (mirrors
+// review.Cursor's own AtStart field, internal/review/types.go) -- sortKey/id are meaningless
+// when AtStart is true, so there is no numeric range to reason about being "below every real
+// value" and no risk of a real row ever colliding with the start-of-list position.
+type noteCursor struct {
+	atStart bool
+	sortKey int64
+	id      pgtype.UUID
+}
+
+var noteCursorAtStart = noteCursor{atStart: true}
+
+// encodeNoteCursor renders c as an opaque string safe to round-trip through a URL query
+// parameter. The start-of-list cursor encodes as "" so the first page needs no query param.
+func encodeNoteCursor(c noteCursor) string {
+	if c.atStart {
+		return ""
+	}
+	raw := strconv.FormatInt(c.sortKey, 10) + ":" + c.id.String()
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// decodeNoteCursor parses a string produced by encodeNoteCursor. "" decodes to the start-of-list
+// cursor. ok is false for a malformed cursor -- callers should answer 400 rather than guess.
+func decodeNoteCursor(s string) (c noteCursor, ok bool) {
+	if s == "" {
+		return noteCursorAtStart, true
+	}
+	rawBytes, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return noteCursor{}, false
+	}
+	sortKeyPart, idPart, found := strings.Cut(string(rawBytes), ":")
+	if !found {
+		return noteCursor{}, false
+	}
+	sortKey, err := strconv.ParseInt(sortKeyPart, 10, 64)
+	if err != nil {
+		return noteCursor{}, false
+	}
+	var id pgtype.UUID
+	if err := id.Scan(idPart); err != nil {
+		return noteCursor{}, false
+	}
+	return noteCursor{sortKey: sortKey, id: id}, true
+}
 
 func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]*template.Template) {
 	mux.Handle("GET /decks/{deckId}/notes/new", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
