@@ -23,14 +23,19 @@
 <details id="notes"{{if .NotesPaged}} open{{end}}>
     <summary>Notes</summary>
     {{if .Notes}}
+    <div data-bulk-notes>
     <div class="table-scroll">
     <table>
         <thead>
-            <tr><th>Note</th><th>Type</th><th>Cards</th><th></th></tr>
+            <tr>
+                {{if .Deck.CanEditContent}}<th><input type="checkbox" data-select-all aria-label="Select all notes on this page"></th>{{end}}
+                <th>Note</th><th>Type</th><th>Cards</th><th></th>
+            </tr>
         </thead>
         <tbody>
             {{range .Notes}}
             <tr>
+                {{if $.Deck.CanEditContent}}<td><input type="checkbox" name="note_id" value="{{.ID}}" form="bulk-notes-form" data-select-row></td>{{end}}
                 <td>{{.SortText}}</td>
                 <td>{{.NoteTypeName}}</td>
                 <td>{{.CardCount}}</td>
@@ -46,6 +51,21 @@
             {{end}}
         </tbody>
     </table>
+    </div>
+    {{if .Deck.CanEditContent}}
+    <!-- A dedicated form, not shared with the per-row Delete forms above: checkboxes live in the
+         table but submit through this form via form="bulk-notes-form" (#241 review) -- keeping
+         bulk selection and single-row actions on separate forms means a single-row Delete never
+         carries the current selection/tags along in its POST body, and this form's own tree
+         order starts with a real bulk button, so no dummy default-submit button is needed. -->
+    <form method="post" id="bulk-notes-form" class="bulk-action-bar" data-bulk-bar hidden>
+        <span data-bulk-count>0</span> selected
+        <input type="text" name="tags" placeholder="tag1 tag2" aria-label="Tags to add or remove">
+        <button type="submit" formaction="/decks/{{.Deck.ID}}/notes/bulk-tag-add" class="outline btn-sm" x-data @click="confirm('Add these tags to the selected notes?') || $event.preventDefault()">Add tags</button>
+        <button type="submit" formaction="/decks/{{.Deck.ID}}/notes/bulk-tag-remove" class="outline btn-sm" x-data @click="confirm('Remove these tags from the selected notes?') || $event.preventDefault()">Remove tags</button>
+        <button type="submit" formaction="/decks/{{.Deck.ID}}/notes/bulk-delete" class="outline btn-sm" x-data @click="confirm('Delete the selected notes?') || $event.preventDefault()">Delete selected</button>
+    </form>
+    {{end}}
     </div>
     {{if .HasMoreNotes}}<a href="/decks/{{.Deck.ID}}?notesCursor={{.NextNotesCursor}}#notes" role="button" class="outline btn-sm">Next</a>{{end}}
     {{else if .NotesPaged}}
@@ -64,4 +84,5 @@
         <button type="submit">Update retention target</button>
     </form>
 </details>
+<script src="/static/notes_bulk.js" defer></script>
 {{end}}

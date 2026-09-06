@@ -8,6 +8,14 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.3] - 2026-09-06
+
+### Added
+- Bulk-edit surface on the deck notes list: per-row checkboxes, select-all-on-page, shift-click
+  range select, and an apply-to-many action bar for bulk tag add, bulk tag remove, and bulk
+  delete. The first operations on the selection surface #238's release-day pacing will reuse
+  ([#241](https://github.com/Jolls/deckshare/issues/241)).
+
 ## [0.3.2] - 2026-09-05
 
 ### Changed

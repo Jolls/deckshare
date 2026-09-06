@@ -11,6 +11,102 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const bulkAddNoteTags = `-- name: BulkAddNoteTags :execrows
+UPDATE notes n
+SET tags = (SELECT array_agg(DISTINCT t ORDER BY t) FROM unnest(n.tags || $1::text[]) AS t),
+    modified_at = now()
+FROM deck_access da
+WHERE n.id = ANY($2::uuid[]) AND n.deck_id = $3
+  AND da.deck_id = n.deck_id AND da.user_id = $4
+  AND da.can_view AND da.can_edit_content
+`
+
+type BulkAddNoteTagsParams struct {
+	Tags    []string
+	NoteIds []pgtype.UUID
+	DeckID  pgtype.UUID
+	UserID  pgtype.UUID
+}
+
+// Adds tags idempotently and preserves every tag already present: array_agg(DISTINCT ...) over
+// the union collapses a tag that was already there with the one being added, so replaying the
+// same bulk add is a no-op the second time.
+func (q *Queries) BulkAddNoteTags(ctx context.Context, arg BulkAddNoteTagsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, bulkAddNoteTags,
+		arg.Tags,
+		arg.NoteIds,
+		arg.DeckID,
+		arg.UserID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const bulkDeleteNotes = `-- name: BulkDeleteNotes :execrows
+DELETE FROM notes n
+USING deck_access da
+WHERE n.id = ANY($1::uuid[]) AND n.deck_id = $2
+  AND da.deck_id = n.deck_id AND da.user_id = $3
+  AND da.can_view AND da.can_edit_content
+`
+
+type BulkDeleteNotesParams struct {
+	NoteIds []pgtype.UUID
+	DeckID  pgtype.UUID
+	UserID  pgtype.UUID
+}
+
+// Bulk selection surface on the deck notes list (#241). Same per-row authorization shape as
+// DeleteNote above -- da.deck_id = n.deck_id, not trusted from the caller -- so a note id
+// smuggled into the selection is authorized against its OWN deck, never the route's. Also
+// scoped to n.deck_id = sqlc.arg(deck_id) so a bulk action launched from one deck's notes list
+// only ever touches notes actually listed there, even a smuggled id from a different deck the
+// caller can legitimately edit.
+func (q *Queries) BulkDeleteNotes(ctx context.Context, arg BulkDeleteNotesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, bulkDeleteNotes, arg.NoteIds, arg.DeckID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const bulkRemoveNoteTags = `-- name: BulkRemoveNoteTags :execrows
+UPDATE notes n
+SET tags = COALESCE(
+        (SELECT array_agg(t) FROM unnest(n.tags) AS t WHERE t <> ALL($1::text[])),
+        '{}'
+    ),
+    modified_at = now()
+FROM deck_access da
+WHERE n.id = ANY($2::uuid[]) AND n.deck_id = $3
+  AND da.deck_id = n.deck_id AND da.user_id = $4
+  AND da.can_view AND da.can_edit_content
+`
+
+type BulkRemoveNoteTagsParams struct {
+	Tags    []string
+	NoteIds []pgtype.UUID
+	DeckID  pgtype.UUID
+	UserID  pgtype.UUID
+}
+
+// Removes tags idempotently and leaves every unrelated tag untouched. COALESCE keeps a note
+// that loses its last tag at '{}' rather than NULL (notes.tags is NOT NULL, migration 00008).
+func (q *Queries) BulkRemoveNoteTags(ctx context.Context, arg BulkRemoveNoteTagsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, bulkRemoveNoteTags,
+		arg.Tags,
+		arg.NoteIds,
+		arg.DeckID,
+		arg.UserID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const bulkUpdateNoteChecksums = `-- name: BulkUpdateNoteChecksums :execrows
 WITH v AS (
     SELECT i.note_id, c.checksum

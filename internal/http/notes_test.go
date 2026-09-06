@@ -4,8 +4,11 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/Jolls/deckshare/internal/auth"
 )
@@ -788,4 +791,199 @@ func TestNoteRoutes_AccessControl(t *testing.T) {
 			}
 		})
 	}
+}
+
+// createTestNote creates a Basic2 note (the fixture setupDeckAndNoteType leaves behind) in
+// deckPath with the given space-separated tags, using the note type owned by whoever deckPath
+// belongs to, and returns the new note's id.
+func createTestNote(t *testing.T, tx pgx.Tx, handler http.Handler, deckPath string, cookie *http.Cookie, tags string) (noteID string) {
+	t.Helper()
+	ctx := context.Background()
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	var noteTypeID string
+	if err := tx.QueryRow(ctx, `
+		SELECT nt.id FROM note_types nt
+		JOIN decks d ON d.owner_id = nt.owner_id
+		WHERE nt.name = 'Basic2' AND d.id = $1
+	`, deckID).Scan(&noteTypeID); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+	body := url.Values{}
+	body.Set("note_type_id", noteTypeID)
+	body.Add("field[]", "Q")
+	body.Add("field[]", "A")
+	body.Set("tags", tags)
+	w := doRequest(handler, "POST", deckPath+"/notes", body.Encode(), cookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("create note status = %d, want 303: %s", w.Code, w.Body.String())
+	}
+	if err := tx.QueryRow(ctx, `SELECT id FROM notes WHERE deck_id = $1 ORDER BY id DESC LIMIT 1`, deckID).Scan(&noteID); err != nil {
+		t.Fatalf("lookup created note: %v", err)
+	}
+	return noteID
+}
+
+// #241: a caller without can_edit_content on a deck cannot bulk-edit any note in it -- table-
+// driven per (permission, operation) as CLAUDE.md §10.5 asks -- including by id-smuggling a note
+// id from a *different* deck the caller can legitimately edit into the request. BulkDeleteNotes/
+// BulkAddNoteTags/BulkRemoveNoteTags scope to n.deck_id = the route's deck id, so a smuggled note
+// from elsewhere never matches and is silently excluded rather than acted on.
+func TestNoteRoutes_BulkAccessControl(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	ownerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	viewerEmail := testEmail()
+	viewerCookie := loginCookie(t, tx, a, viewerEmail, "correct-horse-battery")
+	strangerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	ctx := context.Background()
+
+	deckAPath := setupDeckAndNoteType(t, handler, ownerCookie)
+	deckAID := strings.TrimPrefix(deckAPath, "/decks/")
+	noteAID := createTestNote(t, tx, handler, deckAPath, ownerCookie, "tag1")
+
+	// A deck the stranger fully owns (and can edit) -- its note is the smuggling payload: it is
+	// a note the stranger CAN edit, submitted against deck A's bulk route, where the stranger
+	// has no access at all.
+	deckBPath := setupDeckAndNoteType(t, handler, strangerCookie)
+	noteBID := createTestNote(t, tx, handler, deckBPath, strangerCookie, "")
+
+	var viewerID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, viewerEmail).Scan(&viewerID); err != nil {
+		t.Fatalf("lookup viewer: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO deck_access (deck_id, user_id, can_view) VALUES ($1, $2, true)`, deckAID, viewerID); err != nil {
+		t.Fatalf("grant view access: %v", err)
+	}
+
+	tests := []struct {
+		name, path, body string
+		cookie            *http.Cookie
+	}{
+		{"stranger bulk-delete", deckAPath + "/notes/bulk-delete", "note_id=" + noteAID, strangerCookie},
+		{"stranger bulk-tag-add", deckAPath + "/notes/bulk-tag-add", "note_id=" + noteAID + "&tags=x", strangerCookie},
+		{"stranger bulk-tag-remove", deckAPath + "/notes/bulk-tag-remove", "note_id=" + noteAID + "&tags=tag1", strangerCookie},
+		{"view-only collaborator bulk-delete", deckAPath + "/notes/bulk-delete", "note_id=" + noteAID, viewerCookie},
+		{"view-only collaborator bulk-tag-add", deckAPath + "/notes/bulk-tag-add", "note_id=" + noteAID + "&tags=x", viewerCookie},
+		{"view-only collaborator bulk-tag-remove", deckAPath + "/notes/bulk-tag-remove", "note_id=" + noteAID + "&tags=tag1", viewerCookie},
+		{"id-smuggling: own note from a different deck", deckAPath + "/notes/bulk-delete", "note_id=" + noteBID, strangerCookie},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := doRequest(handler, "POST", tt.path, tt.body, tt.cookie, "http://example.com")
+			if w.Code != http.StatusNotFound {
+				t.Errorf("status = %d, want 404: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+
+	if countRows(t, tx, `SELECT count(*) FROM notes WHERE id = $1`, noteAID) != 1 {
+		t.Error("noteA should not have been deleted by an unauthorized bulk-delete")
+	}
+	if countRows(t, tx, `SELECT count(*) FROM notes WHERE id = $1`, noteBID) != 1 {
+		t.Error("noteB should not have been deleted (id-smuggled into deck A's bulk-delete)")
+	}
+}
+
+// #241: the allow path for bulk-delete, exercised alongside a mixed selection -- one note the
+// caller can legitimately delete plus one smuggled from a deck they cannot touch. The valid note
+// must still be deleted (n > 0 -> success), and the smuggled one must be silently excluded, not
+// merely uncounted: TestNoteRoutes_BulkAccessControl only covers the all-deny case, so this is
+// the only place an authorized bulk-delete of real notes actually runs.
+func TestNoteRoutes_BulkDelete_MixedSelection_DeletesAuthorizedIgnoresSmuggled(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	ownerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	strangerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	deckAPath := setupDeckAndNoteType(t, handler, ownerCookie)
+	noteA1ID := createTestNote(t, tx, handler, deckAPath, ownerCookie, "")
+	noteA2ID := createTestNote(t, tx, handler, deckAPath, ownerCookie, "")
+
+	deckBPath := setupDeckAndNoteType(t, handler, strangerCookie)
+	noteBID := createTestNote(t, tx, handler, deckBPath, strangerCookie, "")
+
+	body := "note_id=" + noteA1ID + "&note_id=" + noteBID
+	w := doRequest(handler, "POST", deckAPath+"/notes/bulk-delete", body, ownerCookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("bulk-delete status = %d, want 303: %s", w.Code, w.Body.String())
+	}
+
+	if countRows(t, tx, `SELECT count(*) FROM notes WHERE id = $1`, noteA1ID) != 0 {
+		t.Error("noteA1 (authorized, selected) should have been deleted")
+	}
+	if countRows(t, tx, `SELECT count(*) FROM notes WHERE id = $1`, noteA2ID) != 1 {
+		t.Error("noteA2 (authorized, NOT selected) should not have been touched")
+	}
+	if countRows(t, tx, `SELECT count(*) FROM notes WHERE id = $1`, noteBID) != 1 {
+		t.Error("noteB (smuggled from an inaccessible deck) should not have been deleted")
+	}
+}
+
+// #241: the bulk-edit selection UI only ever offers checkboxes for the current page
+// (notesPageSize), so a request naming more than maxBulkSelection ids is a hand-crafted request,
+// not a real selection -- it must be rejected outright, not silently truncated to the bound.
+func TestNoteRoutes_BulkDelete_SelectionOverLimit_400(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+
+	v := url.Values{}
+	for i := 0; i < maxBulkSelection+1; i++ {
+		v.Add("note_id", "not-a-real-id")
+	}
+	w := doRequest(handler, "POST", deckPath+"/notes/bulk-delete", v.Encode(), cookie, "http://example.com")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+}
+
+// #241: bulk tag add/remove must be idempotent (replaying the same operation is a no-op) and
+// must not disturb tags outside the ones named in the request.
+func TestNoteRoutes_BulkTags_IdempotentPreservesOtherTags(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	ctx := context.Background()
+
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	noteID := createTestNote(t, tx, handler, deckPath, cookie, "keep")
+
+	readTags := func() []string {
+		var tags []string
+		if err := tx.QueryRow(ctx, `SELECT tags FROM notes WHERE id = $1`, noteID).Scan(&tags); err != nil {
+			t.Fatalf("read tags: %v", err)
+		}
+		sort.Strings(tags)
+		return tags
+	}
+	wantEqual := func(got, want []string) {
+		if len(got) != len(want) {
+			t.Fatalf("tags = %v, want %v", got, want)
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				t.Fatalf("tags = %v, want %v", got, want)
+			}
+		}
+	}
+
+	addBody := "note_id=" + noteID + "&tags=new"
+	for i := 0; i < 2; i++ {
+		w := doRequest(handler, "POST", deckPath+"/notes/bulk-tag-add", addBody, cookie, "http://example.com")
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("bulk-tag-add[%d] status = %d, want 303: %s", i, w.Code, w.Body.String())
+		}
+	}
+	wantEqual(readTags(), []string{"keep", "new"})
+
+	removeBody := "note_id=" + noteID + "&tags=new"
+	for i := 0; i < 2; i++ {
+		w := doRequest(handler, "POST", deckPath+"/notes/bulk-tag-remove", removeBody, cookie, "http://example.com")
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("bulk-tag-remove[%d] status = %d, want 303: %s", i, w.Code, w.Body.String())
+		}
+	}
+	wantEqual(readTags(), []string{"keep"})
 }
