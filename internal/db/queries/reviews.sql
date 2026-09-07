@@ -468,6 +468,31 @@ WHERE c.deck_id = sqlc.arg(deck_id)
   AND (ucs.last_review IS NULL OR ucs.last_review < sqlc.arg(study_day_start)::timestamptz)
   AND (ucs.user_id IS NOT NULL OR crd.release_day <= sqlc.arg(current_class_day)::int);
 
+-- The lowest lesson this user has NOT reached yet in one paced deck (#243) -- what turns the
+-- reviewer's "nothing left" empty state into "Lesson 4 unlocks Thursday". pgx.ErrNoRows means
+-- nothing is pending: every card is either introduced already or unlocked and waiting, so the
+-- ordinary empty state is the honest one. The lowest row rather than min(), deliberately: an
+-- aggregate would have to invent a sentinel for "no rows" (or be typed interface{} by sqlc), and
+-- absence should stay absence rather than a magic number two other layers must know to decode.
+--
+-- Deliberately the same eligibility shape as CountQueueForDeck's new_count, one predicate
+-- inverted: never-introduced cards (ucs.user_id IS NULL, which also means not suspended and not
+-- buried -- both need a user_card_state row) whose lesson is BEYOND the current class day rather
+-- than at or before it. The two together partition the deck's never-introduced cards, so a deck can
+-- never show both "New: 0" and no unlock date while cards are still waiting.
+-- name: NextLockedLesson :one
+SELECT crd.release_day AS next_lesson
+FROM cards c
+JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = sqlc.arg(user_id)
+                   AND da.can_view AND da.can_study
+JOIN card_release_days crd ON crd.card_id = c.id
+LEFT JOIN user_card_state ucs ON ucs.user_id = sqlc.arg(user_id) AND ucs.card_id = c.id
+WHERE c.deck_id = sqlc.arg(deck_id)
+  AND ucs.user_id IS NULL
+  AND crd.release_day > sqlc.arg(current_class_day)::int
+ORDER BY crd.release_day
+LIMIT 1;
+
 -- Same queue summary, grouped by deck, for the /decks list (#80). One query for every deck the
 -- user can view rather than one CountQueueForDeck call per row.
 --

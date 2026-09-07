@@ -257,6 +257,22 @@ func MeetingDates(cal Calendar, n int32) []time.Time {
 	return dates
 }
 
+// MeetingDate returns the date class day n falls on, and whether the calendar has an nth meeting
+// at all -- the inverse of CurrentClassDay, and what turns a locked lesson number back into the
+// "Lesson 4 unlocks Thursday, 9 October" line a student sees (#243). n above MaxReleaseDay is
+// unresolvable rather than clamped: a clamped answer would name the wrong date, and no note can
+// carry a lesson number that high anyway (migration 00020's CHECK).
+func MeetingDate(cal Calendar, n int32) (time.Time, bool) {
+	if n <= 0 || n > MaxReleaseDay {
+		return time.Time{}, false
+	}
+	dates := MeetingDates(cal, n)
+	if int32(len(dates)) < n {
+		return time.Time{}, false
+	}
+	return dates[n-1], true
+}
+
 // toDate normalises t to UTC midnight so every comparison here is a civil-date comparison. A date
 // read back from Postgres already arrives this way; a time.Time from anywhere else may not.
 func toDate(t time.Time) time.Time {

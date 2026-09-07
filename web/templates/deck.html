@@ -7,6 +7,7 @@
     <a href="/decks/{{.Deck.ID}}/review" role="button">Study</a>
     <span>New: {{.Queue.New}} · Learning: {{.Queue.Learning}} · Due: {{.Queue.Due}} · Left today: {{.Queue.Left}}</span>
 </p>
+{{with .NextUnlock}}<p>Lesson {{.Lesson}} unlocks {{.Date}}.</p>{{end}}
 <nav class="button-nav">
     {{if .Deck.CanEditContent}}
     <a href="/decks/{{.Deck.ID}}/notes/new" role="button" class="outline btn-sm">Add note</a>

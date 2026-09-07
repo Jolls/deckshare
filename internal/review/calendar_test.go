@@ -237,6 +237,56 @@ func TestNewCalendar(t *testing.T) {
 	})
 }
 
+// TestMeetingDate_IsTheInverseOfCurrentClassDay is the property the student-facing unlock line
+// (#243) rests on: the date named for lesson N is a date on which the gate has actually reached N.
+// Checked the day before too -- the line must not name a date the lesson is already open on.
+func TestMeetingDate_IsTheInverseOfCurrentClassDay(t *testing.T) {
+	cals := []Calendar{
+		termCalendar(), // Tue/Thu, and 40 lessons from 8 Sep reach its Thanksgiving skip date
+		{StartDate: date(2026, time.September, 8), Weekdays: []int32{1}},
+		{StartDate: date(2026, time.September, 8), Weekdays: []int32{1, 2, 3, 4, 5}},
+		// Tue/Thu across the 8 Mar 2026 US DST transition.
+		{StartDate: date(2026, time.March, 3), Weekdays: []int32{2, 4}},
+	}
+	for i, cal := range cals {
+		for lesson := int32(1); lesson <= 40; lesson++ {
+			d, ok := MeetingDate(cal, lesson)
+			if !ok {
+				t.Fatalf("calendar %d: no date for lesson %d", i, lesson)
+			}
+			if got := CurrentClassDay(cal, d); got != lesson {
+				t.Errorf("calendar %d: lesson %d unlocks %s, but that date resolves to class day %d",
+					i, lesson, d.Format(CalendarDateLayout), got)
+			}
+			if got := CurrentClassDay(cal, d.AddDate(0, 0, -1)); got >= lesson {
+				t.Errorf("calendar %d: lesson %d was already open on %s, the day before its unlock date",
+					i, lesson, d.AddDate(0, 0, -1).Format(CalendarDateLayout))
+			}
+		}
+	}
+}
+
+func TestMeetingDate_Unresolvable(t *testing.T) {
+	tests := []struct {
+		name   string
+		cal    Calendar
+		lesson int32
+	}{
+		{"no calendar", Calendar{}, 3},
+		// 0 is "no lesson assigned", which is available immediately and so has no unlock date.
+		{"lesson 0", termCalendar(), 0},
+		{"negative lesson", termCalendar(), -1},
+		{"above MaxReleaseDay", termCalendar(), MaxReleaseDay + 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, ok := MeetingDate(tt.cal, tt.lesson); ok {
+				t.Errorf("MeetingDate(%d) resolved a date, want none", tt.lesson)
+			}
+		})
+	}
+}
+
 func TestMeetingDates(t *testing.T) {
 	got := MeetingDates(termCalendar(), 3)
 	want := []time.Time{

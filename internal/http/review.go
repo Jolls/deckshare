@@ -50,7 +50,15 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 		}
 
 		clock := now()
-		batch, err := buildStudyBatch(r.Context(), store, user.ID, deck, review.Cursor{AtStart: true}, initialBatchSize, clock, 0)
+		// The window is resolved here rather than inside buildStudyBatch because the next-unlock
+		// line (#243) needs the same study day the gate resolved against -- resolving it twice
+		// would let the batch and the line it explains disagree across a midnight boundary.
+		window, err := studyDayWindow(r.Context(), q, user.ID, clock)
+		if err != nil {
+			serverError(w)
+			return
+		}
+		batch, err := buildStudyBatchInWindow(r.Context(), store, user.ID, deck, window, review.Cursor{AtStart: true}, initialBatchSize, clock, 0)
 		if err != nil {
 			serverError(w)
 			return
@@ -60,10 +68,17 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 			serverError(w)
 			return
 		}
+		calendar := review.ParseCalendar(deck.Preset)
+		unlock, err := nextUnlock(r.Context(), q, user.ID, deckID, calendar, window.LocalDate)
+		if err != nil {
+			serverError(w)
+			return
+		}
 
 		render(w, pages["review"], http.StatusOK, map[string]any{
 			"User": user, "Deck": deck, "CSS": css, "Batch": toBatchView(batch),
-			"BodyClass": "hide-account-bar",
+			"NextUnlock": unlock,
+			"BodyClass":  "hide-account-bar",
 		})
 	})))
 

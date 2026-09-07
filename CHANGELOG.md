@@ -8,6 +8,16 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.5] - 2026-09-06
+
+### Added
+- A paced deck now tells the student when its next lesson opens — "Lesson 4 unlocks Thursday,
+  9 October 2026" — on the deck page and in the reviewer's empty state, so
+  running out of unlocked material no longer reads the same as a finished or broken deck. Shown
+  only when a class calendar is configured and material is genuinely still waiting; a deck with
+  every lesson open, and an unpaced deck, keep the ordinary empty state
+  ([#243](https://github.com/Jolls/deckshare/issues/243)).
+
 ## [0.3.4] - 2026-09-06
 
 ### Added
