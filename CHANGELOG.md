@@ -8,6 +8,14 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.6] - 2026-09-07
+
+### Added
+- An "Add cloze deletion" button next to each field in the note editor wraps the field's
+  current text selection in `{{cN::...}}`, numbered one past the highest cloze number already
+  used anywhere in the note, so building a cloze note no longer requires typing the `{{c1::}}`
+  markup by hand ([#247](https://github.com/Jolls/deckshare/issues/247)).
+
 ## [0.3.5] - 2026-09-06
 
 ### Added
