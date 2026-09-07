@@ -392,6 +392,34 @@
     if (firstPendingIndex() === -1 && state.exhausted) {
       var done = document.getElementById('review-done');
       if (done) done.hidden = false;
+      startDayWatch();
+    }
+  }
+
+  // While "No more cards due" is showing, the deck may pass into the next local day -- new and
+  // due cards unlock server-side, but this page's rendered counts don't know that until reloaded
+  // (#246). Poll the local calendar date and reload once it changes; stopped again by
+  // onStudyMoreClick so a student who keeps reviewing across midnight isn't reloaded mid-card.
+  var DAY_CHECK_INTERVAL_MS = 60 * 1000;
+  var dayWatchTimer = null;
+
+  function todayKey() {
+    var d = new Date();
+    return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate();
+  }
+
+  function startDayWatch() {
+    if (dayWatchTimer) return;
+    var startDay = todayKey();
+    dayWatchTimer = window.setInterval(function () {
+      if (todayKey() !== startDay) window.location.reload();
+    }, DAY_CHECK_INTERVAL_MS);
+  }
+
+  function stopDayWatch() {
+    if (dayWatchTimer) {
+      window.clearInterval(dayWatchTimer);
+      dayWatchTimer = null;
     }
   }
 
@@ -407,6 +435,7 @@
     state.cursor = '';
     var done = document.getElementById('review-done');
     if (done) done.hidden = true;
+    stopDayWatch();
     state.refillInFlight = true;
     document.body.dispatchEvent(new CustomEvent('refill-needed'));
   }
