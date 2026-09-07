@@ -17,6 +17,7 @@ import (
 	"github.com/Jolls/deckshare/internal/auth"
 	"github.com/Jolls/deckshare/internal/db"
 	noterender "github.com/Jolls/deckshare/internal/render"
+	"github.com/Jolls/deckshare/internal/review"
 )
 
 var errNoClozeMarkers = errors.New("a cloze note must contain at least one {{c1::...}} marker")
@@ -496,6 +497,26 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		n, err := q.BulkRemoveNoteTags(r.Context(), db.BulkRemoveNoteTagsParams{Tags: tags, NoteIds: noteIDs, DeckID: deckID, UserID: user.ID})
 		finishBulk(w, r, pages, user, deckID, n, err)
 	})))
+
+	// Assigning the lesson (#242) is a bulk action rather than a per-row input: a teacher pacing a
+	// 500-card deck sets day 3 on forty notes at once, and the selection surface for that already
+	// exists (#241).
+	mux.Handle("POST /decks/{deckId}/notes/bulk-release-day", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, _ := auth.UserFromContext(r.Context())
+		deckID, noteIDs, ok := parseBulkRequest(w, r, pages, user)
+		if !ok {
+			return
+		}
+		releaseDay, ok := parseBulkReleaseDay(w, r)
+		if !ok {
+			return
+		}
+		q := db.New(store)
+		n, err := q.BulkSetNoteReleaseDay(r.Context(), db.BulkSetNoteReleaseDayParams{
+			ReleaseDay: releaseDay, NoteIds: noteIDs, DeckID: deckID, UserID: user.ID,
+		})
+		finishBulk(w, r, pages, user, deckID, n, err)
+	})))
 }
 
 // parseBulkRequest resolves the {deckId} path param and the "note_id" checkbox selection shared
@@ -548,6 +569,25 @@ func parseBulkTags(w http.ResponseWriter, r *http.Request) (tags []string, ok bo
 		return nil, false
 	}
 	return tags, true
+}
+
+// parseBulkReleaseDay reads the "release_day" field off an already-parsed bulk-edit form (#242),
+// writing the 400 response and reporting ok=false for a non-integer or out-of-range value. An
+// EMPTY value is not an error: it means 0, "no lesson assigned, available immediately", which is
+// how a teacher un-assigns. The caller must return immediately when this reports false.
+func parseBulkReleaseDay(w http.ResponseWriter, r *http.Request) (day int32, ok bool) {
+	raw := strings.TrimSpace(r.PostForm.Get("release_day"))
+	if raw == "" {
+		return 0, true
+	}
+	// Range-checked as an int, before any narrowing: int32(4294967296) is 0, which would silently
+	// clear the selection's lessons instead of being rejected.
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < 0 || v > int(review.MaxReleaseDay) {
+		http.Error(w, fmt.Sprintf("lesson must be between 0 and %d, or blank to clear it", review.MaxReleaseDay), http.StatusBadRequest)
+		return 0, false
+	}
+	return int32(v), true
 }
 
 // finishBulk renders the shared response tail for a bulk-edit route: a 500 on a query error,

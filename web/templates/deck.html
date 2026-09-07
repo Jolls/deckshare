@@ -29,7 +29,7 @@
         <thead>
             <tr>
                 {{if .Deck.CanEditContent}}<th><input type="checkbox" data-select-all aria-label="Select all notes on this page"></th>{{end}}
-                <th>Note</th><th>Type</th><th>Cards</th><th></th>
+                <th>Note</th><th>Type</th><th>Cards</th><th>Lesson</th><th></th>
             </tr>
         </thead>
         <tbody>
@@ -39,6 +39,7 @@
                 <td>{{.SortText}}</td>
                 <td>{{.NoteTypeName}}</td>
                 <td>{{.CardCount}}</td>
+                <td>{{if gt .ReleaseDay 0}}{{.ReleaseDay}}{{else}}&mdash;{{end}}</td>
                 <td>
                     {{if $.Deck.CanEditContent}}
                     <a href="/notes/{{.ID}}/edit">Edit</a>
@@ -64,6 +65,8 @@
         <button type="submit" formaction="/decks/{{.Deck.ID}}/notes/bulk-tag-add" class="outline btn-sm" x-data @click="confirm('Add these tags to the selected notes?') || $event.preventDefault()">Add tags</button>
         <button type="submit" formaction="/decks/{{.Deck.ID}}/notes/bulk-tag-remove" class="outline btn-sm" x-data @click="confirm('Remove these tags from the selected notes?') || $event.preventDefault()">Remove tags</button>
         <button type="submit" formaction="/decks/{{.Deck.ID}}/notes/bulk-delete" class="outline btn-sm" x-data @click="confirm('Delete the selected notes?') || $event.preventDefault()">Delete selected</button>
+        <input type="number" name="release_day" min="0" max="999" step="1" placeholder="Lesson" aria-label="Lesson to assign the selected notes to">
+        <button type="submit" formaction="/decks/{{.Deck.ID}}/notes/bulk-release-day" class="outline btn-sm" x-data @click="confirm('Assign the selected notes to this lesson? Leave the box blank to unassign them.') || $event.preventDefault()">Set lesson</button>
     </form>
     {{end}}
     </div>
@@ -74,6 +77,34 @@
     <p>No notes yet.</p>
     {{end}}
 </details>
+
+{{if .ClassDays}}
+<details>
+    <summary>Class calendar</summary>
+    <p>
+    {{if gt .CurrentClassDay 0}}Class day {{.CurrentClassDay}} has arrived. Lessons up to and
+    including it are unlocked and stay unlocked; later ones are not offered yet, however far ahead
+    a student works.
+    {{else}}The first meeting hasn't arrived yet, so no lesson has unlocked.{{end}}
+    {{if gt .UnassignedNotes 0}}{{.UnassignedNotes}} note{{if ne .UnassignedNotes 1}}s{{end}} assigned
+    to no lesson, available from the start.{{end}}</p>
+    <div class="table-scroll">
+    <table>
+        <thead><tr><th>Lesson</th><th>Meets</th><th>Notes</th><th>Status</th></tr></thead>
+        <tbody>
+            {{range .ClassDays}}
+            <tr>
+                <td>{{.Day}}</td>
+                <td>{{.Date}}</td>
+                <td>{{.Notes}}</td>
+                <td>{{if .Unlocked}}Unlocked{{else}}Locked{{end}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    </div>
+</details>
+{{end}}
 
 <details>
     <summary>Retention target</summary>

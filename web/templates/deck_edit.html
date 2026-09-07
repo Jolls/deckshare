@@ -39,6 +39,30 @@
     <input type="number" id="due_look_ahead_minutes" name="due_look_ahead_minutes" min="0" max="1440" step="1" value="{{.DueLookAheadMinutes}}" required>
     <small>0 only shows cards at or after their exact due instant. Pulling in cards due later today lets one sitting clear the whole day's queue, at the cost of occasionally answering a card before it's actually due.</small>
 
+    <label for="calendar_start_date">Class calendar &mdash; first meeting</label>
+    <input type="date" id="calendar_start_date" name="calendar_start_date" value="{{.Calendar.StartDate}}">
+    <small>Paces this deck by class day: a note assigned to lesson N stays locked until the Nth
+    meeting has arrived on the student's own clock, and stays unlocked afterwards. Unassigned notes
+    are always available. Leave this and the fields below empty for no pacing at all.</small>
+
+    <fieldset>
+        <legend>Meeting days</legend>
+        {{range .Calendar.Weekdays}}
+        <label><input type="checkbox" name="calendar_weekday" value="{{.ISO}}" {{if .Checked}}checked{{end}}> {{.Name}}</label>
+        {{end}}
+    </fieldset>
+
+    <label for="calendar_skip">No-class dates</label>
+    <textarea id="calendar_skip" name="calendar_skip" placeholder="2026-11-26">{{.Calendar.Skip}}</textarea>
+    <small>One YYYY-MM-DD date per line &mdash; holidays, snow days. A meeting that doesn't happen
+    pushes every lesson after it later.</small>
+
+    {{if .Calendar.StartDate}}
+    <label><input type="checkbox" name="calendar_clear" value="1"> Remove the class calendar</label>
+    <small>Unlocks every note in the deck immediately, whatever lesson it is assigned to. The
+    lesson numbers themselves are kept, so re-adding a calendar later resumes the same pacing.</small>
+    {{end}}
+
     <button type="submit">Save</button>
 </form>
 

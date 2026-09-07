@@ -199,7 +199,10 @@ func studyDayWindow(ctx context.Context, q *db.Queries, userID pgtype.UUID, now 
 	if err != nil {
 		return review.StudyDay{}, err
 	}
-	return review.StudyDay{Start: row.StudyDayStart.Time, End: row.StudyDayEnd.Time}, nil
+	return review.StudyDay{
+		Start: row.StudyDayStart.Time, End: row.StudyDayEnd.Time,
+		LocalDate: row.StudyDayLocalDate.Time,
+	}, nil
 }
 
 // parseExtraRounds validates the client-controlled extraRounds query param (#172) at the
@@ -242,7 +245,8 @@ func buildStudyBatchInWindow(ctx context.Context, store db.DBTX, userID pgtype.U
 	batch, err := review.BuildBatch(ctx, store, params, userID, deck.ID, deck.Name, window,
 		review.NewPerDay(deck.Preset), review.RevPerDay(deck.Preset),
 		review.ParseRevOrder(deck.Preset), review.ParsePriority(deck.Preset), cur, limit, clock,
-		review.DueLookAheadMinutes(deck.Preset), extraRounds)
+		review.DueLookAheadMinutes(deck.Preset), extraRounds,
+		review.ReleaseGateDay(deck.Preset, window.LocalDate))
 	if err != nil {
 		return review.Batch{}, err
 	}

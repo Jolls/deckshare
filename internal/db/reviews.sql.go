@@ -103,12 +103,14 @@ SELECT count(*) FILTER (WHERE ucs.user_id IS NULL)   AS new_count,
 FROM cards c
 JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $1
                    AND da.can_view AND da.can_study
+JOIN card_release_days crd ON crd.card_id = c.id
 LEFT JOIN user_card_state ucs ON ucs.user_id = $1 AND ucs.card_id = c.id
 WHERE c.deck_id = $2
   AND NOT COALESCE(ucs.suspended, false)
   AND (ucs.buried_until IS NULL OR ucs.buried_until <= ($3::timestamptz)::date)
   AND (ucs.due IS NULL OR ucs.due <= $4::timestamptz + make_interval(mins => $5::int))
   AND (ucs.last_review IS NULL OR ucs.last_review < $3::timestamptz)
+  AND (ucs.user_id IS NOT NULL OR crd.release_day <= $6::int)
 `
 
 type CountQueueForDeckParams struct {
@@ -117,6 +119,7 @@ type CountQueueForDeckParams struct {
 	StudyDayStart    pgtype.Timestamptz
 	Now              pgtype.Timestamptz
 	LookAheadMinutes int32
+	CurrentClassDay  int32
 }
 
 type CountQueueForDeckRow struct {
@@ -126,9 +129,11 @@ type CountQueueForDeckRow struct {
 }
 
 // Queue summary (New/Learning/Due) for one deck's study page (#80). Same eligibility filters as
-// ListDueCardsForStudy -- suspended, buried, due now or earlier, not already reviewed today --
-// so the counts agree with what /decks/{id}/review actually serves. Learning folds together
-// state 1 (learning) and 3 (relearning); Due is state 2 (review).
+// ListDueCardsForStudy -- suspended, buried, due now or earlier, not already reviewed today, and
+// the release-day gate (#242) -- so the counts agree with what /decks/{id}/review actually
+// serves. Gating the fetch without gating the counts would have a paced deck advertise "300 new"
+// while serving 20, which is the #101/#106 divergence repeated. Learning folds together state 1
+// (learning) and 3 (relearning); Due is state 2 (review).
 func (q *Queries) CountQueueForDeck(ctx context.Context, arg CountQueueForDeckParams) (CountQueueForDeckRow, error) {
 	row := q.db.QueryRow(ctx, countQueueForDeck,
 		arg.UserID,
@@ -136,6 +141,7 @@ func (q *Queries) CountQueueForDeck(ctx context.Context, arg CountQueueForDeckPa
 		arg.StudyDayStart,
 		arg.Now,
 		arg.LookAheadMinutes,
+		arg.CurrentClassDay,
 	)
 	var i CountQueueForDeckRow
 	err := row.Scan(&i.NewCount, &i.LearningCount, &i.DueCount)
@@ -144,10 +150,12 @@ func (q *Queries) CountQueueForDeck(ctx context.Context, arg CountQueueForDeckPa
 
 const countQueueForUser = `-- name: CountQueueForUser :many
 WITH la AS (
-    SELECT d.deck_id, l.look_ahead_minutes
+    SELECT d.deck_id, l.look_ahead_minutes, cd.current_class_day
     FROM unnest($4::uuid[]) WITH ORDINALITY AS d(deck_id, ord)
     JOIN unnest($5::int[]) WITH ORDINALITY AS l(look_ahead_minutes, ord)
       ON d.ord = l.ord
+    JOIN unnest($6::int[]) WITH ORDINALITY AS cd(current_class_day, ord)
+      ON d.ord = cd.ord
 )
 SELECT c.deck_id                                     AS deck_id,
        count(*) FILTER (WHERE ucs.user_id IS NULL)   AS new_count,
@@ -157,11 +165,13 @@ FROM cards c
 JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $1
                    AND da.can_view AND da.can_study
 JOIN la ON la.deck_id = c.deck_id
+JOIN card_release_days crd ON crd.card_id = c.id
 LEFT JOIN user_card_state ucs ON ucs.user_id = $1 AND ucs.card_id = c.id
 WHERE NOT COALESCE(ucs.suspended, false)
   AND (ucs.buried_until IS NULL OR ucs.buried_until <= ($2::timestamptz)::date)
   AND (ucs.due IS NULL OR ucs.due <= $3::timestamptz + make_interval(mins => la.look_ahead_minutes))
   AND (ucs.last_review IS NULL OR ucs.last_review < $2::timestamptz)
+  AND (ucs.user_id IS NOT NULL OR crd.release_day <= la.current_class_day)
 GROUP BY c.deck_id
 `
 
@@ -171,6 +181,7 @@ type CountQueueForUserParams struct {
 	Now              pgtype.Timestamptz
 	DeckIds          []pgtype.UUID
 	LookAheadMinutes []int32
+	CurrentClassDays []int32
 }
 
 type CountQueueForUserRow struct {
@@ -183,13 +194,15 @@ type CountQueueForUserRow struct {
 // Same queue summary, grouped by deck, for the /decks list (#80). One query for every deck the
 // user can view rather than one CountQueueForDeck call per row.
 //
-// look_ahead_minutes (#154) varies per deck, but this query spans every deck the user can view in
-// one grouped result, so it can't take a single scalar arg the way CountQueueForDeck does. The
-// caller passes two parallel arrays (deck_ids, look_ahead_minutes -- each deck's value already
-// parsed from its own preset in Go, same as everywhere else preset fields are read) and `la`
-// unnests them into one row per deck, joined on deck_id, so each deck's due filter widens by its
-// own configured amount. A deck_id with no matching row in either array (there won't be one, since
-// the caller derives both from the same deck list) would simply drop out of the INNER JOIN.
+// look_ahead_minutes (#154) and current_class_day (#242) both vary per deck, but this query spans
+// every deck the user can view in one grouped result, so neither can be a single scalar arg the
+// way CountQueueForDeck's are. The caller passes three parallel arrays (deck_ids,
+// look_ahead_minutes, current_class_days -- each deck's value already resolved from its own preset
+// in Go, same as everywhere else preset fields are read) and `la` unnests them into one row per
+// deck, joined on deck_id, so each deck's due filter widens by its own configured amount and each
+// deck's gate resolves against its own class calendar. A deck_id with no matching row in every
+// array (there won't be one, since the caller derives all three from the same deck list) would
+// simply drop out of the INNER JOIN.
 func (q *Queries) CountQueueForUser(ctx context.Context, arg CountQueueForUserParams) ([]CountQueueForUserRow, error) {
 	rows, err := q.db.Query(ctx, countQueueForUser,
 		arg.UserID,
@@ -197,6 +210,7 @@ func (q *Queries) CountQueueForUser(ctx context.Context, arg CountQueueForUserPa
 		arg.Now,
 		arg.DeckIds,
 		arg.LookAheadMinutes,
+		arg.CurrentClassDays,
 	)
 	if err != nil {
 		return nil, err
@@ -349,7 +363,13 @@ WITH l AS (
     FROM l
 )
 SELECT (start_local AT TIME ZONE tz)::timestamptz                        AS study_day_start,
-       ((start_local + interval '1 day') AT TIME ZONE tz)::timestamptz   AS study_day_end
+       ((start_local + interval '1 day') AT TIME ZONE tz)::timestamptz   AS study_day_end,
+       -- The student's own calendar date for this study day (#242): the class-day gate resolves
+       -- "has Thursday's lesson arrived?" on the study day the student is actually in, which at
+       -- 2am under day_start_hour=4 is still yesterday's. Returned from here rather than
+       -- recomputed in Go so the local-time arithmetic stays in the one place that already does
+       -- it, and so no timezone has to travel with the deck.
+       start_local::date                                                 AS study_day_local_date
 FROM s
 `
 
@@ -359,8 +379,9 @@ type GetStudyDayWindowParams struct {
 }
 
 type GetStudyDayWindowRow struct {
-	StudyDayStart pgtype.Timestamptz
-	StudyDayEnd   pgtype.Timestamptz
+	StudyDayStart     pgtype.Timestamptz
+	StudyDayEnd       pgtype.Timestamptz
+	StudyDayLocalDate pgtype.Date
 }
 
 // The reviewer's queue (architecture.md §6). Every query here takes user_id and joins deck_access
@@ -372,13 +393,14 @@ type GetStudyDayWindowRow struct {
 func (q *Queries) GetStudyDayWindow(ctx context.Context, arg GetStudyDayWindowParams) (GetStudyDayWindowRow, error) {
 	row := q.db.QueryRow(ctx, getStudyDayWindow, arg.Now, arg.UserID)
 	var i GetStudyDayWindowRow
-	err := row.Scan(&i.StudyDayStart, &i.StudyDayEnd)
+	err := row.Scan(&i.StudyDayStart, &i.StudyDayEnd, &i.StudyDayLocalDate)
 	return i, err
 }
 
 const listDueCardsForStudy = `-- name: ListDueCardsForStudy :many
 WITH scored AS (
     SELECT c.id                                        AS card_id,
+           crd.release_day                             AS release_day, -- the gate's input (#242)
            c.ordinal                                   AS card_ordinal,
            (ucs.user_id IS NULL)::boolean               AS unseen,
            COALESCE(ucs.due, now())                    AS due,
@@ -422,6 +444,7 @@ WITH scored AS (
     JOIN notes n       ON n.id = c.note_id
     JOIN note_types nt ON nt.id = n.note_type_id
     JOIN templates t   ON t.id = c.template_id
+    JOIN card_release_days crd ON crd.card_id = c.id   -- the release gate's input (#242)
     LEFT JOIN user_card_state ucs ON ucs.user_id = $4 AND ucs.card_id = c.id
     WHERE c.deck_id = $5
 )
@@ -470,11 +493,17 @@ LEFT JOIN LATERAL (
     SELECT COALESCE(c2.import_due_position, 2147483647)::double precision AS cutoff_key,
            c2.id AS cutoff_id
     FROM cards c2
+    JOIN card_release_days crd2 ON crd2.card_id = c2.id
     LEFT JOIN user_card_state u2
            ON u2.user_id = $4 AND u2.card_id = c2.id
     WHERE c2.deck_id = $5 AND u2.user_id IS NULL
+      -- The release gate applies here too (#242), not just to the rows served below: this
+      -- subquery ranks never-seen cards to find the allowance boundary, and a card the gate
+      -- excludes must not occupy a rank -- otherwise a locked lesson sitting early in
+      -- import_due_position order would eat the day's new-card allowance and serve nothing.
+      AND crd2.release_day <= $10::int
     ORDER BY cutoff_key, c2.id
-    OFFSET GREATEST($10::int - 1, 0)
+    OFFSET GREATEST($11::int - 1, 0)
     LIMIT 1
 ) new_cutoff ON true
 WHERE NOT scored.suspended
@@ -485,6 +514,17 @@ WHERE NOT scored.suspended
   -- eligible set than this filter admits.
   AND (scored.unseen OR scored.due <= $7::timestamptz + make_interval(mins => $8::int))
   AND (scored.last_review IS NULL OR scored.last_review < $6::timestamptz)
+  -- The release-day gate (#242, #238): a note assigned to a later class meeting is not eligible
+  -- to be INTRODUCED yet. current_class_day is internal/review.ReleaseGateDay's value -- the
+  -- deck's calendar resolved against the student's own study day, or a class day past every
+  -- possible lesson when the deck has no calendar, which releases everything without needing a
+  -- second branch here (the same "sentinel past every real value" trick as import_due_position's
+  -- 2147483647 above). Never-seen cards only: a card with a user_card_state row has already been
+  -- introduced and is never re-gated, which is what "cumulative" means. Orthogonal to the daily
+  -- limits above: this decides WHICH cards are eligible, new.perDay decides HOW MANY. extraRounds
+  -- (#172) only scales the allowances, so it can burn down an unlocked backlog but can never
+  -- reach a locked lesson.
+  AND (NOT scored.unseen OR scored.release_day <= $10::int)
   -- The per-deck daily new-card cap (#101). new_remaining is the deck's configured limit minus what
   -- has already been introduced today; the caller computes it. Capping by POSITION (raw_key/id),
   -- not by how many rows this fetch returns, is what makes the cap hold across refills: a card
@@ -494,7 +534,7 @@ WHERE NOT scored.suspended
   -- allowance -- all of them pass. Suspended/buried are not re-checked here because a card with no
   -- user_card_state row can be neither.
   AND (NOT scored.unseen
-       OR ($10::int > 0
+       OR ($11::int > 0
            AND (new_cutoff.cutoff_key IS NULL
                 OR (scored.raw_key, scored.card_id) <= (new_cutoff.cutoff_key, new_cutoff.cutoff_id))))
   -- The deck's combined new+due daily total cutoff (#118; rev_remaining is RevRemaining's return
@@ -513,9 +553,9 @@ WHERE NOT scored.suspended
                 OR (scored.raw_key, scored.card_id) <= (rev_cutoff.cutoff_key, rev_cutoff.cutoff_id))))
   AND ((CASE WHEN $1::text = 'new' THEN (NOT scored.unseen)::int ELSE scored.unseen::int END),
         scored.raw_key, scored.card_id)
-      > ($11::int, $12::double precision, $13::uuid)
+      > ($12::int, $13::double precision, $14::uuid)
 ORDER BY group_bit, sort_key, scored.card_id
-LIMIT $14
+LIMIT $15
 `
 
 type ListDueCardsForStudyParams struct {
@@ -528,6 +568,7 @@ type ListDueCardsForStudyParams struct {
 	Now              pgtype.Timestamptz
 	LookAheadMinutes int32
 	RevRemaining     int32
+	CurrentClassDay  int32
 	NewRemaining     int32
 	CursorGroupBit   int32
 	CursorKey        float64
@@ -600,6 +641,7 @@ func (q *Queries) ListDueCardsForStudy(ctx context.Context, arg ListDueCardsForS
 		arg.Now,
 		arg.LookAheadMinutes,
 		arg.RevRemaining,
+		arg.CurrentClassDay,
 		arg.NewRemaining,
 		arg.CursorGroupBit,
 		arg.CursorKey,
@@ -668,9 +710,13 @@ WITH scored AS (
     JOIN notes n       ON n.id = c.note_id
     JOIN note_types nt ON nt.id = n.note_type_id
     JOIN templates t   ON t.id = c.template_id
+    JOIN card_release_days crd ON crd.card_id = c.id
     LEFT JOIN user_card_state ucs ON ucs.user_id = $1 AND ucs.card_id = c.id
     WHERE c.deck_id = $2
       AND ucs.user_id IS NULL
+      -- The release gate (#242) -- every row here is never-seen by construction, so it applies
+      -- unconditionally; see ListDueCardsForStudy's copy for the full reasoning.
+      AND crd.release_day <= $3::int
 )
 SELECT scored.card_id, scored.card_ordinal,
        now()::timestamptz                          AS due,
@@ -689,28 +735,33 @@ LEFT JOIN LATERAL (
     SELECT COALESCE(c2.import_due_position, 2147483647)::double precision AS cutoff_key,
            c2.id AS cutoff_id
     FROM cards c2
+    JOIN card_release_days crd2 ON crd2.card_id = c2.id
     LEFT JOIN user_card_state u2
            ON u2.user_id = $1 AND u2.card_id = c2.id
     WHERE c2.deck_id = $2 AND u2.user_id IS NULL
+      -- Same gating as the scored CTE above, and for the same reason ListDueCardsForStudy's
+      -- new_cutoff is gated (#242): the boundary must be ranked over eligible cards only.
+      AND crd2.release_day <= $3::int
     ORDER BY cutoff_key, c2.id
-    OFFSET GREATEST($3::int - 1, 0)
+    OFFSET GREATEST($4::int - 1, 0)
     LIMIT 1
 ) new_cutoff ON true
-WHERE $3::int > 0
+WHERE $4::int > 0
   AND (new_cutoff.cutoff_key IS NULL
        OR (scored.sort_key, scored.card_id) <= (new_cutoff.cutoff_key, new_cutoff.cutoff_id))
-  AND (scored.sort_key, scored.card_id) > ($4::double precision, $5::uuid)
+  AND (scored.sort_key, scored.card_id) > ($5::double precision, $6::uuid)
 ORDER BY scored.sort_key, scored.card_id
-LIMIT $6
+LIMIT $7
 `
 
 type ListNewCardsForStudyParams struct {
-	UserID       pgtype.UUID
-	DeckID       pgtype.UUID
-	NewRemaining int32
-	CursorKey    float64
-	CursorCardID pgtype.UUID
-	BatchSize    int32
+	UserID          pgtype.UUID
+	DeckID          pgtype.UUID
+	CurrentClassDay int32
+	NewRemaining    int32
+	CursorKey       float64
+	CursorCardID    pgtype.UUID
+	BatchSize       int32
 }
 
 type ListNewCardsForStudyRow struct {
@@ -747,6 +798,7 @@ func (q *Queries) ListNewCardsForStudy(ctx context.Context, arg ListNewCardsForS
 	rows, err := q.db.Query(ctx, listNewCardsForStudy,
 		arg.UserID,
 		arg.DeckID,
+		arg.CurrentClassDay,
 		arg.NewRemaining,
 		arg.CursorKey,
 		arg.CursorCardID,

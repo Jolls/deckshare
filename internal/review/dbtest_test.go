@@ -158,6 +158,41 @@ func setImportDuePosition(t *testing.T, tx pgx.Tx, cardID pgtype.UUID, position 
 	}
 }
 
+// seedSecondDeck adds a second deck for f's user -- same note type and template, its own note and
+// never-seen card -- for the queries that span every deck a user can study (CountQueueForUser).
+func seedSecondDeck(t *testing.T, tx pgx.Tx, f fixture) fixture {
+	t.Helper()
+	ctx := context.Background()
+	second := f
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO decks (owner_id, name) VALUES ($1, $2) RETURNING id`,
+		f.UserID, fmt.Sprintf("D%d", nextSeq()),
+	).Scan(&second.DeckID); err != nil {
+		t.Fatalf("insert second deck: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO deck_access (deck_id, user_id, can_view, can_study, can_edit_content, can_edit_settings)
+		 VALUES ($1, $2, true, true, true, true)`,
+		second.DeckID, f.UserID,
+	); err != nil {
+		t.Fatalf("insert second deck_access: %v", err)
+	}
+	second.CardID = seedCards(t, tx, second, 1)[0]
+	return second
+}
+
+// setReleaseDay assigns the lesson of the note that owns cardID (#242) -- the column the release
+// gate reads. Note-level, not card-level, which is why it goes through cards.note_id.
+func setReleaseDay(t *testing.T, tx pgx.Tx, cardID pgtype.UUID, day int32) {
+	t.Helper()
+	if _, err := tx.Exec(context.Background(),
+		`UPDATE notes SET release_day = $2 WHERE id = (SELECT note_id FROM cards WHERE id = $1)`,
+		cardID, day,
+	); err != nil {
+		t.Fatalf("set release_day: %v", err)
+	}
+}
+
 func getUserCardState(t *testing.T, tx pgx.Tx, userID, cardID pgtype.UUID) db.UserCardState {
 	t.Helper()
 	row, err := db.New(tx).GetUserCardState(context.Background(), db.GetUserCardStateParams{UserID: userID, CardID: cardID})

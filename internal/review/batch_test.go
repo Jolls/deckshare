@@ -18,7 +18,12 @@ import (
 // rules (that arithmetic is GetStudyDayWindow's own concern, tested elsewhere).
 func testStudyDay(offsetDays int) StudyDay {
 	start := time.Date(2026, 6, 1, 4, 0, 0, 0, time.UTC).AddDate(0, 0, offsetDays)
-	return StudyDay{Start: start, End: start.Add(24 * time.Hour)}
+	return StudyDay{
+		Start: start, End: start.Add(24 * time.Hour),
+		// The window's own local calendar date, as GetStudyDayWindow returns it -- what the
+		// class-day gate resolves against (#242).
+		LocalDate: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, offsetDays),
+	}
 }
 
 var batchTestEventSeq int64
@@ -147,7 +152,7 @@ func TestBuildBatch_DefaultCap(t *testing.T) {
 	cur := Cursor{AtStart: true}
 	exhausted := false
 	for i := 0; i < 10 && !exhausted; i++ {
-		batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, cur, 7, now, 0, 0)
+		batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, cur, 7, now, 0, 0, ReleaseGateOff)
 		if err != nil {
 			t.Fatalf("BuildBatch: %v", err)
 		}
@@ -187,7 +192,7 @@ func TestBuildBatch_AtLimitDueCardsStillFlow(t *testing.T) {
 	gradeCards(t, tx, f.UserID, now, toIntroduce)
 	insertDueCard(t, tx, f.UserID, dueCard, window)
 
-	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0)
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -211,7 +216,7 @@ func TestBuildBatch_FreshStudyDayResets(t *testing.T) {
 	day1 := testStudyDay(0)
 	now1 := day1.Start.Add(time.Hour)
 
-	batch1, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", day1, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now1, 0, 0)
+	batch1, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", day1, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now1, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch day1: %v", err)
 	}
@@ -226,7 +231,7 @@ func TestBuildBatch_FreshStudyDayResets(t *testing.T) {
 	}
 	gradeCards(t, tx, f.UserID, now1, introducedDay1)
 
-	batch1b, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", day1, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now1, 0, 0)
+	batch1b, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", day1, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now1, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch day1 refetch: %v", err)
 	}
@@ -240,7 +245,7 @@ func TestBuildBatch_FreshStudyDayResets(t *testing.T) {
 	// 5 never-introduced cards are servable again as unseen.
 	day2 := testStudyDay(1)
 	now2 := day2.Start.Add(time.Hour)
-	batch2, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", day2, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now2, 0, 0)
+	batch2, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", day2, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now2, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch day2: %v", err)
 	}
@@ -272,7 +277,7 @@ func TestBuildBatch_ZeroPerDay(t *testing.T) {
 	now := window.Start.Add(time.Hour)
 	insertDueCard(t, tx, f.UserID, dueCard, window)
 
-	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, 0, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0)
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, 0, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -292,7 +297,7 @@ func TestBuildBatch_RefillDoesNotOvershoot(t *testing.T) {
 	window := testStudyDay(0)
 	now := window.Start.Add(time.Hour)
 
-	batch1, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 20, now, 0, 0)
+	batch1, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 20, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch initial: %v", err)
 	}
@@ -309,7 +314,7 @@ func TestBuildBatch_RefillDoesNotOvershoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeCursor: %v", err)
 	}
-	batch2, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, cur, 20, now, 0, 0)
+	batch2, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, cur, 20, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch refill: %v", err)
 	}
@@ -337,7 +342,7 @@ func TestBuildBatch_TotalZeroPerDay(t *testing.T) {
 	now := window.Start.Add(time.Hour)
 	insertDueCards(t, tx, f.UserID, dueCards, window)
 
-	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 0, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0)
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 0, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -370,7 +375,7 @@ func TestBuildBatch_TotalAtLimitBlocksNewToo(t *testing.T) {
 	toReview, blocked := allDue[0:3], allDue[3:5]
 	gradeCards(t, tx, f.UserID, now, toReview)
 
-	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 3, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0)
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 3, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -407,7 +412,7 @@ func TestBuildBatch_RevCapHoldsAcrossRefills(t *testing.T) {
 	cur := Cursor{AtStart: true}
 	exhausted := false
 	for i := 0; i < 10 && !exhausted; i++ {
-		batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 3, RevOrderDue, PriorityDue, cur, 2, now, 0, 0)
+		batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 3, RevOrderDue, PriorityDue, cur, 2, now, 0, 0, ReleaseGateOff)
 		if err != nil {
 			t.Fatalf("BuildBatch: %v", err)
 		}
@@ -458,7 +463,7 @@ func TestBuildBatch_LearningCardSurvivesSpentTotal(t *testing.T) {
 		t.Fatalf("insert learning card: %v", err)
 	}
 
-	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 1, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0)
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 1, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -488,7 +493,7 @@ func TestBuildBatch_TotalExhaustionEdgeCase(t *testing.T) {
 	now := window.Start.Add(time.Hour)
 	insertDueCards(t, tx, f.UserID, allDue, window)
 
-	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 5, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 5, now, 0, 0)
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 5, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 5, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -497,7 +502,7 @@ func TestBuildBatch_TotalExhaustionEdgeCase(t *testing.T) {
 	}
 	gradeCards(t, tx, f.UserID, now, allDue)
 
-	refill, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 5, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 5, now, 0, 0)
+	refill, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 5, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 5, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch (refill): %v", err)
 	}
@@ -555,7 +560,7 @@ func TestBuildBatch_RevOrderIntervalAsc(t *testing.T) {
 	insertDueCardWithSchedule(t, tx, f.UserID, extra[1], window, 20)
 
 	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay,
-		RevOrderIntervalAsc, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0)
+		RevOrderIntervalAsc, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -585,7 +590,7 @@ func TestBuildBatch_RevOrderIntervalDesc(t *testing.T) {
 	insertDueCardWithSchedule(t, tx, f.UserID, extra[1], window, 20)
 
 	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay,
-		RevOrderIntervalDesc, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0)
+		RevOrderIntervalDesc, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -618,7 +623,7 @@ func TestBuildBatch_NewCardOrder_ImportDuePosition(t *testing.T) {
 	now := window.Start.Add(time.Hour)
 
 	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay,
-		RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0)
+		RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -652,7 +657,7 @@ func TestBuildBatch_NewCardCap_ImportDuePosition(t *testing.T) {
 	now := window.Start.Add(time.Hour)
 
 	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, 2, DefaultRevPerDay,
-		RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0)
+		RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -684,7 +689,7 @@ func TestBuildBatch_PriorityMixed_NewCardOrder_ImportDuePosition(t *testing.T) {
 	now := window.Start.Add(time.Hour)
 
 	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay,
-		RevOrderDue, PriorityMixed, Cursor{AtStart: true}, 30, now, 0, 0)
+		RevOrderDue, PriorityMixed, Cursor{AtStart: true}, 30, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -715,7 +720,7 @@ func TestBuildBatch_RevOrderRandom_StableWithinDay(t *testing.T) {
 
 	fetch := func() []pgtype.UUID {
 		batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay,
-			RevOrderRandom, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0)
+			RevOrderRandom, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0, ReleaseGateOff)
 		if err != nil {
 			t.Fatalf("BuildBatch: %v", err)
 		}
@@ -754,7 +759,7 @@ func TestBuildBatch_RevOrderRandom_ReshufflesNextDay(t *testing.T) {
 
 	fetch := func(window StudyDay) []pgtype.UUID {
 		batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay,
-			RevOrderRandom, PriorityDue, Cursor{AtStart: true}, 30, window.Start.Add(time.Hour), 0, 0)
+			RevOrderRandom, PriorityDue, Cursor{AtStart: true}, 30, window.Start.Add(time.Hour), 0, 0, ReleaseGateOff)
 		if err != nil {
 			t.Fatalf("BuildBatch: %v", err)
 		}
@@ -796,7 +801,7 @@ func TestBuildBatch_PriorityNew(t *testing.T) {
 	insertDueCard(t, tx, f.UserID, f.CardID, window)
 
 	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay,
-		RevOrderDue, PriorityNew, Cursor{AtStart: true}, 30, now, 0, 0)
+		RevOrderDue, PriorityNew, Cursor{AtStart: true}, 30, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -826,7 +831,7 @@ func TestBuildBatch_PriorityNewBackfillsDue(t *testing.T) {
 	now := window.Start.Add(time.Hour)
 	insertDueCards(t, tx, f.UserID, dueCards, window)
 
-	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, 1, 10, RevOrderDue, PriorityNew, Cursor{AtStart: true}, 30, now, 0, 0)
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, 1, 10, RevOrderDue, PriorityNew, Cursor{AtStart: true}, 30, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -874,7 +879,7 @@ func TestBuildBatch_PriorityDueBackfillsNew(t *testing.T) {
 	now := window.Start.Add(time.Hour)
 	insertDueCards(t, tx, f.UserID, dueCards, window)
 
-	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 10, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0)
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 10, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -920,7 +925,7 @@ func TestBuildBatch_PriorityMixed_ServesBoth(t *testing.T) {
 	insertDueCards(t, tx, f.UserID, dueCards, window)
 
 	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay,
-		RevOrderDue, PriorityMixed, Cursor{AtStart: true}, 30, now, 0, 0)
+		RevOrderDue, PriorityMixed, Cursor{AtStart: true}, 30, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -960,7 +965,7 @@ func TestBuildBatch_PriorityMixed_TotalZeroBlocksBothSides(t *testing.T) {
 	insertDueCard(t, tx, f.UserID, f.CardID, window)
 
 	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 0,
-		RevOrderDue, PriorityMixed, Cursor{AtStart: true}, 30, now, 0, 0)
+		RevOrderDue, PriorityMixed, Cursor{AtStart: true}, 30, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -987,7 +992,7 @@ func TestBuildBatch_PriorityMixed_NewCapBlocksNewSide(t *testing.T) {
 	insertDueCards(t, tx, f.UserID, dueCards, window)
 
 	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, 0, DefaultRevPerDay,
-		RevOrderDue, PriorityMixed, Cursor{AtStart: true}, 30, now, 0, 0)
+		RevOrderDue, PriorityMixed, Cursor{AtStart: true}, 30, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -1023,7 +1028,7 @@ func TestBuildBatch_PriorityMixed_ExhaustedRequiresNoTruncation(t *testing.T) {
 	insertDueCards(t, tx, f.UserID, dueCards, window)
 
 	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay,
-		RevOrderDue, PriorityMixed, Cursor{AtStart: true}, 20, now, 0, 0)
+		RevOrderDue, PriorityMixed, Cursor{AtStart: true}, 20, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -1059,7 +1064,7 @@ func TestBuildBatch_DueLookAhead(t *testing.T) {
 	}
 
 	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, 0, DefaultRevPerDay,
-		RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0)
+		RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch (zero look-ahead): %v", err)
 	}
@@ -1068,7 +1073,7 @@ func TestBuildBatch_DueLookAhead(t *testing.T) {
 	}
 
 	batch, err = BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, 0, DefaultRevPerDay,
-		RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 30, 0)
+		RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 30, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch (30m look-ahead): %v", err)
 	}
@@ -1132,6 +1137,7 @@ func TestCountQueueForUser_PerDeckLookAhead(t *testing.T) {
 		Now:              pgtype.Timestamptz{Time: now, Valid: true},
 		DeckIds:          []pgtype.UUID{fA.DeckID, deckB},
 		LookAheadMinutes: []int32{0, 30},
+		CurrentClassDays: []int32{ReleaseGateOff, ReleaseGateOff},
 	})
 	if err != nil {
 		t.Fatalf("CountQueueForUser: %v", err)
@@ -1169,7 +1175,7 @@ func TestBuildBatch_ExtraRoundServesOnePresetMore(t *testing.T) {
 	now := window.Start.Add(time.Hour)
 	gradeCards(t, tx, f.UserID, now, toIntroduce)
 
-	batch1, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 100, now, 0, 1)
+	batch1, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 100, now, 0, 1, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch extraRounds=1: %v", err)
 	}
@@ -1177,7 +1183,7 @@ func TestBuildBatch_ExtraRoundServesOnePresetMore(t *testing.T) {
 		t.Fatalf("extraRounds=1: got %d cards, want 20 (one preset's worth of the %d further cards, not all of them)", len(batch1.Cards), len(rest))
 	}
 
-	batch2, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 100, now, 0, 2)
+	batch2, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 100, now, 0, 2, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch extraRounds=2: %v", err)
 	}
@@ -1208,7 +1214,7 @@ func TestBuildBatch_ExtraRoundServesPastCombinedTotal(t *testing.T) {
 	toReview, blocked := dueCards[0:3], dueCards[3:5]
 	gradeCards(t, tx, f.UserID, now, toReview)
 
-	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 3, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 1)
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, 3, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 1, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -1260,7 +1266,7 @@ func TestBuildBatch_ExtraRoundsZeroIsIdentical(t *testing.T) {
 	gradeCards(t, tx, f.UserID, now, toIntroduce)
 	insertDueCard(t, tx, f.UserID, dueCard, window)
 
-	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0)
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 0, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -1289,7 +1295,7 @@ func TestBuildBatch_ExtraRoundStillExcludesReviewedToday(t *testing.T) {
 		t.Fatalf("insert reviewed-today card: %v", err)
 	}
 
-	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 20)
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 20, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -1327,7 +1333,7 @@ func TestBuildBatch_ExtraRoundStillExcludesSuspendedAndBuried(t *testing.T) {
 		t.Fatalf("insert buried card: %v", err)
 	}
 
-	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 20)
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 30, now, 0, 20, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -1352,7 +1358,7 @@ func TestBuildBatch_PriorityMixed_ExtraRound(t *testing.T) {
 	now := window.Start.Add(time.Hour)
 	insertDueCards(t, tx, f.UserID, dueCards, window)
 
-	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, 2, 2, RevOrderDue, PriorityMixed, Cursor{AtStart: true}, 100, now, 0, 1)
+	batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, 2, 2, RevOrderDue, PriorityMixed, Cursor{AtStart: true}, 100, now, 0, 1, ReleaseGateOff)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}

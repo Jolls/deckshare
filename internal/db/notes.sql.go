@@ -107,6 +107,43 @@ func (q *Queries) BulkRemoveNoteTags(ctx context.Context, arg BulkRemoveNoteTags
 	return result.RowsAffected(), nil
 }
 
+const bulkSetNoteReleaseDay = `-- name: BulkSetNoteReleaseDay :execrows
+UPDATE notes n
+SET release_day = $1::int,
+    modified_at = now()
+FROM deck_access da
+WHERE n.id = ANY($2::uuid[]) AND n.deck_id = $3
+  AND da.deck_id = n.deck_id AND da.user_id = $4
+  AND da.can_view AND da.can_edit_content
+`
+
+type BulkSetNoteReleaseDayParams struct {
+	ReleaseDay int32
+	NoteIds    []pgtype.UUID
+	DeckID     pgtype.UUID
+	UserID     pgtype.UUID
+}
+
+// Assigns the lesson a selection of notes belongs to (#242) -- the same bulk surface and the same
+// per-row authorization shape as the tag actions below. 0 is how a lesson is un-assigned: it is
+// the column's own default and means "available immediately", so there is no separate clear path.
+// can_edit_content, not can_edit_settings: the lesson map is content, the class calendar is
+// settings. Accepted consequence (#242): a collaborator holding can_edit_content can re-assign
+// release days and so unlock ahead. Students hold can_view + can_study only, so this reaches
+// co-authors, not the class.
+func (q *Queries) BulkSetNoteReleaseDay(ctx context.Context, arg BulkSetNoteReleaseDayParams) (int64, error) {
+	result, err := q.db.Exec(ctx, bulkSetNoteReleaseDay,
+		arg.ReleaseDay,
+		arg.NoteIds,
+		arg.DeckID,
+		arg.UserID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const bulkUpdateNoteChecksums = `-- name: BulkUpdateNoteChecksums :execrows
 WITH v AS (
     SELECT i.note_id, c.checksum
@@ -130,6 +167,47 @@ func (q *Queries) BulkUpdateNoteChecksums(ctx context.Context, arg BulkUpdateNot
 	return result.RowsAffected(), nil
 }
 
+const countNotesByReleaseDay = `-- name: CountNotesByReleaseDay :many
+SELECT n.release_day, count(*)::bigint AS note_count
+FROM notes n
+JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = $1 AND da.can_view
+WHERE n.deck_id = $2
+GROUP BY 1
+ORDER BY 1
+`
+
+type CountNotesByReleaseDayParams struct {
+	UserID pgtype.UUID
+	DeckID pgtype.UUID
+}
+
+type CountNotesByReleaseDayRow struct {
+	ReleaseDay int32
+	NoteCount  int64
+}
+
+// The deck page's calendar view (#242): how many notes are assigned to each class day. Day 0 is
+// the "no lesson assigned, available immediately" bucket.
+func (q *Queries) CountNotesByReleaseDay(ctx context.Context, arg CountNotesByReleaseDayParams) ([]CountNotesByReleaseDayRow, error) {
+	rows, err := q.db.Query(ctx, countNotesByReleaseDay, arg.UserID, arg.DeckID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountNotesByReleaseDayRow
+	for rows.Next() {
+		var i CountNotesByReleaseDayRow
+		if err := rows.Scan(&i.ReleaseDay, &i.NoteCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createNote = `-- name: CreateNote :one
 INSERT INTO notes (guid, owner_id, note_type_id, deck_id, fields, tags, checksum)
 SELECT $1, d.owner_id, nt.id, d.id, $2, $3, $4
@@ -143,7 +221,7 @@ JOIN note_types nt ON nt.id = $6
                           JOIN deck_access rda ON rda.deck_id = rn.deck_id AND rda.user_id = $5 AND rda.can_view
                           WHERE rn.note_type_id = nt.id))
 WHERE d.id = $7
-RETURNING id, guid, owner_id, note_type_id, deck_id, fields, tags, checksum, created_at, modified_at, anki_id
+RETURNING id, guid, owner_id, note_type_id, deck_id, fields, tags, checksum, created_at, modified_at, anki_id, release_day
 `
 
 type CreateNoteParams struct {
@@ -185,6 +263,7 @@ func (q *Queries) CreateNote(ctx context.Context, arg CreateNoteParams) (Note, e
 		&i.CreatedAt,
 		&i.ModifiedAt,
 		&i.AnkiID,
+		&i.ReleaseDay,
 	)
 	return i, err
 }
@@ -210,7 +289,7 @@ func (q *Queries) DeleteNote(ctx context.Context, arg DeleteNoteParams) (int64, 
 }
 
 const getNoteForContentEdit = `-- name: GetNoteForContentEdit :one
-SELECT n.id, n.guid, n.owner_id, n.note_type_id, n.deck_id, n.fields, n.tags, n.checksum, n.created_at, n.modified_at, n.anki_id, da.can_manage_access
+SELECT n.id, n.guid, n.owner_id, n.note_type_id, n.deck_id, n.fields, n.tags, n.checksum, n.created_at, n.modified_at, n.anki_id, n.release_day, da.can_manage_access
 FROM notes n
 JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = $1
                    AND da.can_view AND da.can_edit_content
@@ -234,6 +313,7 @@ type GetNoteForContentEditRow struct {
 	CreatedAt       pgtype.Timestamptz
 	ModifiedAt      pgtype.Timestamptz
 	AnkiID          pgtype.Int8
+	ReleaseDay      int32
 	CanManageAccess bool
 }
 
@@ -252,13 +332,14 @@ func (q *Queries) GetNoteForContentEdit(ctx context.Context, arg GetNoteForConte
 		&i.CreatedAt,
 		&i.ModifiedAt,
 		&i.AnkiID,
+		&i.ReleaseDay,
 		&i.CanManageAccess,
 	)
 	return i, err
 }
 
 const getNoteForNoteTypeChange = `-- name: GetNoteForNoteTypeChange :one
-SELECT n.id, n.guid, n.owner_id, n.note_type_id, n.deck_id, n.fields, n.tags, n.checksum, n.created_at, n.modified_at, n.anki_id
+SELECT n.id, n.guid, n.owner_id, n.note_type_id, n.deck_id, n.fields, n.tags, n.checksum, n.created_at, n.modified_at, n.anki_id, n.release_day
 FROM notes n
 JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = $1
                    AND da.can_view AND da.can_edit_content AND da.can_manage_access
@@ -288,6 +369,7 @@ func (q *Queries) GetNoteForNoteTypeChange(ctx context.Context, arg GetNoteForNo
 		&i.CreatedAt,
 		&i.ModifiedAt,
 		&i.AnkiID,
+		&i.ReleaseDay,
 	)
 	return i, err
 }
@@ -350,6 +432,7 @@ func (q *Queries) ListNoteIDsOfNoteType(ctx context.Context, noteTypeID pgtype.U
 const listNotesInDeck = `-- name: ListNotesInDeck :many
 WITH ordered_notes AS (
     SELECT n.id, n.fields ->> nt.sort_field_idx AS sort_text, n.tags, n.modified_at, nt.name AS note_type_name,
+           n.release_day,   -- the lesson this note is assigned to (#242); gate-only, never an order
            (SELECT count(*) FROM cards c WHERE c.note_id = n.id) AS card_count,
            COALESCE((SELECT min(c2.import_due_position) FROM cards c2 WHERE c2.note_id = n.id), 2147483647)::bigint AS sort_key
     FROM notes n
@@ -357,7 +440,7 @@ WITH ordered_notes AS (
     JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = $5 AND da.can_view
     WHERE n.deck_id = $6
 )
-SELECT id, sort_text, tags, modified_at, note_type_name, card_count, sort_key
+SELECT id, sort_text, tags, modified_at, note_type_name, release_day, card_count, sort_key
 FROM ordered_notes
 WHERE $1::boolean
    OR (sort_key, id) > ($2::bigint, $3::uuid)
@@ -380,6 +463,7 @@ type ListNotesInDeckRow struct {
 	Tags         []string
 	ModifiedAt   pgtype.Timestamptz
 	NoteTypeName string
+	ReleaseDay   int32
 	CardCount    int64
 	SortKey      int64
 }
@@ -418,6 +502,7 @@ func (q *Queries) ListNotesInDeck(ctx context.Context, arg ListNotesInDeckParams
 			&i.Tags,
 			&i.ModifiedAt,
 			&i.NoteTypeName,
+			&i.ReleaseDay,
 			&i.CardCount,
 			&i.SortKey,
 		); err != nil {
@@ -432,7 +517,7 @@ func (q *Queries) ListNotesInDeck(ctx context.Context, arg ListNotesInDeckParams
 }
 
 const lockNoteForContentEdit = `-- name: LockNoteForContentEdit :one
-SELECT n.id, n.guid, n.owner_id, n.note_type_id, n.deck_id, n.fields, n.tags, n.checksum, n.created_at, n.modified_at, n.anki_id
+SELECT n.id, n.guid, n.owner_id, n.note_type_id, n.deck_id, n.fields, n.tags, n.checksum, n.created_at, n.modified_at, n.anki_id, n.release_day
 FROM notes n
 JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = $1
                    AND da.can_view AND da.can_edit_content
@@ -463,6 +548,7 @@ func (q *Queries) LockNoteForContentEdit(ctx context.Context, arg LockNoteForCon
 		&i.CreatedAt,
 		&i.ModifiedAt,
 		&i.AnkiID,
+		&i.ReleaseDay,
 	)
 	return i, err
 }

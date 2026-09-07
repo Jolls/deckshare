@@ -55,9 +55,9 @@ contract for `POST /api/reviews/batch` is pinned down there in full and is not r
 | GET | `/decks` | — | List decks reachable via `deck_access` |
 | GET | `/decks/new` | — | New-deck form |
 | POST | `/decks` | — | Create deck; creator gets a `deck_access` row with all seven flags true |
-| GET | `/decks/{id}` | `can_view` | Detail: notes list, note/card counts. Due counts deferred to step 7 (the reviewer) — they need `StudyDayStart`/`StudyDayEnd`, which don't exist yet, and there are no `user_card_state` rows at all before step 7 regardless |
-| GET | `/decks/{id}/edit` | `can_edit_settings` | Edit form: name, description, and new-cards-per-day (#101) |
-| POST | `/decks/{id}/edit` | `can_edit_settings` | Update name, description, and new-cards-per-day (#101) |
+| GET | `/decks/{id}` | `can_view` | Detail: notes list (with each note's assigned lesson), note/card counts, and — on a deck with a class calendar (#242) — the calendar view: each meeting's date, how many notes it holds, and whether it has unlocked on the viewer's own clock. Due counts deferred to step 7 (the reviewer) — they need `StudyDayStart`/`StudyDayEnd`, which don't exist yet, and there are no `user_card_state` rows at all before step 7 regardless |
+| GET | `/decks/{id}/edit` | `can_edit_settings` | Edit form: name, description, new-cards-per-day (#101), and the class calendar (#242) — start date, meeting weekdays, no-class dates |
+| POST | `/decks/{id}/edit` | `can_edit_settings` | Update name, description, new-cards-per-day (#101), and the class calendar (#242). The calendar is the only preset key a form can **delete** rather than overwrite, so deletion is its own control (`calendar_clear`): an entirely empty calendar section leaves the setting untouched, and a start date missing while meeting days are ticked is an incomplete calendar (400), never a silent removal |
 | POST | `/decks/{id}/delete` | `can_view`, `can_delete` | Delete deck, its cards, and any note left with no cards anywhere; notes with cards in other decks are re-homed. Query layer: `db.DeleteDeck` requires both flags — `can_view` is normally granted alongside every other flag by convention (schema.md), and requiring it here keeps a caller who somehow holds `can_delete` without `can_view` from learning the deck exists via a different error shape ([#51](https://github.com/Jolls/deckshare/issues/51)); handler is Phase 1 step 5 |
 
 ---
@@ -107,6 +107,14 @@ as a side effect of note writes.
 | POST | `/notes/{id}/move` | `can_edit_content` | Change `deck_id`; must also update denormalised `owner_id` (schema.md, "must not drift") |
 | POST | `/notes/{id}/preview` | `can_edit_content` | Render the note's card(s) from the posted (possibly unsaved) field values; writes nothing |
 | POST | `/decks/{deckId}/notes/preview` | `can_edit_content` | Same, for the new-note form before the note exists |
+| POST | `/decks/{deckId}/notes/bulk-delete` | `can_edit_content` | Delete the checkbox selection from the notes list ([#241](https://github.com/Jolls/deckshare/issues/241)) |
+| POST | `/decks/{deckId}/notes/bulk-tag-add` | `can_edit_content` | Add tags to the selection, idempotently (#241) |
+| POST | `/decks/{deckId}/notes/bulk-tag-remove` | `can_edit_content` | Remove tags from the selection, idempotently (#241) |
+| POST | `/decks/{deckId}/notes/bulk-release-day` | `can_edit_content` | Assign the selection to a class day ([#242](https://github.com/Jolls/deckshare/issues/242)); a blank `release_day` means lesson 0, i.e. un-assigned and available immediately. Content, not settings — the lesson map is content, the calendar it resolves against is a setting |
+
+Every bulk route scopes to `n.deck_id = {deckId}` as well as joining `deck_access` per row, so a
+note id smuggled in from another deck — even one the caller can legitimately edit — is silently
+excluded rather than acted on, and a selection larger than one page is rejected outright (#241).
 
 The deck-detail notes list (`GET /decks/{id}`, above) is paginated in teaching order —
 `(import_due_position, id)`, the order new cards are actually introduced in, not

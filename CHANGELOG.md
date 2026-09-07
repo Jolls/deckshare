@@ -8,6 +8,24 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.4] - 2026-09-06
+
+### Added
+- Release-day pacing: a teacher assigns each note a class day (`notes.release_day`, set from the
+  notes list's bulk-edit bar) and configures the deck's class calendar in deck settings (start
+  date, meeting weekdays, no-class dates). The server then refuses to introduce a note's cards
+  until that meeting has arrived on each student's own clock — cumulative, so falling behind
+  produces a backlog rather than a closed door, and a card already in progress is never re-gated.
+  The deck page gains a calendar view of the term: each meeting's date, the notes assigned to it,
+  and whether it has unlocked. Orthogonal to the daily limits — the gate decides which cards are
+  eligible, `new.perDay` how many are served — and "keep studying" (#172) still cannot reach a
+  lesson that has not opened ([#242](https://github.com/Jolls/deckshare/issues/242)).
+
+### Changed
+- The "New" and "left to study" counts on `/decks` and the deck page now apply the release gate,
+  so a paced deck can no longer advertise cards it would refuse to serve
+  ([#242](https://github.com/Jolls/deckshare/issues/242)).
+
 ## [0.3.3] - 2026-09-06
 
 ### Added

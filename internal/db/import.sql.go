@@ -62,7 +62,7 @@ JOIN deck_access da ON da.deck_id = d.id AND da.user_id = $8
                    AND da.can_view AND da.can_edit_content
 JOIN note_types nt ON nt.id = $9 AND nt.owner_id = $8
 WHERE d.id = $10
-RETURNING id, guid, owner_id, note_type_id, deck_id, fields, tags, checksum, created_at, modified_at, anki_id
+RETURNING id, guid, owner_id, note_type_id, deck_id, fields, tags, checksum, created_at, modified_at, anki_id, release_day
 `
 
 type CreateImportedNoteParams struct {
@@ -106,6 +106,7 @@ func (q *Queries) CreateImportedNote(ctx context.Context, arg CreateImportedNote
 		&i.CreatedAt,
 		&i.ModifiedAt,
 		&i.AnkiID,
+		&i.ReleaseDay,
 	)
 	return i, err
 }
@@ -217,7 +218,7 @@ func (q *Queries) GetDeckByOwnerAndName(ctx context.Context, arg GetDeckByOwnerA
 }
 
 const getNoteByOwnerAndGuid = `-- name: GetNoteByOwnerAndGuid :one
-SELECT id, guid, owner_id, note_type_id, deck_id, fields, tags, checksum, created_at, modified_at, anki_id FROM notes WHERE owner_id = $1 AND guid = $2
+SELECT id, guid, owner_id, note_type_id, deck_id, fields, tags, checksum, created_at, modified_at, anki_id, release_day FROM notes WHERE owner_id = $1 AND guid = $2
 `
 
 type GetNoteByOwnerAndGuidParams struct {
@@ -240,6 +241,7 @@ func (q *Queries) GetNoteByOwnerAndGuid(ctx context.Context, arg GetNoteByOwnerA
 		&i.CreatedAt,
 		&i.ModifiedAt,
 		&i.AnkiID,
+		&i.ReleaseDay,
 	)
 	return i, err
 }
@@ -418,6 +420,10 @@ type UpdateImportedNoteParams struct {
 
 // Re-import updates rather than inserts (CLAUDE.md §2.2, apkg-format.md). deck_id is NOT
 // touched: a re-import must not silently move a note the user has since filed elsewhere.
+// release_day (#242) is not touched either, and must not be: re-importing a deck cannot be
+// allowed to erase a term's pacing. That is exactly why the lesson map is its own column rather
+// than a reinterpretation of import_due_position, which UpsertImportedCard below does overwrite
+// from the file on every re-import.
 func (q *Queries) UpdateImportedNote(ctx context.Context, arg UpdateImportedNoteParams) (int64, error) {
 	result, err := q.db.Exec(ctx, updateImportedNote,
 		arg.Fields,

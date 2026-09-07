@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Jolls/deckshare/internal/auth"
+	"github.com/Jolls/deckshare/internal/review"
 )
 
 func TestDeckRoutes_GoldenPath(t *testing.T) {
@@ -832,5 +833,151 @@ func TestDeckRoute_NotesCursor_MalformedReturns400(t *testing.T) {
 	w := doRequest(handler, "GET", deckPath+"?notesCursor=not-valid-base64!!!", "", cookie, "")
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+// #242: the deck's class calendar round-trips through decks.preset.calendar, and clearing the
+// start date removes it -- the calendar's presence is the release gate's only switch, so "clear"
+// has to delete the key rather than write an empty one.
+func TestDeckEditRoute_Calendar(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	w := doRequest(handler, "POST", "/decks", "name=My Deck", cookie, "http://example.com")
+	deckPath := w.Header().Get("Location")
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+
+	presetCalendar := func(t *testing.T) string {
+		t.Helper()
+		var raw *string
+		if err := tx.QueryRow(context.Background(),
+			`SELECT (preset -> 'calendar')::text FROM decks WHERE id = $1`, deckID).Scan(&raw); err != nil {
+			t.Fatalf("read preset: %v", err)
+		}
+		if raw == nil {
+			return ""
+		}
+		return *raw
+	}
+
+	body := "name=My Deck&description=&calendar_start_date=2026-09-08" +
+		"&calendar_weekday=2&calendar_weekday=4&calendar_skip=2026-11-26"
+	w = doRequest(handler, "POST", deckPath+"/edit", body, cookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("POST edit status = %d, want 303: %s", w.Code, w.Body.String())
+	}
+	stored := presetCalendar(t)
+	for _, want := range []string{`"startDate": "2026-09-08"`, `[2, 4]`, `"2026-11-26"`} {
+		if !strings.Contains(stored, want) {
+			t.Errorf("stored calendar %s, want it to contain %s", stored, want)
+		}
+	}
+	w = doRequest(handler, "GET", deckPath+"/edit", "", cookie, "")
+	if !strings.Contains(w.Body.String(), `value="2026-09-08"`) {
+		t.Errorf("edit form should show the stored start date:\n%s", w.Body.String())
+	}
+
+	t.Run("other settings survive a calendar-less edit", func(t *testing.T) {
+		w := doRequest(handler, "POST", deckPath+"/edit", "name=My Deck&description=&new_per_day=7", cookie, "http://example.com")
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("status = %d, want 303: %s", w.Code, w.Body.String())
+		}
+		if presetCalendar(t) == "" {
+			t.Error("a form that never carried calendar_start_date wiped the calendar")
+		}
+	})
+
+	for _, tt := range []struct{ name, body string }{
+		{"unparseable start date", "name=My Deck&description=&calendar_start_date=8+Sep+2026&calendar_weekday=2"},
+		{"no meeting weekdays", "name=My Deck&description=&calendar_start_date=2026-09-08"},
+		{"weekday out of range", "name=My Deck&description=&calendar_start_date=2026-09-08&calendar_weekday=9"},
+		{"unparseable skip date", "name=My Deck&description=&calendar_start_date=2026-09-08&calendar_weekday=2&calendar_skip=Thanksgiving"},
+		// Removal is its own checkbox: a blank start date with the rest of the calendar filled
+		// in is an incomplete calendar, never a silent request to delete the term's pacing.
+		{"blank start date with meeting weekdays", "name=My Deck&description=&calendar_start_date=&calendar_weekday=2"},
+	} {
+		t.Run("rejects "+tt.name, func(t *testing.T) {
+			w := doRequest(handler, "POST", deckPath+"/edit", tt.body, cookie, "http://example.com")
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400: %s", w.Code, w.Body.String())
+			}
+			if presetCalendar(t) == "" {
+				t.Error("a rejected calendar edit cleared the stored calendar")
+			}
+		})
+	}
+
+	t.Run("an empty calendar section leaves the calendar untouched", func(t *testing.T) {
+		w := doRequest(handler, "POST", deckPath+"/edit", "name=My Deck&description=&calendar_start_date=&calendar_skip=", cookie, "http://example.com")
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("status = %d, want 303: %s", w.Code, w.Body.String())
+		}
+		if presetCalendar(t) == "" {
+			t.Error("an empty calendar section removed the calendar, want the explicit checkbox to be the only way")
+		}
+	})
+
+	t.Run("the remove checkbox removes the calendar", func(t *testing.T) {
+		w := doRequest(handler, "POST", deckPath+"/edit", "name=My Deck&description=&calendar_clear=1", cookie, "http://example.com")
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("status = %d, want 303: %s", w.Code, w.Body.String())
+		}
+		if got := presetCalendar(t); got != "" {
+			t.Errorf("calendar = %s after ticking the remove checkbox, want it removed", got)
+		}
+		var newPerDay int
+		if err := tx.QueryRow(context.Background(),
+			`SELECT (preset -> 'new' ->> 'perDay')::int FROM decks WHERE id = $1`, deckID).Scan(&newPerDay); err != nil {
+			t.Fatalf("read preset: %v", err)
+		}
+		if newPerDay != 7 {
+			t.Errorf("new.perDay = %d after clearing the calendar, want the other settings untouched (7)", newPerDay)
+		}
+	})
+}
+
+// #242: a paced deck's own page and the decks list both count only what they would actually
+// serve -- gating the fetch without gating the counts is the #101/#106 divergence repeated.
+func TestDeckQueueCounts_RespectTheReleaseGate(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	createTestNote(t, tx, handler, deckPath, cookie, "")
+	createTestNote(t, tx, handler, deckPath, cookie, "")
+	createTestNote(t, tx, handler, deckPath, cookie, "")
+
+	// Every note is assigned to a lesson far past the calendar's first meeting, and the
+	// calendar starts today -- so the deck is paced, at class day 1, with nothing unlocked.
+	if _, err := tx.Exec(context.Background(),
+		`UPDATE notes SET release_day = 9 WHERE deck_id = $1`, deckID); err != nil {
+		t.Fatalf("assign release_day: %v", err)
+	}
+	body := "name=Test Deck&description=&calendar_start_date=" + time.Now().UTC().Format(review.CalendarDateLayout) +
+		"&calendar_weekday=1&calendar_weekday=2&calendar_weekday=3&calendar_weekday=4&calendar_weekday=5&calendar_weekday=6&calendar_weekday=7"
+	if w := doRequest(handler, "POST", deckPath+"/edit", body, cookie, "http://example.com"); w.Code != http.StatusSeeOther {
+		t.Fatalf("POST edit status = %d, want 303: %s", w.Code, w.Body.String())
+	}
+
+	w := doRequest(handler, "GET", deckPath, "", cookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET deck status = %d, want 200", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "New: 0") {
+		t.Errorf("deck page should report New: 0 for a fully locked deck:\n%s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "Class calendar") {
+		t.Errorf("deck page should show the class calendar view:\n%s", w.Body.String())
+	}
+
+	// The decks list renders its counts as cells rather than the deck page's "New: n" line: three
+	// cards, then New/Learning/Due/Left all zero.
+	w = doRequest(handler, "GET", "/decks", "", cookie, "")
+	lockedRow := regexp.MustCompile(`<td>3</td>\s*<td>0</td>\s*<td>0</td>\s*<td>0</td>\s*<td>0</td>`)
+	if !lockedRow.MatchString(w.Body.String()) {
+		t.Errorf("decks list should count 3 cards and 0 new for a fully locked deck:\n%s", w.Body.String())
 	}
 }

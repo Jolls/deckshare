@@ -21,12 +21,12 @@ const (
 	MaxDueLookAheadMinutes     int32 = 1440
 )
 
-// deckPreset is the whole of decks.preset (#101, #115, #116, #118, #154): per-deck daily caps plus
-// review order, review prioritization, and the due-date look-ahead window. One struct so every
-// reader (NewPerDay, RevPerDay, ParseRevOrder, ParsePriority, DueLookAheadMinutes) shares one
-// JSON-unmarshal/degrade-on-error path. Priority is top-level, not nested under New, since it
-// governs the whole day's new/due split (#118) rather than describing new-card mixing the way its
-// predecessor (new.mix) did. new.Mix itself stays here, read-only, purely so ParsePriority can
+// deckPreset is the whole of decks.preset (#101, #115, #116, #118, #154, #242): per-deck daily
+// caps plus review order, review prioritization, the due-date look-ahead window, and the class
+// calendar. One struct so every reader (NewPerDay, RevPerDay, ParseRevOrder, ParsePriority,
+// DueLookAheadMinutes, ParseCalendar) shares one JSON-unmarshal/degrade-on-error path. Priority is
+// top-level, not nested under New, since it governs the whole day's new/due split (#118) rather
+// than describing new-card mixing the way its predecessor (new.mix) did. new.Mix itself stays here, read-only, purely so ParsePriority can
 // translate an existing deck's pre-#118 choice instead of silently discarding it -- see
 // ParsePriority's doc comment.
 type deckPreset struct {
@@ -42,6 +42,7 @@ type deckPreset struct {
 	Due      *struct {
 		LookAheadMinutes *int32 `json:"lookAheadMinutes"`
 	} `json:"due"`
+	Calendar *calendarWire `json:"calendar"` // the deck's class calendar (#242), see calendar.go
 }
 
 // parseDeckPreset unmarshals preset, ok=false on malformed JSON (all fields degrade to their
