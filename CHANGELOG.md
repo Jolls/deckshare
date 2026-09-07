@@ -8,6 +8,13 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.7] - 2026-09-07
+
+### Fixed
+- A reviewer page left open past midnight through the "No more cards due" state now reloads
+  itself once the local day rolls over, instead of continuing to show nothing to study until the
+  student manually refreshes ([#246](https://github.com/Jolls/deckshare/issues/246)).
+
 ## [0.3.6] - 2026-09-07
 
 ### Added
