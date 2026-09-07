@@ -41,6 +41,7 @@
     {{range .Fields}}
     <label>{{.Name}}</label>
     <textarea name="field[]"></textarea>
+    <button type="button" class="cloze-btn">Add cloze deletion</button>
     {{end}}
     <label for="tags">Tags</label>
     <input type="text" id="tags" name="tags" placeholder="space separated">
@@ -56,6 +57,7 @@
     {{range $i, $f := .Fields}}
     <label>{{$f.Name}}</label>
     <textarea name="field[]">{{index $values $i}}</textarea>
+    <button type="button" class="cloze-btn">Add cloze deletion</button>
     {{end}}
     <label for="tags">Tags</label>
     <input type="text" id="tags" name="tags" value="{{range .Note.Tags}}{{.}} {{end}}">
