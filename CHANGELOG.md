@@ -11,9 +11,11 @@ The patch number increments with every PR (CLAUDE.md §14).
 ## [0.3.7] - 2026-09-07
 
 ### Fixed
-- A reviewer page left open past midnight through the "No more cards due" state now reloads
-  itself once the local day rolls over, instead of continuing to show nothing to study until the
-  student manually refreshes ([#246](https://github.com/Jolls/deckshare/issues/246)).
+- A reviewer page left open past the student's study-day rollover through the "No more cards
+  due" state now reloads itself once that boundary passes, instead of continuing to show
+  nothing to study until the student manually refreshes. The reload watches the user's own
+  `day_start_hour` setting rather than calendar midnight, so it lines up with when the server
+  actually unlocks new cards ([#246](https://github.com/Jolls/deckshare/issues/246)).
 
 ## [0.3.6] - 2026-09-07
 

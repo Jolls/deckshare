@@ -19,6 +19,7 @@
   var state = {
     deckId: null,
     userId: null, // acting account at page render; sent as ?u= so a switched-away tab is refused (#178)
+    dayStartHour: 0, // user's study-day rollover hour (users.day_start_hour); drives the day-watch boundary
     queue: [], // {cardId, el, branches, done, repeat}
     current: null, // index into state.queue
     cursor: '',
@@ -36,6 +37,7 @@
   function init() {
     state.deckId = scriptTag.dataset.deckId;
     state.userId = scriptTag.dataset.userId || '';
+    state.dayStartHour = parseInt(scriptTag.dataset.dayStartHour, 10) || 0;
     indexBatch(document.getElementById('review-queue'));
     showNext();
 
@@ -404,7 +406,11 @@
   var dayWatchTimer = null;
 
   function todayKey() {
+    // Shifting by dayStartHour lines this up with the server's study-day boundary (users.day_start_hour,
+    // default 4am -- see GetStudyDayWindow, internal/db/reviews.sql.go) instead of calendar midnight, so
+    // the watch doesn't fire early and then wait a full extra day past the real unlock (#246 review).
     var d = new Date();
+    d.setHours(d.getHours() - state.dayStartHour);
     return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate();
   }
 
