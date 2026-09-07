@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -261,6 +262,91 @@ func TestCountQueueForDeck_MatchesGatedFetch(t *testing.T) {
 	}
 	if row.NewCount != 5 { // lessons 1..4, plus the unassigned fixture note
 		t.Errorf("new_count = %d, want 5", row.NewCount)
+	}
+}
+
+// nextLockedLesson runs the #243 query for f's user and deck at the given class day, mapping the
+// query's "nothing locked" answer -- no rows -- to 0 so the tests below can read as a table.
+func nextLockedLesson(t *testing.T, tx pgx.Tx, f fixture, classDay int32) int32 {
+	t.Helper()
+	lesson, err := db.New(tx).NextLockedLesson(context.Background(), db.NextLockedLessonParams{
+		UserID: f.UserID, DeckID: f.DeckID, CurrentClassDay: classDay,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0
+	}
+	if err != nil {
+		t.Fatalf("NextLockedLesson: %v", err)
+	}
+	return lesson
+}
+
+// TestNextLockedLesson: the student-facing unlock line (#243) names the LOWEST lesson still shut,
+// so a student who finishes today's material is told about the next thing rather than the last.
+func TestNextLockedLesson(t *testing.T) {
+	tx := beginTx(t)
+	f := seedFixture(t, tx)
+	cards := seedCards(t, tx, f, 9)
+	for i, c := range cards {
+		setReleaseDay(t, tx, c, int32(i+1)) // lessons 1..9; f.CardID stays unassigned
+	}
+
+	if got := nextLockedLesson(t, tx, f, 4); got != 5 {
+		t.Errorf("class day 4: next locked lesson = %d, want 5", got)
+	}
+	// The count of what is servable and the lesson that is not are two halves of one partition:
+	// nothing may fall into neither. Every lesson reached -> nothing pending, and the reviewer
+	// keeps the ordinary empty state.
+	if got := nextLockedLesson(t, tx, f, 9); got != 0 {
+		t.Errorf("class day 9: next locked lesson = %d, want 0 (nothing left to unlock)", got)
+	}
+	if got := nextLockedLesson(t, tx, f, 0); got != 1 {
+		t.Errorf("before the first meeting: next locked lesson = %d, want 1", got)
+	}
+	if got := nextLockedLesson(t, tx, f, ReleaseGateOff); got != 0 {
+		t.Errorf("unpaced gate day: next locked lesson = %d, want 0", got)
+	}
+}
+
+// TestNextLockedLesson_IgnoresIntroducedCards: the gate is an INTRODUCTION gate, so a card the
+// student has already seen is not waiting on anything, whatever its lesson number says. Otherwise
+// a re-assigned lesson would advertise an unlock date for material already in the student's hands.
+func TestNextLockedLesson_IgnoresIntroducedCards(t *testing.T) {
+	tx := beginTx(t)
+	f := seedFixture(t, tx)
+	later := seedCards(t, tx, f, 1)[0]
+	setReleaseDay(t, tx, f.CardID, 6)
+	setReleaseDay(t, tx, later, 8)
+	insertDueCard(t, tx, f.UserID, f.CardID, testStudyDay(0))
+
+	if got := nextLockedLesson(t, tx, f, 2); got != 8 {
+		t.Errorf("next locked lesson = %d, want 8 -- lesson 6 is already introduced", got)
+	}
+}
+
+// TestNextLockedLesson_UnassignedNotesNeverLock: release_day 0 means "available immediately", so an
+// unassigned note can never be the thing a student is waiting for.
+func TestNextLockedLesson_UnassignedNotesNeverLock(t *testing.T) {
+	tx := beginTx(t)
+	f := seedFixture(t, tx)
+	if got := nextLockedLesson(t, tx, f, 0); got != 0 {
+		t.Errorf("next locked lesson = %d, want 0 for a deck of unassigned notes", got)
+	}
+}
+
+// TestNextLockedLesson_IsDeckScoped: a locked lesson in another of the user's decks is not this
+// deck's unlock date.
+func TestNextLockedLesson_IsDeckScoped(t *testing.T) {
+	tx := beginTx(t)
+	f := seedFixture(t, tx)
+	second := seedSecondDeck(t, tx, f)
+	setReleaseDay(t, tx, second.CardID, 3)
+
+	if got := nextLockedLesson(t, tx, f, 1); got != 0 {
+		t.Errorf("first deck: next locked lesson = %d, want 0 -- lesson 3 belongs to the other deck", got)
+	}
+	if got := nextLockedLesson(t, tx, second, 1); got != 3 {
+		t.Errorf("second deck: next locked lesson = %d, want 3", got)
 	}
 }
 

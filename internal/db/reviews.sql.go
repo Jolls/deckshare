@@ -1112,3 +1112,42 @@ func (q *Queries) LockCardForGrade(ctx context.Context, key int64) error {
 	_, err := q.db.Exec(ctx, lockCardForGrade, key)
 	return err
 }
+
+const nextLockedLesson = `-- name: NextLockedLesson :one
+SELECT crd.release_day AS next_lesson
+FROM cards c
+JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $1
+                   AND da.can_view AND da.can_study
+JOIN card_release_days crd ON crd.card_id = c.id
+LEFT JOIN user_card_state ucs ON ucs.user_id = $1 AND ucs.card_id = c.id
+WHERE c.deck_id = $2
+  AND ucs.user_id IS NULL
+  AND crd.release_day > $3::int
+ORDER BY crd.release_day
+LIMIT 1
+`
+
+type NextLockedLessonParams struct {
+	UserID          pgtype.UUID
+	DeckID          pgtype.UUID
+	CurrentClassDay int32
+}
+
+// The lowest lesson this user has NOT reached yet in one paced deck (#243) -- what turns the
+// reviewer's "nothing left" empty state into "Lesson 4 unlocks Thursday". pgx.ErrNoRows means
+// nothing is pending: every card is either introduced already or unlocked and waiting, so the
+// ordinary empty state is the honest one. The lowest row rather than min(), deliberately: an
+// aggregate would have to invent a sentinel for "no rows" (or be typed interface{} by sqlc), and
+// absence should stay absence rather than a magic number two other layers must know to decode.
+//
+// Deliberately the same eligibility shape as CountQueueForDeck's new_count, one predicate
+// inverted: never-introduced cards (ucs.user_id IS NULL, which also means not suspended and not
+// buried -- both need a user_card_state row) whose lesson is BEYOND the current class day rather
+// than at or before it. The two together partition the deck's never-introduced cards, so a deck can
+// never show both "New: 0" and no unlock date while cards are still waiting.
+func (q *Queries) NextLockedLesson(ctx context.Context, arg NextLockedLessonParams) (int32, error) {
+	row := q.db.QueryRow(ctx, nextLockedLesson, arg.UserID, arg.DeckID, arg.CurrentClassDay)
+	var next_lesson int32
+	err := row.Scan(&next_lesson)
+	return next_lesson, err
+}

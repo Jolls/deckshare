@@ -261,10 +261,15 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			serverError(w)
 			return
 		}
+		unlock, err := nextUnlock(r.Context(), q, user.ID, deckID, calendar, window.LocalDate)
+		if err != nil {
+			serverError(w)
+			return
+		}
 		render(w, pages["deck"], http.StatusOK, map[string]any{
 			"User": user, "Deck": deck, "Counts": counts, "Notes": noteRows,
 			"ClassDays": classDays, "UnassignedNotes": unassignedNotes,
-			"CurrentClassDay": classDay,
+			"CurrentClassDay": classDay, "NextUnlock": unlock,
 			"HasMoreNotes": hasMoreNotes, "NextNotesCursor": nextNotesCursor,
 			"NotesPaged":           !notesCursor.atStart,
 			"DesiredRetention":     params.DesiredRetention(),

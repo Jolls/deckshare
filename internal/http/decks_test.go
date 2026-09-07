@@ -937,6 +937,77 @@ func TestDeckEditRoute_Calendar(t *testing.T) {
 	})
 }
 
+// #243: a student who has run out of unlocked material is told when the next lesson opens, on the
+// deck page and in the reviewer's empty state alike. Without it the pacing is invisible to the only
+// person it acts on: "nothing left" reads the same as a finished deck or a broken one.
+func TestNextUnlockDate(t *testing.T) {
+	tx := beginTx(t)
+	// Pinned, and on a Monday: the class day resolves from GetStudyDayWindow's local date, which
+	// runs from 04:00, so a wall clock would put a real 01:00 Monday run on Sunday's study day and
+	// leave lesson 1 locked.
+	clock := time.Date(2026, 3, 2, 12, 0, 0, 0, time.UTC) // Monday; study day 03-02 04:00Z .. 03-03 04:00Z
+	handler, a := newTestHandler(t, tx, auth.Config{}, func() time.Time { return clock })
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	createTestNote(t, tx, handler, deckPath, cookie, "")
+
+	// A Monday-only calendar starting today, so the deck sits at class day 1 and a note assigned to
+	// lesson 2 is pending, opening on the following Monday.
+	start := clock.Truncate(24 * time.Hour)
+	setLesson := func(t *testing.T, day int32) {
+		t.Helper()
+		if _, err := tx.Exec(context.Background(),
+			`UPDATE notes SET release_day = $2 WHERE deck_id = $1`, deckID, day); err != nil {
+			t.Fatalf("assign release_day: %v", err)
+		}
+	}
+	editDeck := func(t *testing.T, calendarFields string) {
+		t.Helper()
+		if w := doRequest(handler, "POST", deckPath+"/edit", "name=Test Deck&description="+calendarFields,
+			cookie, "http://example.com"); w.Code != http.StatusSeeOther {
+			t.Fatalf("POST edit status = %d, want 303: %s", w.Code, w.Body.String())
+		}
+	}
+	editDeck(t, "&calendar_start_date="+start.Format(review.CalendarDateLayout)+"&calendar_weekday=1")
+
+	tests := []struct {
+		name   string
+		lesson int32
+		clear  bool
+		want   string // "" = no unlock line at all
+	}{
+		{"material pending", 2, false, "Lesson 2 unlocks " + start.AddDate(0, 0, 7).Format(unlockDateLayout)},
+		// Nothing pending: every note is unlocked, so the ordinary empty state is the honest one --
+		// the difference between "more material later" and "nothing left at all".
+		{"nothing pending", 1, false, ""},
+		// An unpaced deck keeps today's empty state exactly: the calendar's presence is the switch.
+		{"unpaced deck", 9, true, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setLesson(t, tt.lesson)
+			if tt.clear {
+				editDeck(t, "&calendar_clear=1")
+			}
+			for _, path := range []string{deckPath, deckPath + "/review"} {
+				w := doRequest(handler, "GET", path, "", cookie, "")
+				if w.Code != http.StatusOK {
+					t.Fatalf("GET %s status = %d, want 200", path, w.Code)
+				}
+				if tt.want == "" {
+					if strings.Contains(w.Body.String(), "unlocks") {
+						t.Errorf("GET %s named an unlock date, want none:\n%s", path, w.Body.String())
+					}
+				} else if !strings.Contains(w.Body.String(), tt.want) {
+					t.Errorf("GET %s should name the next unlock (%q):\n%s", path, tt.want, w.Body.String())
+				}
+			}
+		})
+	}
+}
+
 // #242: a paced deck's own page and the decks list both count only what they would actually
 // serve -- gating the fetch without gating the counts is the #101/#106 divergence repeated.
 func TestDeckQueueCounts_RespectTheReleaseGate(t *testing.T) {

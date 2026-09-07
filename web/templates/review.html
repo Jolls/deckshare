@@ -49,6 +49,7 @@
 
 <section id="review-done" hidden>
   <p>No more cards due. Nice work.</p>
+  {{with .NextUnlock}}<p>Lesson {{.Lesson}} unlocks {{.Date}}.</p>{{end}}
   <p><button type="button" id="study-more">Keep studying</button></p>
   <nav class="button-nav">
     <a href="/decks" role="button" class="btn-sm">Back to home</a>
