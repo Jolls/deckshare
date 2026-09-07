@@ -13,6 +13,7 @@
 -- name: ListNotesInDeck :many
 WITH ordered_notes AS (
     SELECT n.id, n.fields ->> nt.sort_field_idx AS sort_text, n.tags, n.modified_at, nt.name AS note_type_name,
+           n.release_day,   -- the lesson this note is assigned to (#242); gate-only, never an order
            (SELECT count(*) FROM cards c WHERE c.note_id = n.id) AS card_count,
            COALESCE((SELECT min(c2.import_due_position) FROM cards c2 WHERE c2.note_id = n.id), 2147483647)::bigint AS sort_key
     FROM notes n
@@ -20,7 +21,7 @@ WITH ordered_notes AS (
     JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = sqlc.arg(user_id) AND da.can_view
     WHERE n.deck_id = sqlc.arg(deck_id)
 )
-SELECT id, sort_text, tags, modified_at, note_type_name, card_count, sort_key
+SELECT id, sort_text, tags, modified_at, note_type_name, release_day, card_count, sort_key
 FROM ordered_notes
 WHERE sqlc.arg(at_start)::boolean
    OR (sort_key, id) > (sqlc.arg(cursor_sort_key)::bigint, sqlc.arg(cursor_id)::uuid)
@@ -165,6 +166,32 @@ FROM deck_access da
 WHERE n.id = ANY(sqlc.arg(note_ids)::uuid[]) AND n.deck_id = sqlc.arg(deck_id)
   AND da.deck_id = n.deck_id AND da.user_id = sqlc.arg(user_id)
   AND da.can_view AND da.can_edit_content;
+
+-- Assigns the lesson a selection of notes belongs to (#242) -- the same bulk surface and the same
+-- per-row authorization shape as the tag actions below. 0 is how a lesson is un-assigned: it is
+-- the column's own default and means "available immediately", so there is no separate clear path.
+-- can_edit_content, not can_edit_settings: the lesson map is content, the class calendar is
+-- settings. Accepted consequence (#242): a collaborator holding can_edit_content can re-assign
+-- release days and so unlock ahead. Students hold can_view + can_study only, so this reaches
+-- co-authors, not the class.
+-- name: BulkSetNoteReleaseDay :execrows
+UPDATE notes n
+SET release_day = sqlc.arg(release_day)::int,
+    modified_at = now()
+FROM deck_access da
+WHERE n.id = ANY(sqlc.arg(note_ids)::uuid[]) AND n.deck_id = sqlc.arg(deck_id)
+  AND da.deck_id = n.deck_id AND da.user_id = sqlc.arg(user_id)
+  AND da.can_view AND da.can_edit_content;
+
+-- The deck page's calendar view (#242): how many notes are assigned to each class day. Day 0 is
+-- the "no lesson assigned, available immediately" bucket.
+-- name: CountNotesByReleaseDay :many
+SELECT n.release_day, count(*)::bigint AS note_count
+FROM notes n
+JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = sqlc.arg(user_id) AND da.can_view
+WHERE n.deck_id = sqlc.arg(deck_id)
+GROUP BY 1
+ORDER BY 1;
 
 -- Removes tags idempotently and leaves every unrelated tag untouched. COALESCE keeps a note
 -- that loses its last tag at '{}' rather than NULL (notes.tags is NOT NULL, migration 00008).

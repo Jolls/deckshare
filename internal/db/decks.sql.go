@@ -314,7 +314,14 @@ SET name = $1,
     -- key; 'priority' and 'due' have only the one field so far, so they skip that extra layer.
     -- priority is top-level rather than nested under 'new' (unlike its predecessor, new.mix) since
     -- it governs the whole day's new/due split (#118), not new-card mixing specifically.
-    preset = (CASE WHEN $3::int IS NULL THEN d.preset
+    -- #242's calendar is the one preset key that can be REMOVED, not just written: the calendar's
+    -- presence is the release gate's switch, so "clear the start date" has to delete the key
+    -- rather than write an empty one. Hence two params instead of one -- calendar (NULL leaves it
+    -- untouched, like every other field here) and clear_calendar -- and the whole merge chain
+    -- parenthesised before the ` + "`" + `- text[]` + "`" + ` removal, since binary ` + "`" + `-` + "`" + ` binds tighter than ` + "`" + `||` + "`" + `.
+    -- Removing with a text[] rather than a text key lets the no-op case be an empty array;
+    -- ` + "`" + `jsonb - NULL::text` + "`" + ` would yield NULL and wipe the entire preset.
+    preset = ((CASE WHEN $3::int IS NULL THEN d.preset
                    ELSE d.preset || jsonb_build_object('new',
                           COALESCE(d.preset -> 'new', '{}'::jsonb)
                           || jsonb_build_object('perDay', $3::int))
@@ -333,10 +340,14 @@ SET name = $1,
            || (CASE WHEN $7::int IS NULL THEN '{}'::jsonb
                     ELSE jsonb_build_object('due',
                            jsonb_build_object('lookAheadMinutes', $7::int))
-               END),
+               END)
+           || (CASE WHEN $8::jsonb IS NULL THEN '{}'::jsonb
+                    ELSE jsonb_build_object('calendar', $8::jsonb)
+               END))
+           - (CASE WHEN $9::boolean THEN ARRAY['calendar'] ELSE ARRAY[]::text[] END),
     modified_at = now()
 FROM deck_access da
-WHERE d.id = $8 AND da.deck_id = d.id AND da.user_id = $9
+WHERE d.id = $10 AND da.deck_id = d.id AND da.user_id = $11
   AND da.can_view AND da.can_edit_settings
 `
 
@@ -348,6 +359,8 @@ type UpdateDeckParams struct {
 	RevOrder            pgtype.Text
 	Priority            pgtype.Text
 	DueLookAheadMinutes pgtype.Int4
+	Calendar            []byte
+	ClearCalendar       bool
 	DeckID              pgtype.UUID
 	UserID              pgtype.UUID
 }
@@ -361,6 +374,8 @@ func (q *Queries) UpdateDeck(ctx context.Context, arg UpdateDeckParams) (int64, 
 		arg.RevOrder,
 		arg.Priority,
 		arg.DueLookAheadMinutes,
+		arg.Calendar,
+		arg.ClearCalendar,
 		arg.DeckID,
 		arg.UserID,
 	)

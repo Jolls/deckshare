@@ -12,17 +12,17 @@
     var count = container.querySelector('[data-bulk-count]');
     var rows = Array.prototype.slice.call(container.querySelectorAll('[data-select-row]'));
     var selectAll = container.querySelector('[data-select-all]');
-    var tagsInput = container.querySelector('input[name="tags"]');
+    var textInputs = container.querySelectorAll('input[name="tags"], input[name="release_day"]');
     var lastIndex = null;
 
-    // The tags field's own form (#bulk-notes-form) has no other input before it in tree order,
-    // so an implicit Enter-submit would run "Add tags" on whatever's currently typed -- require
-    // an explicit button click instead.
-    if (tagsInput) {
-      tagsInput.addEventListener('keydown', function (e) {
+    // #bulk-notes-form's first submit button is "Add tags", so an implicit Enter-submit from any
+    // of its fields would run that action on whatever's currently typed, whichever field the
+    // typing was in -- require an explicit button click instead.
+    Array.prototype.forEach.call(textInputs, function (input) {
+      input.addEventListener('keydown', function (e) {
         if (e.key === 'Enter') e.preventDefault();
       });
-    }
+    });
 
     function refresh() {
       var checked = rows.filter(function (cb) { return cb.checked; }).length;

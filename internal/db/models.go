@@ -30,6 +30,11 @@ type CardFlag struct {
 	ResolvedByUserID pgtype.UUID
 }
 
+type CardReleaseDay struct {
+	CardID     pgtype.UUID
+	ReleaseDay int32
+}
+
 type Deck struct {
 	ID          pgtype.UUID
 	OwnerID     pgtype.UUID
@@ -91,6 +96,7 @@ type Note struct {
 	CreatedAt  pgtype.Timestamptz
 	ModifiedAt pgtype.Timestamptz
 	AnkiID     pgtype.Int8
+	ReleaseDay int32
 }
 
 type NoteType struct {

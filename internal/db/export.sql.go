@@ -187,7 +187,7 @@ func (q *Queries) ListNoteTypesForDeckExport(ctx context.Context, arg ListNoteTy
 }
 
 const listNotesForDeckExport = `-- name: ListNotesForDeckExport :many
-SELECT n.id, n.guid, n.owner_id, n.note_type_id, n.deck_id, n.fields, n.tags, n.checksum, n.created_at, n.modified_at, n.anki_id FROM notes n
+SELECT n.id, n.guid, n.owner_id, n.note_type_id, n.deck_id, n.fields, n.tags, n.checksum, n.created_at, n.modified_at, n.anki_id, n.release_day FROM notes n
 JOIN deck_access da ON da.deck_id = $1 AND da.user_id = $2 AND da.can_view
 WHERE EXISTS (SELECT 1 FROM cards c WHERE c.note_id = n.id AND c.deck_id = $1)
 ORDER BY n.id
@@ -219,6 +219,7 @@ func (q *Queries) ListNotesForDeckExport(ctx context.Context, arg ListNotesForDe
 			&i.CreatedAt,
 			&i.ModifiedAt,
 			&i.AnkiID,
+			&i.ReleaseDay,
 		); err != nil {
 			return nil, err
 		}

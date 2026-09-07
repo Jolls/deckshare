@@ -17,9 +17,13 @@ import (
 
 // StudyDay is the per-user rollover window a batch fetch is scoped to (docs/schema.md, plan
 // §0.9): the arithmetic runs on the user's local wall clock, computed once by GetStudyDayWindow.
+// LocalDate is that same window's calendar date on the user's own clock -- the date the class
+// calendar resolves against (#242, ReleaseGateDay), which under a non-midnight day_start_hour is
+// not always the date "now" falls on.
 type StudyDay struct {
-	Start time.Time
-	End   time.Time
+	Start     time.Time
+	End       time.Time
+	LocalDate time.Time
 }
 
 // Card is one due or never-seen card, rendered and previewed for the reviewer's queue.
@@ -155,9 +159,21 @@ func hashSeedFor(userID pgtype.UUID, window StudyDay) string {
 // suspended/buried filtering, the study-day last_review exclusion, rev.order, priority and
 // lookAheadMinutes are all unaffected, and extraRounds never changes what is written -- it only
 // inflates the two selection ceilings for this fetch.
+//
+// Six of these parameters -- newPerDay, revPerDay, order, priority, lookAheadMinutes, classDay --
+// are decks.preset unpacked by the one production caller, which is why each new per-deck setting
+// costs a signature change and ~38 mechanical test edits; #248 tracks collapsing them into one
+// parsed settings struct.
+//
+// classDay is ReleaseGateDay's value for the deck's preset calendar on this study day (#242):
+// never-seen cards whose note is assigned to a later class meeting are not eligible to be
+// introduced, ReleaseGateOff switching that off entirely. It is an eligibility gate, not an
+// allowance, which is why extraRounds -- which only scales the two allowances below -- can burn
+// down an unlocked backlog but can never reach into a lesson that hasn't opened yet.
 func BuildBatch(ctx context.Context, store db.DBTX, p fsrs.Params, userID, deckID pgtype.UUID,
 	deckName string, window StudyDay, newPerDay, revPerDay int32, order RevOrder, priority Priority,
-	cur Cursor, limit int32, now time.Time, lookAheadMinutes int32, extraRounds int32) (Batch, error) {
+	cur Cursor, limit int32, now time.Time, lookAheadMinutes int32, extraRounds int32,
+	classDay int32) (Batch, error) {
 	q := db.New(store)
 
 	introduced, err := q.CountNewIntroducedToday(ctx, db.CountNewIntroducedTodayParams{
@@ -206,9 +222,9 @@ func BuildBatch(ctx context.Context, store db.DBTX, p fsrs.Params, userID, deckI
 	}
 
 	if priority == PriorityMixed {
-		return buildMixedBatch(ctx, q, p, userID, deckID, deckName, window, order, newRemaining, totalRemaining, cur, effectiveLimit, now, lookAheadMinutes)
+		return buildMixedBatch(ctx, q, p, userID, deckID, deckName, window, order, newRemaining, totalRemaining, cur, effectiveLimit, now, lookAheadMinutes, classDay)
 	}
-	return buildSingleBatch(ctx, q, p, userID, deckID, deckName, window, order, priority, newRemaining, totalRemaining, cur, effectiveLimit, now, lookAheadMinutes)
+	return buildSingleBatch(ctx, q, p, userID, deckID, deckName, window, order, priority, newRemaining, totalRemaining, cur, effectiveLimit, now, lookAheadMinutes, classDay)
 }
 
 // buildSingleBatch is BuildBatch's path for every priority mode except "mixed": one keyset query,
@@ -216,7 +232,7 @@ func BuildBatch(ctx context.Context, store db.DBTX, p fsrs.Params, userID, deckI
 // is already BuildBatch's effectiveLimit (page size clamped to the day's remaining total).
 func buildSingleBatch(ctx context.Context, q *db.Queries, p fsrs.Params, userID, deckID pgtype.UUID,
 	deckName string, window StudyDay, order RevOrder, priority Priority, newRemaining, totalRemaining int32,
-	cur Cursor, limit int32, now time.Time, lookAheadMinutes int32) (Batch, error) {
+	cur Cursor, limit int32, now time.Time, lookAheadMinutes, classDay int32) (Batch, error) {
 	rows, err := q.ListDueCardsForStudy(ctx, db.ListDueCardsForStudyParams{
 		Priority:         string(priority),
 		RevOrder:         string(order),
@@ -226,6 +242,7 @@ func buildSingleBatch(ctx context.Context, q *db.Queries, p fsrs.Params, userID,
 		StudyDayStart:    pgtype.Timestamptz{Time: window.Start, Valid: true},
 		Now:              pgtype.Timestamptz{Time: now, Valid: true},
 		LookAheadMinutes: lookAheadMinutes,
+		CurrentClassDay:  classDay,
 		RevRemaining:     totalRemaining,
 		NewRemaining:     newRemaining,
 		CursorGroupBit:   cur.groupBitArg(),
@@ -271,7 +288,7 @@ func buildSingleBatch(ctx context.Context, q *db.Queries, p fsrs.Params, userID,
 // rather than resetting to start, since nothing about it was consumed.
 func buildMixedBatch(ctx context.Context, q *db.Queries, p fsrs.Params, userID, deckID pgtype.UUID,
 	deckName string, window StudyDay, order RevOrder, newRemaining, totalRemaining int32,
-	cur Cursor, limit int32, now time.Time, lookAheadMinutes int32) (Batch, error) {
+	cur Cursor, limit int32, now time.Time, lookAheadMinutes, classDay int32) (Batch, error) {
 	hashSeed := hashSeedFor(userID, window)
 
 	reviewRows, err := q.ListReviewCardsForStudy(ctx, db.ListReviewCardsForStudyParams{
@@ -292,12 +309,13 @@ func buildMixedBatch(ctx context.Context, q *db.Queries, p fsrs.Params, userID, 
 	}
 
 	newRows, err := q.ListNewCardsForStudy(ctx, db.ListNewCardsForStudyParams{
-		UserID:       userID,
-		DeckID:       deckID,
-		NewRemaining: newRemaining,
-		CursorKey:    cur.newKeyArg(),
-		CursorCardID: cur.newCardIDArg(),
-		BatchSize:    limit,
+		UserID:          userID,
+		DeckID:          deckID,
+		CurrentClassDay: classDay,
+		NewRemaining:    newRemaining,
+		CursorKey:       cur.newKeyArg(),
+		CursorCardID:    cur.newCardIDArg(),
+		BatchSize:       limit,
 	})
 	if err != nil {
 		return Batch{}, fmt.Errorf("review: list new cards: %w", err)

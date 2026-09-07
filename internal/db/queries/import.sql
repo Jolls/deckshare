@@ -49,6 +49,10 @@ RETURNING *;
 
 -- Re-import updates rather than inserts (CLAUDE.md §2.2, apkg-format.md). deck_id is NOT
 -- touched: a re-import must not silently move a note the user has since filed elsewhere.
+-- release_day (#242) is not touched either, and must not be: re-importing a deck cannot be
+-- allowed to erase a term's pacing. That is exactly why the lesson map is its own column rather
+-- than a reinterpretation of import_due_position, which UpsertImportedCard below does overwrite
+-- from the file on every re-import.
 -- name: UpdateImportedNote :execrows
 UPDATE notes n
 SET fields = sqlc.arg(fields), tags = sqlc.arg(tags), checksum = sqlc.arg(checksum),

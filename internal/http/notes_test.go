@@ -866,6 +866,10 @@ func TestNoteRoutes_BulkAccessControl(t *testing.T) {
 		{"view-only collaborator bulk-tag-add", deckAPath + "/notes/bulk-tag-add", "note_id=" + noteAID + "&tags=x", viewerCookie},
 		{"view-only collaborator bulk-tag-remove", deckAPath + "/notes/bulk-tag-remove", "note_id=" + noteAID + "&tags=tag1", viewerCookie},
 		{"id-smuggling: own note from a different deck", deckAPath + "/notes/bulk-delete", "note_id=" + noteBID, strangerCookie},
+		// #242: assigning the lesson is content, so it takes can_edit_content like the rest.
+		{"stranger bulk-release-day", deckAPath + "/notes/bulk-release-day", "note_id=" + noteAID + "&release_day=3", strangerCookie},
+		{"view-only collaborator bulk-release-day", deckAPath + "/notes/bulk-release-day", "note_id=" + noteAID + "&release_day=3", viewerCookie},
+		{"id-smuggling: bulk-release-day on another deck's note", deckAPath + "/notes/bulk-release-day", "note_id=" + noteBID + "&release_day=3", strangerCookie},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -878,6 +882,9 @@ func TestNoteRoutes_BulkAccessControl(t *testing.T) {
 
 	if countRows(t, tx, `SELECT count(*) FROM notes WHERE id = $1`, noteAID) != 1 {
 		t.Error("noteA should not have been deleted by an unauthorized bulk-delete")
+	}
+	if countRows(t, tx, `SELECT count(*) FROM notes WHERE release_day <> 0 AND id IN ($1, $2)`, noteAID, noteBID) != 0 {
+		t.Error("an unauthorized bulk-release-day assigned a lesson anyway")
 	}
 	if countRows(t, tx, `SELECT count(*) FROM notes WHERE id = $1`, noteBID) != 1 {
 		t.Error("noteB should not have been deleted (id-smuggled into deck A's bulk-delete)")
@@ -986,4 +993,58 @@ func TestNoteRoutes_BulkTags_IdempotentPreservesOtherTags(t *testing.T) {
 		}
 	}
 	wantEqual(readTags(), []string{"keep"})
+}
+
+// #242: the allow path for assigning a lesson to a selection -- set, then un-assign (a blank value
+// means lesson 0, "available immediately"), with an unselected note untouched throughout.
+func TestNoteRoutes_BulkSetReleaseDay(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	selected := createTestNote(t, tx, handler, deckPath, cookie, "")
+	untouched := createTestNote(t, tx, handler, deckPath, cookie, "")
+
+	releaseDay := func(t *testing.T, noteID string) int32 {
+		t.Helper()
+		var day int32
+		if err := tx.QueryRow(context.Background(), `SELECT release_day FROM notes WHERE id = $1`, noteID).Scan(&day); err != nil {
+			t.Fatalf("read release_day: %v", err)
+		}
+		return day
+	}
+
+	w := doRequest(handler, "POST", deckPath+"/notes/bulk-release-day", "note_id="+selected+"&release_day=3", cookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("bulk-release-day status = %d, want 303: %s", w.Code, w.Body.String())
+	}
+	if got := releaseDay(t, selected); got != 3 {
+		t.Errorf("selected note release_day = %d, want 3", got)
+	}
+	if got := releaseDay(t, untouched); got != 0 {
+		t.Errorf("unselected note release_day = %d, want 0", got)
+	}
+
+	t.Run("a blank value un-assigns", func(t *testing.T) {
+		w := doRequest(handler, "POST", deckPath+"/notes/bulk-release-day", "note_id="+selected+"&release_day=", cookie, "http://example.com")
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("status = %d, want 303: %s", w.Code, w.Body.String())
+		}
+		if got := releaseDay(t, selected); got != 0 {
+			t.Errorf("release_day = %d after un-assigning, want 0", got)
+		}
+	})
+
+	for _, v := range []string{"abc", "-1", "1000", "4294967296"} {
+		t.Run("rejects release_day="+v, func(t *testing.T) {
+			w := doRequest(handler, "POST", deckPath+"/notes/bulk-release-day", "note_id="+selected+"&release_day="+v, cookie, "http://example.com")
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400: %s", w.Code, w.Body.String())
+			}
+			if got := releaseDay(t, selected); got != 0 {
+				t.Errorf("release_day = %d after a rejected request, want it unchanged (0)", got)
+			}
+		})
+	}
 }

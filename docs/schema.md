@@ -82,11 +82,24 @@ fields      id, note_type_id, ordinal, name, font, size, is_rtl, sticky
 templates   id, note_type_id, ordinal, name, qfmt, afmt, browser_qfmt, browser_afmt
 
 notes       id, guid, owner_id, note_type_id, deck_id, fields jsonb, tags text[],
-            checksum bigint, created_at, modified_at, anki_id
+            checksum bigint, release_day int NOT NULL DEFAULT 0,
+            created_at, modified_at, anki_id
             -- UNIQUE (owner_id, guid)   <- makes re-import idempotent
             -- INDEX (deck_id)           <- deck-scoped queries + the deck-delete RI check
             -- owner_id is denormalised from decks.owner_id; a unique index can't span a join
             -- fields is an ordered array, indexed by fields.ordinal
+            -- release_day is the class meeting this note's content belongs to (#242) --
+            --   GATE-ONLY, never an ordering (that stays cards.import_due_position, #82).
+            --   0 = no lesson assigned, available immediately; CHECK (BETWEEN 0 AND 999).
+            --   NOT NULL because "unassigned" and "day 0" are one state, not two
+
+card_release_days (view)  card_id, release_day
+            -- cards JOIN notes (#242): which lesson each CARD belongs to, in one place, so the
+            -- six query sites that gate on it share one definition and the deferred
+            -- cards.release_day override is a one-line edit here touching no call site.
+            -- A view, not a function: Postgres never inlines a SQL function whose body holds a
+            -- subquery, so the obvious released(card_id, day) helper would be an opaque
+            -- per-row call (~7.7us/row) instead of the hash join a view rewrites into
 
 cards       id, note_id, template_id, ordinal, deck_id, anki_id
             -- content addressing ONLY. No due, no ivl, no factor, no state.
@@ -132,11 +145,35 @@ fetch time via ordering + per-side cutoffs + a `LIMIT` clamped to the remaining 
 calling `PriorityAllocate` directly (docs/architecture.md §6/§20 has the reasoning).
 `CountQueueForDeck`/`CountQueueForUser` still report the deck's raw unseen-card count, uncapped
 by `new.perDay`/`rev.perDay` ([#106](https://github.com/Jolls/deckshare/issues/106)), but do apply
-`due.lookAheadMinutes` to their due-card filter same as the study queries. `CountQueueForUser`
-groups counts across every deck a user can view in one query, so it can't bind
-`look_ahead_minutes` as a single scalar the way the other three do — the caller passes parallel
-`deck_ids`/`look_ahead_minutes` arrays (each value parsed in Go same as everywhere else) and the
-query unnests them into a per-deck join.
+`due.lookAheadMinutes` to their due-card filter same as the study queries — and, unlike the daily
+caps, they *do* apply the release gate below, since that decides which cards exist for today at all
+rather than how many of them may be served. `CountQueueForUser` groups counts across every deck a
+user can view in one query, so it can't bind `look_ahead_minutes` or `current_class_day` as single
+scalars the way the other three do — the caller passes parallel
+`deck_ids`/`look_ahead_minutes`/`current_class_days` arrays (each value resolved in Go same as
+everywhere else) and the query unnests them into a per-deck join.
+
+**The class calendar** ([#242](https://github.com/Jolls/deckshare/issues/242), part of #238) is one
+more `preset` key: `{"calendar": {"startDate": "2026-09-08", "weekdays": [2, 4],
+"skip": ["2026-11-26"]}}` — the term's first meeting, its meeting weekdays (ISO 8601, Mon=1 ..
+Sun=7), and the dates no class happens. With `notes.release_day` it forms three independent layers:
+content → lesson (`release_day`), lesson → class day (identity, stored nowhere), class day → date
+(this calendar), so a teacher never converts "week 6, Thursday" into a date by hand.
+`internal/review.CurrentClassDay` counts meeting weekdays from `startDate` through the student's
+own study day (`GetStudyDayWindow`'s `study_day_local_date` — each student's clock, no timezone
+stored on the deck), minus skips; a never-seen card whose note's `release_day` exceeds that count
+is not eligible to be introduced. Cumulative: once a lesson opens it stays open, so falling behind
+produces a backlog rather than a closed door, and a card that already has a `user_card_state` row
+is never re-gated. **The calendar's presence is the switch** — there is no enable flag, so there is
+no state where a calendar is configured but inert; `ReleaseGateDay` resolves an unpaced deck to a
+class day past every lesson that can exist (`math.MaxInt32`, the same "sentinel beyond every real
+value" idiom `import_due_position` already uses), so the gate stays one comparison with no second
+branch for the unpaced case. Same degrade-to-default parsing as the rest of `preset`: a malformed
+calendar reads as no calendar, all-or-nothing rather than per-field, because half a calendar would
+silently shift every meeting date. The comparison's left-hand side comes from the
+`card_release_days` view above, so the six query sites that gate on it share one definition
+([#219](https://github.com/Jolls/deckshare/issues/219) is open about exactly that kind of
+duplication in `reviews.sql`).
 
 `notes.fields` as `jsonb` (ordered array of strings) rather than a `note_fields` table:
 fields are always read and written as a unit with the note, never queried individually, and
