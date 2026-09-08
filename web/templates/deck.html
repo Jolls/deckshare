@@ -61,6 +61,9 @@
          carries the current selection/tags along in its POST body, and this form's own tree
          order starts with a real bulk button, so no dummy default-submit button is needed. -->
     <form method="post" id="bulk-notes-form" class="bulk-action-bar" data-bulk-bar hidden>
+        <!-- The page the selection was made on, so an apply-to-many returns here rather than to
+             page 1 (#90/#241). Empty on the first page, which redirects to the unparameterised URL. -->
+        <input type="hidden" name="notesCursor" value="{{.NotesCursor}}">
         <span data-bulk-count>0</span> selected
         <input type="text" name="tags" placeholder="tag1 tag2" aria-label="Tags to add or remove">
         <button type="submit" formaction="/decks/{{.Deck.ID}}/notes/bulk-tag-add" class="outline btn-sm" x-data @click="confirm('Add these tags to the selected notes?') || $event.preventDefault()">Add tags</button>

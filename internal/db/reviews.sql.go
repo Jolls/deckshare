@@ -1117,7 +1117,7 @@ const nextLockedLesson = `-- name: NextLockedLesson :one
 SELECT crd.release_day AS next_lesson
 FROM cards c
 JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $1
-                   AND da.can_view AND da.can_study
+                   AND da.can_view
 JOIN card_release_days crd ON crd.card_id = c.id
 LEFT JOIN user_card_state ucs ON ucs.user_id = $1 AND ucs.card_id = c.id
 WHERE c.deck_id = $2
@@ -1139,6 +1139,12 @@ type NextLockedLessonParams struct {
 // ordinary empty state is the honest one. The lowest row rather than min(), deliberately: an
 // aggregate would have to invent a sentinel for "no rows" (or be typed interface{} by sqlc), and
 // absence should stay absence rather than a magic number two other layers must know to decode.
+//
+// can_view alone, where CountQueueForDeck's new_count also requires can_study: the deck page shows
+// this line beside the class-calendar table, which is a can_view section (CountNotesByReleaseDay),
+// so requiring can_study here would have a view-only co-teacher see "Locked" rows above and no
+// explanation of when they open. Nothing here reads another user's progress -- ucs is this
+// caller's own row, and release_day is deck content already listed in the notes table.
 //
 // Deliberately the same eligibility shape as CountQueueForDeck's new_count, one predicate
 // inverted: never-introduced cards (ucs.user_id IS NULL, which also means not suspended and not

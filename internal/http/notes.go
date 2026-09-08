@@ -529,7 +529,7 @@ func parseBulkRequest(w http.ResponseWriter, r *http.Request, pages map[string]*
 		return
 	}
 	if !parseForm(w, r) {
-		return
+		return deckID, nil, false // parseForm has already written the 400
 	}
 	noteIDs, ok = parseBulkNoteIDs(w, r)
 	return
@@ -594,6 +594,13 @@ func parseBulkReleaseDay(w http.ResponseWriter, r *http.Request) (day int32, ok 
 // otherwise the same no-rows-means-404 convention DeleteNote uses (n == 0 cannot be
 // distinguished from "no permission" and is treated the same way), or a redirect back to the
 // deck's notes list on success.
+//
+// The redirect returns to the PAGE the selection was made on (#90/#241): pacing a 500-card deck
+// is dozens of apply-to-many rounds deep into the list, and landing back at page 1 after each one
+// makes the two features useless together. The cursor is decoded and re-encoded rather than
+// echoed, so only this file's own alphabet can reach the Location header. A cursor left pointing
+// past the end -- the last page, bulk-deleted -- lands on the list's own "back to the start" empty
+// state, which is the honest answer.
 func finishBulk(w http.ResponseWriter, r *http.Request, pages map[string]*template.Template, user db.User, deckID pgtype.UUID, n int64, err error) {
 	if err != nil {
 		serverError(w)
@@ -603,7 +610,11 @@ func finishBulk(w http.ResponseWriter, r *http.Request, pages map[string]*templa
 		notFoundPage(w, pages, user)
 		return
 	}
-	http.Redirect(w, r, "/decks/"+deckID.String()+"#notes", http.StatusSeeOther)
+	dest := "/decks/" + deckID.String()
+	if cur, ok := decodeNoteCursor(r.PostForm.Get("notesCursor")); ok && !cur.atStart {
+		dest += "?notesCursor=" + encodeNoteCursor(cur)
+	}
+	http.Redirect(w, r, dest+"#notes", http.StatusSeeOther)
 }
 
 // fieldsCompatible implements the #138 v1 field-compatibility rule for a note-type change: the

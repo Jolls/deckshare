@@ -1008,6 +1008,47 @@ func TestNextUnlockDate(t *testing.T) {
 	}
 }
 
+// #243: the unlock line sits beside the class-calendar table, which is a can_view section, so a
+// view-only co-teacher must get both halves. NextLockedLesson requiring can_study left them
+// reading "Locked" rows with nothing saying when those rows open.
+func TestNextUnlockDate_VisibleToAViewOnlyCollaborator(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	clock := time.Date(2026, 3, 2, 12, 0, 0, 0, time.UTC) // Monday, as in TestNextUnlockDate
+	handler, a := newTestHandler(t, tx, auth.Config{}, func() time.Time { return clock })
+	ownerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	viewerEmail := testEmail()
+	viewerCookie := loginCookie(t, tx, a, viewerEmail, "correct-horse-battery")
+	viewerID := userID(t, ctx, tx, viewerEmail)
+
+	deckPath := setupDeckAndNoteType(t, handler, ownerCookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	createTestNote(t, tx, handler, deckPath, ownerCookie, "")
+
+	start := clock.Truncate(24 * time.Hour)
+	if w := doRequest(handler, "POST", deckPath+"/edit",
+		"name=Test Deck&description=&calendar_start_date="+start.Format(review.CalendarDateLayout)+"&calendar_weekday=1",
+		ownerCookie, "http://example.com"); w.Code != http.StatusSeeOther {
+		t.Fatalf("POST edit status = %d, want 303: %s", w.Code, w.Body.String())
+	}
+	if _, err := tx.Exec(ctx, `UPDATE notes SET release_day = 2 WHERE deck_id = $1`, deckID); err != nil {
+		t.Fatalf("assign release_day: %v", err)
+	}
+	// can_view only -- no can_study, which is the flag CountQueueForDeck needs and this line does not.
+	if _, err := tx.Exec(ctx, `INSERT INTO deck_access (deck_id, user_id, can_view) VALUES ($1, $2, true)`, deckID, viewerID); err != nil {
+		t.Fatalf("grant viewer access: %v", err)
+	}
+
+	w := doRequest(handler, "GET", deckPath, "", viewerCookie, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	want := "Lesson 2 unlocks " + start.AddDate(0, 0, 7).Format(unlockDateLayout)
+	if !strings.Contains(w.Body.String(), want) {
+		t.Errorf("view-only collaborator should see %q:\n%s", want, w.Body.String())
+	}
+}
+
 // #242: a paced deck's own page and the decks list both count only what they would actually
 // serve -- gating the fetch without gating the counts is the #101/#106 divergence repeated.
 func TestDeckQueueCounts_RespectTheReleaseGate(t *testing.T) {
