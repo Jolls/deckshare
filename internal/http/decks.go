@@ -206,14 +206,14 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		// Resolved once and reused by the queue count, the calendar view, and the template: the
 		// same walk over the same calendar three times would otherwise be three chances to drift.
 		calendar := review.ParseCalendar(deck.Preset)
-		classDay := review.CurrentClassDay(calendar, window.LocalDate)
+		classDay := calendar.CurrentClassDay(window.LocalDate)
 		queueRow, err := q.CountQueueForDeck(r.Context(), db.CountQueueForDeckParams{
 			UserID:           user.ID,
 			DeckID:           deckID,
 			StudyDayStart:    pgtype.Timestamptz{Time: window.Start, Valid: true},
 			Now:              pgtype.Timestamptz{Time: n, Valid: true},
 			LookAheadMinutes: review.DueLookAheadMinutes(deck.Preset),
-			CurrentClassDay:  calendar.GateDay(window.LocalDate),
+			CurrentClassDay:  calendar.Gate(classDay),
 		})
 		if err != nil {
 			serverError(w)
@@ -271,6 +271,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			"ClassDays": classDays, "UnassignedNotes": unassignedNotes,
 			"CurrentClassDay": classDay, "NextUnlock": unlock,
 			"HasMoreNotes": hasMoreNotes, "NextNotesCursor": nextNotesCursor,
+			"NotesCursor":          encodeNoteCursor(notesCursor),
 			"NotesPaged":           !notesCursor.atStart,
 			"DesiredRetention":     params.DesiredRetention(),
 			"OtherProgressViewers": otherProgressViewers,
@@ -474,14 +475,17 @@ type weekdayView struct {
 	Checked bool
 }
 
+// weekdayNames is the checkbox row, Monday first, so its index+1 is the ISO 8601 day number the
+// form posts and decks.preset.calendar stores.
+var weekdayNames = [7]string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
+
 func calendarForm(cal review.Calendar) calendarFormView {
 	form := calendarFormView{Skip: strings.Join(cal.SkipDates(), "\n")}
 	if cal.Configured() {
 		form.StartDate = cal.StartDate.Format(review.CalendarDateLayout)
 	}
-	names := []string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
-	form.Weekdays = make([]weekdayView, len(names))
-	for i, name := range names {
+	form.Weekdays = make([]weekdayView, len(weekdayNames))
+	for i, name := range weekdayNames {
 		iso := int32(i + 1)
 		form.Weekdays[i] = weekdayView{ISO: iso, Name: name, Checked: slices.Contains(cal.Weekdays, iso)}
 	}
@@ -532,7 +536,7 @@ func deckClassDays(ctx context.Context, q *db.Queries, userID, deckID pgtype.UUI
 		byDay[row.ReleaseDay] = row.NoteCount
 		lastAssigned = max(lastAssigned, row.ReleaseDay)
 	}
-	dates := review.MeetingDates(calendar, max(lastAssigned, currentClassDay, calendarPreviewMeetings))
+	dates := calendar.MeetingDates(max(lastAssigned, currentClassDay, calendarPreviewMeetings))
 	views := make([]classDayView, len(dates))
 	for i, d := range dates {
 		day := int32(i + 1)

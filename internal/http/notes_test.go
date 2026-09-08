@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Jolls/deckshare/internal/auth"
 )
@@ -857,7 +858,7 @@ func TestNoteRoutes_BulkAccessControl(t *testing.T) {
 
 	tests := []struct {
 		name, path, body string
-		cookie            *http.Cookie
+		cookie           *http.Cookie
 	}{
 		{"stranger bulk-delete", deckAPath + "/notes/bulk-delete", "note_id=" + noteAID, strangerCookie},
 		{"stranger bulk-tag-add", deckAPath + "/notes/bulk-tag-add", "note_id=" + noteAID + "&tags=x", strangerCookie},
@@ -943,6 +944,69 @@ func TestNoteRoutes_BulkDelete_SelectionOverLimit_400(t *testing.T) {
 	w := doRequest(handler, "POST", deckPath+"/notes/bulk-delete", v.Encode(), cookie, "http://example.com")
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+}
+
+// A body ParseForm rejects must stop the handler dead: before the fix, parseBulkRequest returned
+// the ok it got from pathUUID, so every bulk route ran its query with a nil selection and then
+// appended a second response body to the 400 parseForm had already written.
+func TestNoteRoutes_BulkMalformedBody_400Only(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+
+	for _, action := range []string{"bulk-delete", "bulk-tag-add", "bulk-tag-remove", "bulk-release-day"} {
+		t.Run(action, func(t *testing.T) {
+			w := doRequest(handler, "POST", deckPath+"/notes/"+action, "note_id=%zz", cookie, "http://example.com")
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+			}
+			// Exactly parseForm's own body, nothing appended: the leak let the handler run on
+			// and write a second response (the 404 page, or the next validator's message) after
+			// this 400 was already sent.
+			if got := w.Body.String(); got != "bad request\n" {
+				t.Errorf("body = %q, want just parseForm's 400", got)
+			}
+		})
+	}
+}
+
+// #90/#241: a bulk action returns to the page the selection was made on, not to page 1 -- pacing a
+// large deck is dozens of apply-to-many rounds deep into the list. The cursor is re-encoded rather
+// than echoed, so a malformed one drops back to the start instead of reaching the Location header.
+func TestNoteRoutes_BulkRedirect_KeepsThePage(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	noteID := createTestNote(t, tx, handler, deckPath, cookie, "keep")
+
+	var cursorID pgtype.UUID
+	if err := cursorID.Scan(noteID); err != nil {
+		t.Fatalf("scan note id: %v", err)
+	}
+	cursor := encodeNoteCursor(noteCursor{sortKey: 7, id: cursorID})
+	tests := []struct {
+		name, cursor, wantLocation string
+	}{
+		{"page cursor is kept", cursor, deckPath + "?notesCursor=" + cursor + "#notes"},
+		{"first page has no cursor", "", deckPath + "#notes"},
+		{"malformed cursor falls back to the start", "not!base64", deckPath + "#notes"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := url.Values{"note_id": {noteID}, "tags": {"x"}, "notesCursor": {tt.cursor}}.Encode()
+			w := doRequest(handler, "POST", deckPath+"/notes/bulk-tag-add", body, cookie, "http://example.com")
+			if w.Code != http.StatusSeeOther {
+				t.Fatalf("status = %d, want 303: %s", w.Code, w.Body.String())
+			}
+			if got := w.Header().Get("Location"); got != tt.wantLocation {
+				t.Errorf("Location = %q, want %q", got, tt.wantLocation)
+			}
+		})
 	}
 }
 

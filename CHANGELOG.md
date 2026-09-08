@@ -8,6 +8,27 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.8] - 2026-09-07
+
+### Fixed
+- Bulk-editing notes on a deck page now returns to the page of the list the selection was made
+  on, instead of jumping back to the first page. Pacing a large deck is many apply-to-many
+  rounds deep into the notes list, so the two features were unusable together
+  ([#241](https://github.com/Jolls/deckshare/issues/241)).
+- A bulk note action with an unreadable request body now answers a single 400. It previously
+  went on to run the query with an empty selection and append a second response body -- the
+  full 404 page, for the delete and set-lesson routes -- to the one already sent
+  ([#241](https://github.com/Jolls/deckshare/issues/241)).
+- The "Lesson N unlocks ..." line on a deck page is now shown to a collaborator who can view
+  the deck but not study it, matching the class-calendar table it sits beside -- that table
+  listed locked lessons with nothing saying when they open
+  ([#243](https://github.com/Jolls/deckshare/issues/243)).
+
+### Changed
+- `review.Calendar`'s class-day and meeting-date lookups are methods on the type rather than
+  free functions taking one, and the deck page resolves its class day once instead of walking the
+  calendar twice ([#242](https://github.com/Jolls/deckshare/issues/242)).
+
 ## [0.3.7] - 2026-09-07
 
 ### Fixed

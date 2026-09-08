@@ -68,7 +68,7 @@ func TestCurrentClassDay(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := CurrentClassDay(tt.cal, tt.localDate); got != tt.want {
+			if got := tt.cal.CurrentClassDay(tt.localDate); got != tt.want {
 				t.Errorf("CurrentClassDay = %d, want %d", got, tt.want)
 			}
 		})
@@ -89,7 +89,7 @@ func TestCurrentClassDay_MatchesBruteForce(t *testing.T) {
 		for day := 0; day < 200; day++ {
 			d := cal.StartDate.AddDate(0, 0, day)
 			want := countMeetingsBruteForce(cal, d)
-			if got := CurrentClassDay(cal, d); got != want {
+			if got := cal.CurrentClassDay(d); got != want {
 				t.Fatalf("calendar %d, %s: CurrentClassDay = %d, brute force = %d",
 					i, d.Format(CalendarDateLayout), got, want)
 			}
@@ -102,7 +102,7 @@ func TestCurrentClassDay_MatchesBruteForce(t *testing.T) {
 func TestCurrentClassDay_NormalisesLocalDate(t *testing.T) {
 	eastern := time.FixedZone("EST", -5*60*60)
 	// 8 Sep 2026 20:00 in EST is 9 Sep in UTC; the class day must still be Tuesday's, 1.
-	if got := CurrentClassDay(termCalendar(), time.Date(2026, time.September, 8, 20, 0, 0, 0, eastern)); got != 1 {
+	if got := termCalendar().CurrentClassDay(time.Date(2026, time.September, 8, 20, 0, 0, 0, eastern)); got != 1 {
 		t.Errorf("CurrentClassDay = %d, want 1", got)
 	}
 }
@@ -189,7 +189,7 @@ func TestParseCalendar_RoundTrip(t *testing.T) {
 		t.Fatalf("Calendar.JSON: %v", err)
 	}
 	reparsed := ParseCalendar([]byte(`{"calendar":` + string(encoded) + `}`))
-	if got, want := CurrentClassDay(reparsed, date(2026, time.December, 1)), CurrentClassDay(cal, date(2026, time.December, 1)); got != want {
+	if got, want := reparsed.CurrentClassDay(date(2026, time.December, 1)), cal.CurrentClassDay(date(2026, time.December, 1)); got != want {
 		t.Errorf("round-tripped calendar resolves to class day %d, want %d", got, want)
 	}
 }
@@ -250,15 +250,15 @@ func TestMeetingDate_IsTheInverseOfCurrentClassDay(t *testing.T) {
 	}
 	for i, cal := range cals {
 		for lesson := int32(1); lesson <= 40; lesson++ {
-			d, ok := MeetingDate(cal, lesson)
+			d, ok := cal.MeetingDate(lesson)
 			if !ok {
 				t.Fatalf("calendar %d: no date for lesson %d", i, lesson)
 			}
-			if got := CurrentClassDay(cal, d); got != lesson {
+			if got := cal.CurrentClassDay(d); got != lesson {
 				t.Errorf("calendar %d: lesson %d unlocks %s, but that date resolves to class day %d",
 					i, lesson, d.Format(CalendarDateLayout), got)
 			}
-			if got := CurrentClassDay(cal, d.AddDate(0, 0, -1)); got >= lesson {
+			if got := cal.CurrentClassDay(d.AddDate(0, 0, -1)); got >= lesson {
 				t.Errorf("calendar %d: lesson %d was already open on %s, the day before its unlock date",
 					i, lesson, d.AddDate(0, 0, -1).Format(CalendarDateLayout))
 			}
@@ -280,7 +280,7 @@ func TestMeetingDate_Unresolvable(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, ok := MeetingDate(tt.cal, tt.lesson); ok {
+			if _, ok := tt.cal.MeetingDate(tt.lesson); ok {
 				t.Errorf("MeetingDate(%d) resolved a date, want none", tt.lesson)
 			}
 		})
@@ -288,7 +288,7 @@ func TestMeetingDate_Unresolvable(t *testing.T) {
 }
 
 func TestMeetingDates(t *testing.T) {
-	got := MeetingDates(termCalendar(), 3)
+	got := termCalendar().MeetingDates(3)
 	want := []time.Time{
 		date(2026, time.September, 8),
 		date(2026, time.September, 10),
@@ -304,22 +304,22 @@ func TestMeetingDates(t *testing.T) {
 	}
 
 	// A skipped meeting is not a meeting: the numbering slides past it rather than leaving a hole.
-	skipped := MeetingDates(Calendar{
+	skipped := Calendar{
 		StartDate: date(2026, time.November, 24),
 		Weekdays:  []int32{2, 4},
 		Skip:      []time.Time{date(2026, time.November, 26)},
-	}, 2)
+	}.MeetingDates(2)
 	if len(skipped) != 2 || !skipped[1].Equal(date(2026, time.December, 1)) {
 		t.Errorf("meeting 2 after a skip = %v, want 2026-12-01", skipped)
 	}
 
-	if MeetingDates(Calendar{}, 5) != nil {
+	if (Calendar{}).MeetingDates(5) != nil {
 		t.Error("MeetingDates on an unconfigured calendar returned dates")
 	}
-	if MeetingDates(termCalendar(), 0) != nil {
+	if termCalendar().MeetingDates(0) != nil {
 		t.Error("MeetingDates(0) returned dates")
 	}
-	if got := MeetingDates(termCalendar(), MaxReleaseDay+10); int32(len(got)) != MaxReleaseDay {
+	if got := termCalendar().MeetingDates(MaxReleaseDay + 10); int32(len(got)) != MaxReleaseDay {
 		t.Errorf("MeetingDates clamped to %d dates, want MaxReleaseDay (%d)", len(got), MaxReleaseDay)
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"math"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -32,8 +31,8 @@ const (
 	// turn that into a runaway walk.
 	MaxReleaseDay int32 = 999
 
-	// MaxCalendarSkipDates bounds the skip list -- generous for a term's holidays, small enough
-	// that the stored preset stays a settings blob.
+	// MaxCalendarSkipDates bounds the skip list as submitted, before duplicates are collapsed --
+	// generous for a term's holidays, small enough that the stored preset stays a settings blob.
 	MaxCalendarSkipDates = 60
 
 	// CalendarDateLayout is the wire format for startDate and skip entries: a local calendar
@@ -118,7 +117,12 @@ func calendarFromWire(w calendarWire) (Calendar, error) {
 	if len(cal.Weekdays) == 0 {
 		return Calendar{}, ErrInvalidCalendar
 	}
-	sort.Slice(cal.Weekdays, func(i, j int) bool { return cal.Weekdays[i] < cal.Weekdays[j] })
+	slices.Sort(cal.Weekdays)
+	// Capped on the input rather than on what survives deduplication: it is the parse this bounds,
+	// so a 10k-entry list is rejected without walking it.
+	if len(w.Skip) > MaxCalendarSkipDates {
+		return Calendar{}, ErrInvalidCalendar
+	}
 	for _, raw := range w.Skip {
 		d, err := time.Parse(CalendarDateLayout, raw)
 		if err != nil {
@@ -127,11 +131,8 @@ func calendarFromWire(w calendarWire) (Calendar, error) {
 		if !cal.skipped(d) {
 			cal.Skip = append(cal.Skip, d)
 		}
-		if len(cal.Skip) > MaxCalendarSkipDates {
-			return Calendar{}, ErrInvalidCalendar
-		}
 	}
-	sort.Slice(cal.Skip, func(i, j int) bool { return cal.Skip[i].Before(cal.Skip[j]) })
+	slices.SortFunc(cal.Skip, time.Time.Compare)
 	return cal, nil
 }
 
@@ -189,29 +190,29 @@ func (c Calendar) JSON() ([]byte, error) {
 // the last meeting's number, which is exactly what cumulative unlocking requires: once a lesson
 // unlocks it stays unlocked, and a student who falls behind gets a backlog rather than a closed
 // door.
-func CurrentClassDay(cal Calendar, localDate time.Time) int32 {
-	if !cal.Configured() {
+func (c Calendar) CurrentClassDay(localDate time.Time) int32 {
+	if !c.Configured() {
 		return 0
 	}
 	d := toDate(localDate)
-	if d.Before(cal.StartDate) {
+	if d.Before(c.StartDate) {
 		return 0
 	}
 	// Whole weeks contribute one meeting per configured weekday each, so only the ragged tail
 	// needs walking -- a term studied years after its start date is still O(1) plus at most six
 	// days plus the skip list, not one iteration per elapsed day.
-	total := int(d.Sub(cal.StartDate)/(24*time.Hour)) + 1 // inclusive of both ends
-	count := (total / 7) * len(cal.Weekdays)
-	tailStart := cal.StartDate.AddDate(0, 0, (total/7)*7)
+	total := int(d.Sub(c.StartDate)/(24*time.Hour)) + 1 // inclusive of both ends
+	count := (total / 7) * len(c.Weekdays)
+	tailStart := c.StartDate.AddDate(0, 0, (total/7)*7)
 	for i := 0; i < total%7; i++ {
-		if cal.meets(isoWeekday(tailStart.AddDate(0, 0, i))) {
+		if c.meets(isoWeekday(tailStart.AddDate(0, 0, i))) {
 			count++
 		}
 	}
 	// Skips are deduplicated when the calendar is built, and only a skip that falls on a meeting
 	// weekday inside the window was ever counted above, so this can't drive the count below zero.
-	for _, s := range cal.Skip {
-		if !s.Before(cal.StartDate) && !s.After(d) && cal.meets(isoWeekday(s)) {
+	for _, s := range c.Skip {
+		if !s.Before(c.StartDate) && !s.After(d) && c.meets(isoWeekday(s)) {
 			count--
 		}
 	}
@@ -221,10 +222,17 @@ func CurrentClassDay(cal Calendar, localDate time.Time) int32 {
 // GateDay is what the study queries take as current_class_day: this deck's resolved class day, or
 // ReleaseGateOff when it has no calendar, so an unpaced deck admits every lesson.
 func (c Calendar) GateDay(localDate time.Time) int32 {
+	return c.Gate(c.CurrentClassDay(localDate))
+}
+
+// Gate is GateDay's second half, split out for the one caller that already holds a resolved class
+// day -- the deck page needs the raw number for its calendar view as well as the gate value for
+// its queue count, and walking the calendar twice for the two is two chances to drift.
+func (c Calendar) Gate(classDay int32) int32 {
 	if !c.Configured() {
 		return ReleaseGateOff
 	}
-	return CurrentClassDay(c, localDate)
+	return classDay
 }
 
 // ReleaseGateDay is GateDay straight off a deck's preset, matching the shape of every other preset
@@ -238,8 +246,8 @@ func ReleaseGateDay(preset []byte, localDate time.Time) int32 {
 // MeetingDates returns the dates of class days 1..n, in order -- the deck page's calendar view
 // (#242), which is where a teacher checks that "lesson 5" really is the Thursday she has in mind.
 // n is clamped to MaxReleaseDay; an unconfigured calendar has no meetings.
-func MeetingDates(cal Calendar, n int32) []time.Time {
-	if !cal.Configured() || n <= 0 {
+func (c Calendar) MeetingDates(n int32) []time.Time {
+	if !c.Configured() || n <= 0 {
 		return nil
 	}
 	n = min(n, MaxReleaseDay)
@@ -247,10 +255,10 @@ func MeetingDates(cal Calendar, n int32) []time.Time {
 	// Every 7-day span holds at least one meeting weekday, so walking 7*(n+len(skip)) days from
 	// the start date always reaches n meetings -- a hard bound, so a pathological skip list can
 	// shorten this walk but never make it unbounded.
-	limit := 7 * (int(n) + len(cal.Skip))
+	limit := 7 * (int(n) + len(c.Skip))
 	for i := 0; i < limit && int32(len(dates)) < n; i++ {
-		day := cal.StartDate.AddDate(0, 0, i)
-		if cal.meets(isoWeekday(day)) && !cal.skipped(day) {
+		day := c.StartDate.AddDate(0, 0, i)
+		if c.meets(isoWeekday(day)) && !c.skipped(day) {
 			dates = append(dates, day)
 		}
 	}
@@ -262,11 +270,11 @@ func MeetingDates(cal Calendar, n int32) []time.Time {
 // "Lesson 4 unlocks Thursday, 9 October" line a student sees (#243). n above MaxReleaseDay is
 // unresolvable rather than clamped: a clamped answer would name the wrong date, and no note can
 // carry a lesson number that high anyway (migration 00020's CHECK).
-func MeetingDate(cal Calendar, n int32) (time.Time, bool) {
+func (c Calendar) MeetingDate(n int32) (time.Time, bool) {
 	if n <= 0 || n > MaxReleaseDay {
 		return time.Time{}, false
 	}
-	dates := MeetingDates(cal, n)
+	dates := c.MeetingDates(n)
 	if int32(len(dates)) < n {
 		return time.Time{}, false
 	}

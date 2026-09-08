@@ -59,7 +59,7 @@ func nextUnlock(ctx context.Context, q *db.Queries, userID, deckID pgtype.UUID,
 	}
 	lesson, err := q.NextLockedLesson(ctx, db.NextLockedLessonParams{
 		UserID: userID, DeckID: deckID,
-		CurrentClassDay: review.CurrentClassDay(calendar, localDate),
+		CurrentClassDay: calendar.CurrentClassDay(localDate),
 	})
 	if errors.Is(err, pgx.ErrNoRows) { // nothing locked: the ordinary empty state is the honest one
 		return nil, nil
@@ -67,7 +67,7 @@ func nextUnlock(ctx context.Context, q *db.Queries, userID, deckID pgtype.UUID,
 	if err != nil {
 		return nil, err
 	}
-	date, ok := review.MeetingDate(calendar, lesson)
+	date, ok := calendar.MeetingDate(lesson)
 	if !ok {
 		return nil, nil
 	}
