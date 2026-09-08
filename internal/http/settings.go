@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/Jolls/deckshare"
 	"github.com/Jolls/deckshare/internal/auth"
 	"github.com/Jolls/deckshare/internal/db"
 	"github.com/Jolls/deckshare/internal/fsrs"
@@ -33,8 +34,9 @@ const maxAvatarUploadBytes = 5 << 20
 // of the client-side canvas resize -- which a request can skip entirely.
 const maxAvatarDimension = 2048
 
-// appVersion is bumped by hand alongside each CHANGELOG.md entry -- see CLAUDE.md §14.
-const appVersion = "0.2.20"
+// appVersion is read from the top CHANGELOG.md entry at startup, so it can never drift from
+// the version already bumped alongside every PR (CLAUDE.md §14).
+var appVersion = deckshare.Version()
 
 // currentRetention looks up the user's global desired-retention setting, falling back to the
 // package default when none has been set yet (ErrNoRows). Shared by every settings render that
