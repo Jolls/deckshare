@@ -8,6 +8,13 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.9] - 2026-09-08
+
+### Fixed
+- The Settings page version is now read from the top CHANGELOG.md entry at build time instead
+  of a hand-maintained constant, which had silently drifted to `0.2.20` while the app moved on
+  to `0.3.8` ([#255](https://github.com/Jolls/deckshare/issues/255)).
+
 ## [0.3.8] - 2026-09-07
 
 ### Fixed
