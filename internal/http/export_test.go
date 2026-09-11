@@ -14,6 +14,10 @@ import (
 // TestExportRoute_GoldenPath imports the real schema-18 fixture through /import, then exports the
 // resulting deck back out through /decks/{id}/export and re-reads the response with apkg.Read --
 // the HTTP half of CLAUDE.md §10.3's round-trip target (#140).
+// TestExportRoute_GoldenPath also covers docs/plans/213-timeouts.md Decision 4's regression test:
+// a normal-sized fixture still exports successfully now that the transaction runs under
+// context.WithTimeout(r.Context(), exportTimeout) rather than r.Context() unwrapped -- a
+// too-short constant or a context wired to the wrong scope would fail this test.
 func TestExportRoute_GoldenPath(t *testing.T) {
 	tx := beginTx(t)
 	handler, a := newTestHandler(t, tx, auth.Config{})

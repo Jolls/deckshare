@@ -65,7 +65,7 @@ func registerProgressRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		}
 		q := db.New(store)
 		deck, err := q.GetDeckForProgress(r.Context(), db.GetDeckForProgressParams{UserID: user.ID, DeckID: deckID})
-		if handleQueryErrPage(w, pages, user, err) {
+		if handleQueryErrPage(w, r, pages, user, err) {
 			return
 		}
 
@@ -83,13 +83,13 @@ func registerProgressRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 			OffsetCount:      int32(page) * progressPageSize,
 		})
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 
 		students, totalCount, err := foldStudentProgress(r.Context(), q, deckID, n, progressRows)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		sortStudents(students, r.URL.Query().Get("sort"))
@@ -103,7 +103,7 @@ func registerProgressRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 			LimitCount:  hotspotLimit,
 		})
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		hotspotRows := make([]lapseHotspotRow, len(hotspots))

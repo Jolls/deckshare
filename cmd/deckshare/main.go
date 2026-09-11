@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -30,6 +31,15 @@ func main() {
 }
 
 func run() error {
+	var h slog.Handler
+	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
+	if os.Getenv("LOG_FORMAT") == "json" {
+		h = slog.NewJSONHandler(os.Stdout, opts)
+	} else {
+		h = slog.NewTextHandler(os.Stdout, opts)
+	}
+	slog.SetDefault(slog.New(h))
+
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		return errors.New("DATABASE_URL is required")
@@ -66,14 +76,11 @@ func run() error {
 		return fmt.Errorf("build handler: %w", err)
 	}
 
-	srv := &http.Server{
-		Addr:    addr,
-		Handler: handler,
-	}
+	srv := newServer(addr, handler)
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("listening on %s", addr)
+		slog.Info("listening", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -88,4 +95,17 @@ func run() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
+}
+
+// newServer builds the http.Server with its connection-level timeouts (docs/plans/213-timeouts.md
+// Decision 1). ReadTimeout/WriteTimeout are deliberately left unset -- Decision 2 uses
+// per-handler context.WithTimeout in /import and /decks/{id}/export instead.
+func newServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MiB; same as net/http's own DefaultMaxHeaderBytes, made explicit
+	}
 }

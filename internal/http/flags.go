@@ -68,13 +68,13 @@ func registerFlagRoutes(mux *http.ServeMux, store db.Beginner, pages, fragments 
 
 		q := db.New(store)
 		card, err := q.GetCardForFlag(r.Context(), db.GetCardForFlagParams{UserID: user.ID, CardID: cardID, DeckID: deckID})
-		if handleQueryErr(w, err) {
+		if handleQueryErr(w, r, err) {
 			return
 		}
 		if err := q.UpsertCardFlag(r.Context(), db.UpsertCardFlagParams{
 			CardID: card.ID, DeckID: card.DeckID, FlaggedByUserID: user.ID, Comment: comment,
 		}); err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		renderFragment(w, fragments["flag_status"], http.StatusOK, "flag_status", map[string]any{"Flagged": true})
@@ -89,7 +89,7 @@ func registerFlagRoutes(mux *http.ServeMux, store db.Beginner, pages, fragments 
 		}
 		q := db.New(store)
 		deck, err := q.GetDeckForFlags(r.Context(), db.GetDeckForFlagsParams{UserID: user.ID, DeckID: deckID})
-		if handleQueryErrPage(w, pages, user, err) {
+		if handleQueryErrPage(w, r, pages, user, err) {
 			return
 		}
 
@@ -99,7 +99,7 @@ func registerFlagRoutes(mux *http.ServeMux, store db.Beginner, pages, fragments 
 		}
 		rows, err := q.ListFlagsForDeck(r.Context(), db.ListFlagsForDeckParams{UserID: user.ID, DeckID: deckID, Status: status})
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		flags := make([]flagRow, len(rows))
@@ -132,7 +132,7 @@ func registerFlagRoutes(mux *http.ServeMux, store db.Beginner, pages, fragments 
 			ResolvedByUserID: user.ID, FlagID: flagID, DeckID: deckID,
 		})
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		if rows == 0 {

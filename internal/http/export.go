@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"html/template"
 	"net/http"
 	"strconv"
@@ -12,6 +13,10 @@ import (
 	"github.com/Jolls/deckshare/internal/auth"
 	"github.com/Jolls/deckshare/internal/db"
 )
+
+// exportTimeout bounds the DB-holding portion of /decks/{id}/export (the transaction, not the
+// header write or buffer send) -- see docs/plans/213-timeouts.md Decision 4.
+const exportTimeout = 60 * time.Second
 
 // registerExportRoutes wires GET /decks/{id}/export (docs/routes.md): one deck's content plus the
 // CALLER's own progress on it, serialised db -> IR -> .apkg and sent as a download. can_view, not
@@ -30,14 +35,18 @@ func registerExportRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 		// Read-only: the transaction exists because apkg.Export requires one (it reads eight
 		// statements that must see one consistent snapshot), and it is only ever rolled back --
 		// there is deliberately no commitTx here.
-		tx, ok := startTx(r.Context(), w, store)
+		exportCtx, cancel := context.WithTimeout(r.Context(), exportTimeout)
+		defer cancel()
+		exportReq := r.WithContext(exportCtx)
+
+		tx, ok := startTx(w, exportReq, store)
 		if !ok {
 			return
 		}
-		defer func() { _ = tx.Rollback(r.Context()) }()
+		defer func() { _ = tx.Rollback(exportCtx) }()
 
-		col, err := apkg.Export(r.Context(), tx, deckID, user.ID, now())
-		if handleQueryErrPage(w, pages, user, err) {
+		col, err := apkg.Export(exportCtx, tx, deckID, user.ID, now())
+		if handleQueryErrPage(w, exportReq, pages, user, err) {
 			return
 		}
 
@@ -47,7 +56,7 @@ func registerExportRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 		// the /import side.
 		var buf bytes.Buffer
 		if err := apkg.Write(col, &buf); err != nil {
-			serverError(w)
+			serverError(w, exportReq, err)
 			return
 		}
 

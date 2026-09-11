@@ -76,13 +76,13 @@ func registerMediaRoutes(mux *http.ServeMux, store db.Beginner, blobs *media.Sto
 		user, _ := auth.UserFromContext(r.Context())
 
 		blob, err := db.New(store).GetMediaBlobForUser(r.Context(), db.GetMediaBlobForUserParams{Sha256: sha, UserID: user.ID})
-		if handleQueryErr(w, err) {
+		if handleQueryErr(w, r, err) {
 			return
 		}
 
 		f, err := blobs.Open(sha)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		defer func() { _ = f.Close() }()

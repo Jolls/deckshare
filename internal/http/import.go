@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"html/template"
 	"net/http"
 	"time"
@@ -10,6 +11,10 @@ import (
 	"github.com/Jolls/deckshare/internal/db"
 	"github.com/Jolls/deckshare/internal/media"
 )
+
+// importTimeout bounds the DB-holding portion of /import (the transaction, not the multipart
+// parse or the in-memory apkg.Read) -- see docs/plans/213-timeouts.md Decision 4.
+const importTimeout = 90 * time.Second
 
 // maxUploadBytes bounds the raw multipart request body -- ahead of apkg.DefaultArchiveLimits,
 // which bounds decompressed member bytes, not the compressed upload itself.
@@ -51,18 +56,22 @@ func registerImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 			return
 		}
 
-		tx, ok := startTx(r.Context(), w, store)
+		importCtx, cancel := context.WithTimeout(r.Context(), importTimeout)
+		defer cancel()
+		importReq := r.WithContext(importCtx)
+
+		tx, ok := startTx(w, importReq, store)
 		if !ok {
 			return
 		}
-		defer func() { _ = tx.Rollback(r.Context()) }()
+		defer func() { _ = tx.Rollback(importCtx) }()
 
-		result, err := apkg.Import(r.Context(), tx, user.ID, col, now(), blobs)
+		result, err := apkg.Import(importCtx, tx, user.ID, col, now(), blobs)
 		if err != nil {
-			serverError(w)
+			serverError(w, importReq, err)
 			return
 		}
-		if !commitTx(r.Context(), w, tx) {
+		if !commitTx(w, importReq, tx) {
 			return
 		}
 

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/Jolls/deckshare/internal/db"
@@ -86,7 +86,7 @@ func notFoundPage(w http.ResponseWriter, pages map[string]*template.Template, us
 func render(w http.ResponseWriter, t *template.Template, status int, data any) {
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "layout", data); err != nil {
-		log.Printf("render template: %v", err)
+		slog.Error("render template failed", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -98,7 +98,7 @@ func render(w http.ResponseWriter, t *template.Template, status int, data any) {
 func renderFragment(w http.ResponseWriter, t *template.Template, status int, name string, data any) {
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, name, data); err != nil {
-		log.Printf("render fragment: %v", err)
+		slog.Error("render fragment failed", "error", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}

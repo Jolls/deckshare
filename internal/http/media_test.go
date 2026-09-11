@@ -28,7 +28,7 @@ func newMediaTestHandler(t *testing.T, tx pgx.Tx, store *media.Store) (http.Hand
 	}
 	mux := http.NewServeMux()
 	registerMediaRoutes(mux, tx, store)
-	return securityHeaders(a.Middleware(mux)), a
+	return requestLog(securityHeaders(a.Middleware(captureUser(mux)))), a
 }
 
 // seedMediaRef writes data into store and links it to a fresh deck owned by ownerID, returning

@@ -90,7 +90,7 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		}
 		q := db.New(store)
 		deck, err := q.GetDeckForContentEdit(r.Context(), db.GetDeckForContentEditParams{UserID: user.ID, DeckID: deckID})
-		if handleQueryErrPage(w, pages, user, err) {
+		if handleQueryErrPage(w, r, pages, user, err) {
 			return
 		}
 
@@ -98,7 +98,7 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		if noteTypeIDStr == "" {
 			noteTypes, err := q.ListNoteTypesForNoteForm(r.Context(), db.ListNoteTypesForNoteFormParams{DeckID: deckID, UserID: user.ID})
 			if err != nil {
-				serverError(w)
+				serverError(w, r, err)
 				return
 			}
 			render(w, pages["note_form"], http.StatusOK, map[string]any{
@@ -112,12 +112,12 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			return
 		}
 		nt, err := q.GetNoteTypeForRead(r.Context(), db.GetNoteTypeForReadParams{ID: noteTypeID, UserID: user.ID})
-		if handleQueryErrPage(w, pages, user, err) {
+		if handleQueryErrPage(w, r, pages, user, err) {
 			return
 		}
 		fields, err := q.ListFieldsForNoteType(r.Context(), noteTypeID)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		render(w, pages["note_form"], http.StatusOK, map[string]any{
@@ -143,17 +143,17 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 
 		q := db.New(store)
 		nt, err := q.GetNoteTypeForRead(r.Context(), db.GetNoteTypeForReadParams{ID: noteTypeID, UserID: user.ID})
-		if handleQueryErrPage(w, pages, user, err) {
+		if handleQueryErrPage(w, r, pages, user, err) {
 			return
 		}
 		templates, err := q.ListTemplatesForNoteType(r.Context(), noteTypeID)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		fields, err := q.ListFieldsForNoteType(r.Context(), noteTypeID)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 
@@ -171,11 +171,11 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		tags := parseTags(r.PostForm.Get("tags"))
 		guid, err := randomGuid()
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 
-		tx, ok := startTx(r.Context(), w, store)
+		tx, ok := startTx(w, r, store)
 		if !ok {
 			return
 		}
@@ -197,11 +197,11 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			case errors.Is(err, db.ErrNoCards):
 				http.Error(w, "a cloze note must keep at least one cloze marker", http.StatusBadRequest)
 			default:
-				serverError(w)
+				serverError(w, r, err)
 			}
 			return
 		}
-		if !commitTx(r.Context(), w, tx) {
+		if !commitTx(w, r, tx) {
 			return
 		}
 		http.Redirect(w, r, "/decks/"+deckID.String(), http.StatusSeeOther)
@@ -216,34 +216,34 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		}
 		q := db.New(store)
 		note, err := q.GetNoteForContentEdit(r.Context(), db.GetNoteForContentEditParams{UserID: user.ID, NoteID: noteID})
-		if handleQueryErrPage(w, pages, user, err) {
+		if handleQueryErrPage(w, r, pages, user, err) {
 			return
 		}
 		nt, err := q.GetNoteType(r.Context(), note.NoteTypeID)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		fields, err := q.ListFieldsForNoteType(r.Context(), note.NoteTypeID)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		var fieldValues []string
 		if err := json.Unmarshal(note.Fields, &fieldValues); err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		decks, err := q.ListDecksForUser(r.Context(), user.ID)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		compatible, err := q.ListFieldCompatibleNoteTypesForUser(r.Context(), db.ListFieldCompatibleNoteTypesForUserParams{
 			UserID: user.ID, IsCloze: nt.IsCloze, CurrentNoteTypeID: note.NoteTypeID,
 		})
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		render(w, pages["note_form"], http.StatusOK, map[string]any{
@@ -265,22 +265,22 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 
 		q := db.New(store)
 		note, err := q.GetNoteForContentEdit(r.Context(), db.GetNoteForContentEditParams{UserID: user.ID, NoteID: noteID})
-		if handleQueryErrPage(w, pages, user, err) {
+		if handleQueryErrPage(w, r, pages, user, err) {
 			return
 		}
 		nt, err := q.GetNoteType(r.Context(), note.NoteTypeID)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		templates, err := q.ListTemplatesForNoteType(r.Context(), note.NoteTypeID)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		fields, err := q.ListFieldsForNoteType(r.Context(), note.NoteTypeID)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 
@@ -305,17 +305,17 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			_, err := q.GetNoteForNoteTypeChange(r.Context(), db.GetNoteForNoteTypeChangeParams{
 				UserID: user.ID, NoteID: noteID,
 			})
-			if handleQueryErrPage(w, pages, user, err) {
+			if handleQueryErrPage(w, r, pages, user, err) {
 				return
 			}
 
 			targetNT, err = q.GetNoteTypeForRead(r.Context(), db.GetNoteTypeForReadParams{ID: targetNoteTypeID, UserID: user.ID})
-			if handleQueryErrPage(w, pages, user, err) {
+			if handleQueryErrPage(w, r, pages, user, err) {
 				return
 			}
 			targetFields, err := q.ListFieldsForNoteType(r.Context(), targetNoteTypeID)
 			if err != nil {
-				serverError(w)
+				serverError(w, r, err)
 				return
 			}
 			if !fieldsCompatible(nt, fields, targetNT, targetFields) {
@@ -324,7 +324,7 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			}
 			targetTemplates, err = q.ListTemplatesForNoteType(r.Context(), targetNoteTypeID)
 			if err != nil {
-				serverError(w)
+				serverError(w, r, err)
 				return
 			}
 			wantFieldCount = len(targetFields)
@@ -346,7 +346,7 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		if targetNoteTypeID != note.NoteTypeID && r.PostForm.Get("confirm_note_type_change") != "1" {
 			existingOrdinals, err := q.ListCardsForNote(r.Context(), noteID)
 			if err != nil {
-				serverError(w)
+				serverError(w, r, err)
 				return
 			}
 			existingSet := make(map[int32]struct{}, len(existingOrdinals))
@@ -376,7 +376,7 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			return
 		}
 
-		tx, ok := startTx(r.Context(), w, store)
+		tx, ok := startTx(w, r, store)
 		if !ok {
 			return
 		}
@@ -390,11 +390,11 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			case errors.Is(err, db.ErrNoCards):
 				http.Error(w, "a cloze note must keep at least one cloze marker", http.StatusBadRequest)
 			default:
-				serverError(w)
+				serverError(w, r, err)
 			}
 			return
 		}
-		if !commitTx(r.Context(), w, tx) {
+		if !commitTx(w, r, tx) {
 			return
 		}
 		http.Redirect(w, r, "/decks/"+note.DeckID.String(), http.StatusSeeOther)
@@ -409,14 +409,14 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		}
 		q := db.New(store)
 		note, err := q.GetNoteForContentEdit(r.Context(), db.GetNoteForContentEditParams{UserID: user.ID, NoteID: noteID})
-		if handleQueryErrPage(w, pages, user, err) {
+		if handleQueryErrPage(w, r, pages, user, err) {
 			return
 		}
 		deckID := note.DeckID
 
 		n, err := q.DeleteNote(r.Context(), db.DeleteNoteParams{NoteID: noteID, UserID: user.ID})
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		if n == 0 {
@@ -442,16 +442,16 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			return
 		}
 
-		tx, ok := startTx(r.Context(), w, store)
+		tx, ok := startTx(w, r, store)
 		if !ok {
 			return
 		}
 		defer func() { _ = tx.Rollback(r.Context()) }()
 
-		if handleQueryErrPage(w, pages, user, db.MoveNote(r.Context(), tx, user.ID, noteID, targetDeckID)) {
+		if handleQueryErrPage(w, r, pages, user, db.MoveNote(r.Context(), tx, user.ID, noteID, targetDeckID)) {
 			return
 		}
-		if !commitTx(r.Context(), w, tx) {
+		if !commitTx(w, r, tx) {
 			return
 		}
 		http.Redirect(w, r, "/decks/"+targetDeckID.String(), http.StatusSeeOther)
@@ -603,7 +603,7 @@ func parseBulkReleaseDay(w http.ResponseWriter, r *http.Request) (day int32, ok 
 // state, which is the honest answer.
 func finishBulk(w http.ResponseWriter, r *http.Request, pages map[string]*template.Template, user db.User, deckID pgtype.UUID, n int64, err error) {
 	if err != nil {
-		serverError(w)
+		serverError(w, r, err)
 		return
 	}
 	if n == 0 {

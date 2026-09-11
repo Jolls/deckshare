@@ -33,13 +33,13 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		q := db.New(store)
 		decks, err := q.ListDecksForUser(r.Context(), user.ID)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		n := now()
 		window, err := studyDayWindow(r.Context(), q, user.ID, n)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		presetByDeck := make(map[pgtype.UUID][]byte, len(decks))
@@ -61,7 +61,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			CurrentClassDays: classDays,
 		})
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		introducedRows, err := q.CountNewIntroducedTodayForUser(r.Context(), db.CountNewIntroducedTodayForUserParams{
@@ -70,7 +70,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			StudyDayEnd:   pgtype.Timestamptz{Time: window.End, Valid: true},
 		})
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		introduced := make(map[pgtype.UUID]int64, len(introducedRows))
@@ -83,7 +83,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			StudyDayEnd:   pgtype.Timestamptz{Time: window.End, Valid: true},
 		})
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		reviewed := make(map[pgtype.UUID]int64, len(reviewedRows))
@@ -128,7 +128,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			return
 		}
 
-		tx, ok := startTx(r.Context(), w, store)
+		tx, ok := startTx(w, r, store)
 		if !ok {
 			return
 		}
@@ -143,10 +143,10 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 				})
 				return
 			}
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
-		if !commitTx(r.Context(), w, tx) {
+		if !commitTx(w, r, tx) {
 			return
 		}
 		http.Redirect(w, r, "/decks/"+deck.ID.String(), http.StatusSeeOther)
@@ -161,12 +161,12 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		}
 		q := db.New(store)
 		deck, err := q.GetDeckForUser(r.Context(), db.GetDeckForUserParams{UserID: user.ID, DeckID: deckID})
-		if handleQueryErrPage(w, pages, user, err) {
+		if handleQueryErrPage(w, r, pages, user, err) {
 			return
 		}
 		counts, err := q.CountDeckContents(r.Context(), db.CountDeckContentsParams{DeckID: deckID, UserID: user.ID})
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		notesCursor, ok := decodeNoteCursor(r.URL.Query().Get("notesCursor"))
@@ -180,7 +180,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			LimitCount: notesPageSize + 1, // +1 to detect a next page without a second query
 		})
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		hasMoreNotes := len(noteRows) > notesPageSize
@@ -194,13 +194,13 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		}
 		params, err := review.EffectiveParams(r.Context(), q, user.ID, deckID)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		n := now()
 		window, err := studyDayWindow(r.Context(), q, user.ID, n)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		// Resolved once and reused by the queue count, the calendar view, and the template: the
@@ -216,7 +216,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			CurrentClassDay:  calendar.Gate(classDay),
 		})
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		introducedToday, err := q.CountNewIntroducedToday(r.Context(), db.CountNewIntroducedTodayParams{
@@ -226,7 +226,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			StudyDayEnd:   pgtype.Timestamptz{Time: window.End, Valid: true},
 		})
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		reviewedToday, err := q.CountReviewedToday(r.Context(), db.CountReviewedTodayParams{
@@ -236,7 +236,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			StudyDayEnd:   pgtype.Timestamptz{Time: window.End, Valid: true},
 		})
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		newRemaining := review.NewRemaining(review.NewPerDay(deck.Preset), introducedToday)
@@ -246,24 +246,24 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		// progress, not whether the viewer themselves holds the flag.
 		otherProgressViewers, err := q.CountOtherProgressViewers(r.Context(), db.CountOtherProgressViewersParams{UserID: user.ID, DeckID: deckID})
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		// Feeds the Flags nav badge (deck.html), gated there on CanViewFlags -- queried
 		// unconditionally, same as otherProgressViewers above, rather than branching on the flag.
 		openFlags, err := q.CountOpenFlagsForDeck(r.Context(), deckID)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		classDays, unassignedNotes, err := deckClassDays(r.Context(), q, user.ID, deckID, calendar, classDay)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		unlock, err := nextUnlock(r.Context(), q, user.ID, deckID, calendar, window.LocalDate)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		render(w, pages["deck"], http.StatusOK, map[string]any{
@@ -291,7 +291,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			return
 		}
 		deck, err := db.New(store).GetDeckForSettingsEdit(r.Context(), db.GetDeckForSettingsEditParams{UserID: user.ID, DeckID: deckID})
-		if handleQueryErrPage(w, pages, user, err) {
+		if handleQueryErrPage(w, r, pages, user, err) {
 			return
 		}
 		render(w, pages["deck_edit"], http.StatusOK, map[string]any{
@@ -383,7 +383,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			}
 			calendarJSON, err = calendar.JSON()
 			if err != nil {
-				serverError(w)
+				serverError(w, r, err)
 				return
 			}
 		}
@@ -399,7 +399,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 				http.Error(w, "a deck with that name already exists", http.StatusConflict)
 				return
 			}
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		if n == 0 {
@@ -416,7 +416,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			notFoundPage(w, pages, user)
 			return
 		}
-		if handleQueryErrPage(w, pages, user, deleteDeck(r.Context(), store, deckID, user.ID)) {
+		if handleQueryErrPage(w, r, pages, user, deleteDeck(r.Context(), store, deckID, user.ID)) {
 			return
 		}
 		http.Redirect(w, r, "/decks", http.StatusSeeOther)
@@ -447,7 +447,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			UserID: user.ID, DeckID: deckID, FsrsVersion: int16(params.Version()), DesiredRetention: retention,
 		})
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		if n == 0 {

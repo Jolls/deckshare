@@ -45,7 +45,7 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 		}
 		q := db.New(store)
 		deck, err := q.GetDeckForStudy(r.Context(), db.GetDeckForStudyParams{UserID: user.ID, DeckID: deckID})
-		if handleQueryErrPage(w, pages, user, err) {
+		if handleQueryErrPage(w, r, pages, user, err) {
 			return
 		}
 
@@ -55,23 +55,23 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 		// would let the batch and the line it explains disagree across a midnight boundary.
 		window, err := studyDayWindow(r.Context(), q, user.ID, clock)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		batch, err := buildStudyBatchInWindow(r.Context(), store, user.ID, deck, window, review.Cursor{AtStart: true}, initialBatchSize, clock, 0)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		css, err := noteTypeCSS(r.Context(), q, user.ID, deckID, nil)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		calendar := review.ParseCalendar(deck.Preset)
 		unlock, err := nextUnlock(r.Context(), q, user.ID, deckID, calendar, window.LocalDate)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 
@@ -96,14 +96,14 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 		q := db.New(store)
 		decks, err := q.ListStudyableDecksForUser(r.Context(), user.ID)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 
 		clock := now()
 		window, err := studyDayWindow(r.Context(), q, user.ID, clock)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		var cards []review.Card
@@ -112,14 +112,14 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 		for _, deck := range decks {
 			batch, err := buildStudyBatchInWindow(r.Context(), store, user.ID, deck, window, review.Cursor{AtStart: true}, initialBatchSize, clock, 0)
 			if err != nil {
-				serverError(w)
+				serverError(w, r, err)
 				return
 			}
 			cards = append(cards, batch.Cards...)
 
 			deckCSS, err := noteTypeCSS(r.Context(), q, user.ID, deck.ID, seenNoteType)
 			if err != nil {
-				serverError(w)
+				serverError(w, r, err)
 				return
 			}
 			css = append(css, deckCSS...)
@@ -156,13 +156,13 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 
 		q := db.New(store)
 		deck, err := q.GetDeckForStudy(r.Context(), db.GetDeckForStudyParams{UserID: user.ID, DeckID: deckID})
-		if handleQueryErr(w, err) {
+		if handleQueryErr(w, r, err) {
 			return
 		}
 		clock := now()
 		batch, err := buildStudyBatch(r.Context(), store, user.ID, deck, cur, refillBatchSize, clock, extraRounds)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		renderFragment(w, fragments["review_cards"], http.StatusOK, "review_cards", toBatchView(batch))
@@ -186,7 +186,7 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 			return
 		}
 
-		tx, ok := startTx(r.Context(), w, store)
+		tx, ok := startTx(w, r, store)
 		if !ok {
 			return
 		}
@@ -194,10 +194,10 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 
 		results, err := review.GradeBatch(r.Context(), tx, user.ID, now(), events)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
-		if !commitTx(r.Context(), w, tx) {
+		if !commitTx(w, r, tx) {
 			return
 		}
 

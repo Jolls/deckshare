@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/Jolls/deckshare/internal/db"
@@ -49,7 +49,7 @@ func (g *GC) Run(ctx context.Context, interval time.Duration) {
 			return
 		case <-ticker.C:
 			if err := g.Sweep(ctx); err != nil {
-				log.Printf("media gc: %v", err)
+				slog.Error("media gc failed", "error", err)
 			}
 		}
 	}

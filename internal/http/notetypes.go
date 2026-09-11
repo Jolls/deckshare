@@ -84,12 +84,12 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		q := db.New(store)
 		noteTypes, err := q.ListNoteTypesForUser(r.Context(), user.ID)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		editable, readOnly, err := splitNoteTypesByEdit(r.Context(), q, user.ID, noteTypes)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		render(w, pages["notetypes"], http.StatusOK, map[string]any{"User": user, "Editable": editable, "ReadOnly": readOnly})
@@ -136,7 +136,7 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 			templates = append(templates, db.TemplateEdit{Name: n, Qfmt: templateQfmts[i], Afmt: templateAfmts[i]})
 		}
 
-		tx, ok := startTx(r.Context(), w, store)
+		tx, ok := startTx(w, r, store)
 		if !ok {
 			return
 		}
@@ -148,10 +148,10 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 				http.Error(w, "you already have a note type with that name", http.StatusConflict)
 				return
 			}
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
-		if !commitTx(r.Context(), w, tx) {
+		if !commitTx(w, r, tx) {
 			return
 		}
 		http.Redirect(w, r, "/note-types", http.StatusSeeOther)
@@ -166,22 +166,22 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		}
 		q := db.New(store)
 		nt, err := q.GetNoteTypeForRead(r.Context(), db.GetNoteTypeForReadParams{ID: id, UserID: user.ID})
-		if handleQueryErrPage(w, pages, user, err) {
+		if handleQueryErrPage(w, r, pages, user, err) {
 			return
 		}
 		fields, err := q.ListFieldsForNoteType(r.Context(), id)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		templates, err := q.ListTemplatesForNoteType(r.Context(), id)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		canEdit, err := q.CanEditNoteType(r.Context(), db.CanEditNoteTypeParams{ID: id, UserID: user.ID})
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		render(w, pages["notetype_form"], http.StatusOK, map[string]any{
@@ -227,7 +227,7 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 
 		q := db.New(store)
 		nt, err := q.LockNoteTypeForEdit(r.Context(), db.LockNoteTypeForEditParams{ID: id, UserID: user.ID})
-		if handleQueryErrPage(w, pages, user, err) {
+		if handleQueryErrPage(w, r, pages, user, err) {
 			return
 		}
 		if nt.IsCloze && len(templates) != 1 {
@@ -237,26 +237,26 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 
 		existingFields, err := q.ListFieldsForNoteType(r.Context(), id)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		existingTemplates, err := q.ListTemplatesForNoteType(r.Context(), id)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 
 		structural := db.FieldOrderChanged(existingFields, fields) || db.TemplateOrderChanged(existingTemplates, templates)
 		noteCount, err := q.CountNotesOfNoteType(r.Context(), id)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 
 		if structural && noteCount > 0 && r.PostForm.Get("confirm_structural_change") != "1" {
 			preview, err := buildStructuralChangePreview(r.Context(), q, user.ID, id, existingFields, fields, existingTemplates, templates, noteCount)
 			if err != nil {
-				serverError(w)
+				serverError(w, r, err)
 				return
 			}
 			render(w, pages["notetype_form"], http.StatusOK, map[string]any{
@@ -267,7 +267,7 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 			return
 		}
 
-		tx, ok := startTx(r.Context(), w, store)
+		tx, ok := startTx(w, r, store)
 		if !ok {
 			return
 		}
@@ -285,11 +285,11 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 			case db.IsUniqueViolation(err, "note_types_owner_id_name_key"):
 				http.Error(w, "you already have a note type with that name", http.StatusConflict)
 			default:
-				serverError(w)
+				serverError(w, r, err)
 			}
 			return
 		}
-		if !commitTx(r.Context(), w, tx) {
+		if !commitTx(w, r, tx) {
 			return
 		}
 		http.Redirect(w, r, "/note-types", http.StatusSeeOther)
@@ -308,7 +308,7 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 				http.Error(w, "delete or re-type its notes first", http.StatusConflict)
 				return
 			}
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		if n == 0 {

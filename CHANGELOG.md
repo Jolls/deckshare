@@ -8,6 +8,19 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.10] - 2026-09-10
+
+### Added
+- Structured `log/slog` error and request logging: every `serverError` now logs the underlying
+  cause (never sent to the client), and a new `requestLog` middleware logs every request's
+  method, path, status, duration, and acting user ([#210](https://github.com/Jolls/deckshare/issues/210)).
+
+### Fixed
+- `http.Server`, DB pool, and `/import`/`/decks/{id}/export` now carry explicit timeouts
+  (`ReadHeaderTimeout`, `IdleTimeout`, `MaxHeaderBytes`, `statement_timeout`, and per-handler
+  request deadlines), closing the Slowloris/pool-exhaustion exposure `gosec` G112 flagged
+  ([#213](https://github.com/Jolls/deckshare/issues/213)).
+
 ## [0.3.9] - 2026-09-08
 
 ### Fixed

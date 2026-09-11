@@ -47,6 +47,10 @@ func doUploadRequest(t *testing.T, handler http.Handler, path, fieldName, filena
 	return w
 }
 
+// TestImportRoutes_RealFixture_GoldenPath also covers docs/plans/213-timeouts.md Decision 4's
+// regression test: a normal-sized fixture still completes successfully now that the DB-holding
+// portion runs under context.WithTimeout(r.Context(), importTimeout) rather than r.Context()
+// unwrapped -- a too-short constant or a context wired to the wrong scope would fail this test.
 func TestImportRoutes_RealFixture_GoldenPath(t *testing.T) {
 	tx := beginTx(t)
 	handler, a := newTestHandler(t, tx, auth.Config{})

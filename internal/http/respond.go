@@ -1,19 +1,29 @@
 package http
 
 import (
-	"context"
 	"errors"
+	"fmt"
 	"html/template"
+	"log/slog"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/Jolls/deckshare/internal/auth"
 	"github.com/Jolls/deckshare/internal/db"
 )
 
-// serverError writes the generic 500 response for an unexpected error, without leaking it to
-// the client.
-func serverError(w http.ResponseWriter) {
+// serverError writes the generic 500 response for an unexpected error and logs the cause. The
+// client-facing body is unchanged and never carries err -- §2.7 and CLAUDE.md §10.1: the error
+// detail goes to the operator, never to the caller.
+func serverError(w http.ResponseWriter, r *http.Request, err error) {
+	user, _ := auth.UserFromContext(r.Context())
+	slog.Error("server error",
+		"method", r.Method,
+		"path", r.URL.Path,
+		"user_id", user.ID.String(),
+		"error", err,
+	)
 	http.Error(w, "internal server error", http.StatusInternalServerError)
 }
 
@@ -27,14 +37,14 @@ func badRequest(w http.ResponseWriter) {
 // GetXForOwner query returns for both cases via its deck_access join -- CLAUDE.md §9), otherwise
 // a bare 500. err == nil always reports false. The caller must return immediately when this
 // reports true.
-func handleQueryErr(w http.ResponseWriter, err error) bool {
+func handleQueryErr(w http.ResponseWriter, r *http.Request, err error) bool {
 	if err == nil {
 		return false
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		notFound(w)
 	} else {
-		serverError(w)
+		serverError(w, r, err)
 	}
 	return true
 }
@@ -42,12 +52,12 @@ func handleQueryErr(w http.ResponseWriter, err error) bool {
 // handleQueryErrPage is handleQueryErr for a page route: same pgx.ErrNoRows → 404 collapse, but
 // rendered through notFoundPage instead of the bare-text notFound. Everything else delegates, so
 // the ErrNoRows-else-500 policy stays defined in exactly one place.
-func handleQueryErrPage(w http.ResponseWriter, pages map[string]*template.Template, user db.User, err error) bool {
+func handleQueryErrPage(w http.ResponseWriter, r *http.Request, pages map[string]*template.Template, user db.User, err error) bool {
 	if errors.Is(err, pgx.ErrNoRows) {
 		notFoundPage(w, pages, user)
 		return true
 	}
-	return handleQueryErr(w, err)
+	return handleQueryErr(w, r, err)
 }
 
 // parseForm calls r.ParseForm, writing a 400 and reporting false if the request body is
@@ -63,19 +73,19 @@ func parseForm(w http.ResponseWriter, r *http.Request) bool {
 // startTx begins a transaction, writing a 500 and reporting ok=false on failure. On success the
 // caller must defer tx.Rollback(ctx) (a no-op after a successful commitTx) before doing anything
 // else with tx.
-func startTx(ctx context.Context, w http.ResponseWriter, store db.Beginner) (pgx.Tx, bool) {
-	tx, err := store.Begin(ctx)
+func startTx(w http.ResponseWriter, r *http.Request, store db.Beginner) (pgx.Tx, bool) {
+	tx, err := store.Begin(r.Context())
 	if err != nil {
-		serverError(w)
+		serverError(w, r, fmt.Errorf("begin transaction: %w", err))
 		return nil, false
 	}
 	return tx, true
 }
 
 // commitTx commits tx, writing a 500 and reporting false on failure.
-func commitTx(ctx context.Context, w http.ResponseWriter, tx pgx.Tx) bool {
-	if err := tx.Commit(ctx); err != nil {
-		serverError(w)
+func commitTx(w http.ResponseWriter, r *http.Request, tx pgx.Tx) bool {
+	if err := tx.Commit(r.Context()); err != nil {
+		serverError(w, r, fmt.Errorf("commit transaction: %w", err))
 		return false
 	}
 	return true

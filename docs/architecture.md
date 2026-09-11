@@ -192,6 +192,7 @@ target, decided in [docs/plans/architecture-reconsidered.md](plans/architecture-
 | Lint | `golangci-lint` v2, `linters.default: standard` | Start with the standard set, not `all` — add specific linters as a real gap shows up rather than fighting seventy opinions on day one. See §12. |
 | CI | GitHub Actions | Single workflow: `go build`, `go vet`, `golangci-lint run`, `go test ./...` on push and PR. See §12. |
 | Deploy | Single Go binary + Postgres, Docker / StartOS | Multi-arch Docker builds cross-compile rather than build per-host. Go 1.26 (current stable) — see §12. |
+| Logging | `log/slog`, stdlib | One process-wide default logger (`cmd/deckshare/main.go`), never injected. Writes to `os.Stdout` as text (dev-friendly) or JSON, selected by `LOG_FORMAT` (docs/plans/210-error-logging.md). |
 
 **No FSRS implementation runs in the browser, ever.** A card's outcome under each of the four
 possible ratings is a pure function of its state as of the batch fetch, so the server computes
