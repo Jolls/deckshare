@@ -2,11 +2,10 @@ package auth
 
 import (
 	"bytes"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 )
@@ -114,12 +113,13 @@ func TestMiddleware_CSRFRejectionIsLogged(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	var buf bytes.Buffer
-	log.SetOutput(&buf)
-	defer log.SetOutput(os.Stderr)
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
 	handler.ServeHTTP(w, r)
 
 	got := buf.String()
-	for _, want := range []string{"POST", "/x", `Origin="https://evil.com"`, `Host="example.com"`} {
+	for _, want := range []string{"csrf rejected", "method=POST", "path=/x", `origin=https://evil.com`, `host=example.com`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("log output %q missing %q", got, want)
 		}

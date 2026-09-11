@@ -52,10 +52,10 @@ func registerAccessRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 		}
 		q := db.New(store)
 		deck, err := q.GetDeckForAccessManage(r.Context(), db.GetDeckForAccessManageParams{UserID: user.ID, DeckID: deckID})
-		if handleQueryErrPage(w, pages, user, err) {
+		if handleQueryErrPage(w, r, pages, user, err) {
 			return
 		}
-		renderAccess(r.Context(), w, pages, q, user, deck, http.StatusOK, "")
+		renderAccess(w, r, pages, q, user, deck, http.StatusOK, "")
 	})))
 
 	mux.Handle("POST /decks/{id}/access", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +70,7 @@ func registerAccessRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 		}
 		q := db.New(store)
 		deck, err := q.GetDeckForAccessManage(r.Context(), db.GetDeckForAccessManageParams{UserID: user.ID, DeckID: deckID})
-		if handleQueryErrPage(w, pages, user, err) {
+		if handleQueryErrPage(w, r, pages, user, err) {
 			return
 		}
 
@@ -81,10 +81,10 @@ func registerAccessRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 		target, err := q.GetUserByEmail(r.Context(), email)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				renderAccess(r.Context(), w, pages, q, user, deck, http.StatusBadRequest, "No account with that email address")
+				renderAccess(w, r, pages, q, user, deck, http.StatusBadRequest, "No account with that email address")
 				return
 			}
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 
@@ -98,10 +98,10 @@ func registerAccessRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 		})
 		if err != nil {
 			if db.IsUniqueViolation(err, "deck_access_pkey") {
-				renderAccess(r.Context(), w, pages, q, user, deck, http.StatusConflict, "That user already has access to this deck")
+				renderAccess(w, r, pages, q, user, deck, http.StatusConflict, "That user already has access to this deck")
 				return
 			}
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		if rows == 0 {
@@ -131,7 +131,7 @@ func registerAccessRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 		}
 		flags := flagsFromForm(r.PostForm)
 
-		tx, ok := startTx(r.Context(), w, store)
+		tx, ok := startTx(w, r, store)
 		if !ok {
 			return
 		}
@@ -147,10 +147,10 @@ func registerAccessRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 			CanDelete: flags.CanDelete, CanViewProgress: flags.CanViewProgress,
 			CanViewFlags: flags.CanViewFlags,
 		})
-		if !handleAccessChangeErr(w, pages, user, err) {
+		if !handleAccessChangeErr(w, r, pages, user, err) {
 			return
 		}
-		if !commitTx(r.Context(), w, tx) {
+		if !commitTx(w, r, tx) {
 			return
 		}
 		http.Redirect(w, r, "/decks/"+deckID.String()+"/access", http.StatusSeeOther)
@@ -169,16 +169,16 @@ func registerAccessRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 			return
 		}
 
-		tx, ok := startTx(r.Context(), w, store)
+		tx, ok := startTx(w, r, store)
 		if !ok {
 			return
 		}
 		defer func() { _ = tx.Rollback(r.Context()) }()
 
-		if !handleAccessChangeErr(w, pages, user, db.RevokeDeckAccess(r.Context(), tx, deckID, user.ID, targetUserID)) {
+		if !handleAccessChangeErr(w, r, pages, user, db.RevokeDeckAccess(r.Context(), tx, deckID, user.ID, targetUserID)) {
 			return
 		}
-		if !commitTx(r.Context(), w, tx) {
+		if !commitTx(w, r, tx) {
 			return
 		}
 		http.Redirect(w, r, "/decks/"+deckID.String()+"/access", http.StatusSeeOther)
@@ -197,16 +197,16 @@ func registerAccessRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 			return
 		}
 
-		tx, ok := startTx(r.Context(), w, store)
+		tx, ok := startTx(w, r, store)
 		if !ok {
 			return
 		}
 		defer func() { _ = tx.Rollback(r.Context()) }()
 
-		if !handleAccessChangeErr(w, pages, user, db.ResetDeckProgress(r.Context(), tx, deckID, user.ID, targetUserID)) {
+		if !handleAccessChangeErr(w, r, pages, user, db.ResetDeckProgress(r.Context(), tx, deckID, user.ID, targetUserID)) {
 			return
 		}
-		if !commitTx(r.Context(), w, tx) {
+		if !commitTx(w, r, tx) {
 			return
 		}
 		http.Redirect(w, r, "/decks/"+deckID.String()+"/access", http.StatusSeeOther)
@@ -239,7 +239,7 @@ func grantDeckAccess(ctx context.Context, store db.Beginner, arg db.GrantDeckAcc
 // reports whether the caller may continue. pgx.ErrNoRows covers both "the caller lacks
 // can_manage_access on this deck" and "the target has no row" -- collapsed to 404 by the same
 // rule as every other deck route (docs/schema.md).
-func handleAccessChangeErr(w http.ResponseWriter, pages map[string]*template.Template, user db.User, err error) (ok bool) {
+func handleAccessChangeErr(w http.ResponseWriter, r *http.Request, pages map[string]*template.Template, user db.User, err error) (ok bool) {
 	switch {
 	case err == nil:
 		return true
@@ -248,7 +248,7 @@ func handleAccessChangeErr(w http.ResponseWriter, pages map[string]*template.Tem
 	case errors.Is(err, db.ErrLastAccessHolder):
 		http.Error(w, "a deck must keep at least one member who can manage access and one who can delete it", http.StatusConflict)
 	default:
-		serverError(w)
+		serverError(w, r, err)
 	}
 	return false
 }
@@ -256,10 +256,10 @@ func handleAccessChangeErr(w http.ResponseWriter, pages map[string]*template.Tem
 // renderAccess draws the access page with a freshly read collaborator list, so the POST error
 // re-renders show the same rows a plain GET would. deck has already been authorised by
 // GetDeckForAccessManage, so the list needs no further permission check of its own.
-func renderAccess(ctx context.Context, w http.ResponseWriter, pages map[string]*template.Template, q *db.Queries, user db.User, deck db.Deck, status int, errMsg string) {
-	collaborators, err := q.ListDeckAccessForDeck(ctx, deck.ID)
+func renderAccess(w http.ResponseWriter, r *http.Request, pages map[string]*template.Template, q *db.Queries, user db.User, deck db.Deck, status int, errMsg string) {
+	collaborators, err := q.ListDeckAccessForDeck(r.Context(), deck.ID)
 	if err != nil {
-		serverError(w)
+		serverError(w, r, err)
 		return
 	}
 	render(w, pages["access"], status, map[string]any{

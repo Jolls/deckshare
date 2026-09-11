@@ -115,7 +115,7 @@ func newTestHandler(t *testing.T, tx pgx.Tx, cfg auth.Config, clocks ...func() t
 	registerImportRoutes(mux, tx, pages, blobs, clock)
 	registerExportRoutes(mux, tx, pages, clock)
 	registerAIImportRoutes(mux, tx, pages)
-	return securityHeaders(a.Middleware(mux)), a
+	return requestLog(securityHeaders(a.Middleware(captureUser(mux)))), a
 }
 
 func loginCookie(t *testing.T, tx pgx.Tx, a *auth.Service, email, password string) *http.Cookie {
@@ -313,6 +313,33 @@ func TestPostWithForeignOrigin_403(t *testing.T) {
 	}
 	if n := countRows(t, tx, `SELECT count(*) FROM users WHERE lower(email) = lower($1)`, email); n != 0 {
 		t.Error("no user should have been created")
+	}
+}
+
+// TestPostWithForeignOrigin_403_IsLogged pins the requestLog/securityHeaders/a.Middleware wrap
+// order (§3.1 of docs/plans/210-error-logging.md): requestLog must wrap OUTSIDE a.Middleware, so
+// a CSRF rejection still produces a "request" log line, not just the "csrf rejected" one. If
+// requestLog is ever moved inside a.Middleware, the "request" line disappears and this fails.
+func TestPostWithForeignOrigin_403_IsLogged(t *testing.T) {
+	tx := beginTx(t)
+	handler, _ := newTestHandler(t, tx, auth.Config{})
+	email := testEmail()
+
+	buf := captureLogs(t)
+
+	w := doRequest(handler, "POST", "/signup",
+		"email="+email+"&password=correct-horse-battery&display_name=New",
+		nil, "http://evil.com")
+	if w.Code != 403 {
+		t.Fatalf("status = %d, want 403", w.Code)
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "csrf rejected") {
+		t.Errorf("expected a csrf rejected log line, got: %s", logged)
+	}
+	if !strings.Contains(logged, "msg=request") || !strings.Contains(logged, "status=403") {
+		t.Errorf("expected a request log line with status=403, got: %s", logged)
 	}
 }
 

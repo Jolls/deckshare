@@ -38,14 +38,14 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		if !deckOK {
 			decks, err := q.ListDecksForUser(r.Context(), user.ID)
 			if err != nil {
-				serverError(w)
+				serverError(w, r, err)
 				return
 			}
 			// No deck chosen yet, so there's no deck to scope the "in this deck" ordering to --
 			// every READABLE note type, not just the caller's own (docs/plans/192-note-type-authority.md).
 			noteTypes, err := q.ListNoteTypesForUser(r.Context(), user.ID)
 			if err != nil {
-				serverError(w)
+				serverError(w, r, err)
 				return
 			}
 			render(w, pages["import_ai"], http.StatusOK, map[string]any{
@@ -56,12 +56,12 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		}
 
 		deck, err := q.GetDeckForContentEdit(r.Context(), db.GetDeckForContentEditParams{UserID: user.ID, DeckID: deckID})
-		if handleQueryErrPage(w, pages, user, err) {
+		if handleQueryErrPage(w, r, pages, user, err) {
 			return
 		}
 		noteTypes, err := q.ListNoteTypesForNoteForm(r.Context(), db.ListNoteTypesForNoteFormParams{DeckID: deckID, UserID: user.ID})
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 
@@ -75,7 +75,7 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		}
 
 		nt, fields, err := loadNoteType(r.Context(), q, user.ID, noteTypeID)
-		if handleQueryErrPage(w, pages, user, err) {
+		if handleQueryErrPage(w, r, pages, user, err) {
 			return
 		}
 
@@ -109,12 +109,12 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 
 		q := db.New(store)
 		deck, nt, fields, err := loadDeckAndNoteType(r.Context(), q, user.ID, deckID, noteTypeID)
-		if handleQueryErrPage(w, pages, user, err) {
+		if handleQueryErrPage(w, r, pages, user, err) {
 			return
 		}
 		templates, err := q.ListTemplatesForNoteType(r.Context(), noteTypeID)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 
@@ -164,7 +164,7 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 			}
 			guid, gerr := randomGuid()
 			if gerr != nil {
-				serverError(w)
+				serverError(w, r, gerr)
 				return
 			}
 			prepared = append(prepared, preparedNote{
@@ -178,7 +178,7 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 			return
 		}
 
-		tx, ok := startTx(r.Context(), w, store)
+		tx, ok := startTx(w, r, store)
 		if !ok {
 			return
 		}
@@ -194,11 +194,11 @@ func registerAIImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 				NoteTypeID: noteTypeID,
 				DeckID:     deckID,
 			}, p.desired); err != nil {
-				serverError(w)
+				serverError(w, r, err)
 				return
 			}
 		}
-		if !commitTx(r.Context(), w, tx) {
+		if !commitTx(w, r, tx) {
 			return
 		}
 		http.Redirect(w, r, "/decks/"+deckID.String(), http.StatusSeeOther)

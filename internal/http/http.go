@@ -15,7 +15,8 @@ import (
 // NewHandler builds the application's top-level handler: the route mux wrapped in the auth
 // middleware, so the CSRF check and session population run for every request
 // (architecture.md §12), wrapped in turn by securityHeaders so the CSP is set on every
-// response including the ones auth rejects (security.go).
+// response including the ones auth rejects (security.go). requestLog wraps outermost of all so
+// every request is logged, including ones auth or securityHeaders rejects (logging.go).
 func NewHandler(pool *pgxpool.Pool, a *auth.Service, blobs *media.Store) (http.Handler, error) {
 	pages, err := parseTemplates()
 	if err != nil {
@@ -43,7 +44,7 @@ func NewHandler(pool *pgxpool.Pool, a *auth.Service, blobs *media.Store) (http.H
 	registerImportRoutes(mux, pool, pages, blobs, time.Now)
 	registerExportRoutes(mux, pool, pages, time.Now)
 	registerAIImportRoutes(mux, pool, pages)
-	return securityHeaders(a.Middleware(mux)), nil
+	return requestLog(securityHeaders(a.Middleware(captureUser(mux)))), nil
 }
 
 func healthHandler(pool *pgxpool.Pool) http.HandlerFunc {

@@ -57,7 +57,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		user, _ := auth.UserFromContext(r.Context())
 		retention, err := currentRetention(r.Context(), store, user.ID)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		render(w, pages["settings"], http.StatusOK, map[string]any{"User": user, "DesiredRetention": retention, "Version": appVersion})
@@ -95,7 +95,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		if err := a.UpdateProfile(r.Context(), user.ID, displayName, timezone, int16(dayStartHour)); err != nil {
 			status, msg, _, ok := classifyFormError(err, nil)
 			if !ok {
-				serverError(w)
+				serverError(w, r, err)
 				return
 			}
 			render(w, pages["settings"], status, map[string]any{
@@ -140,7 +140,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 				return 0, "", false
 			})
 			if !ok {
-				serverError(w)
+				serverError(w, r, err)
 				return
 			}
 			if retryAfter != "" {
@@ -190,7 +190,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		if err := q.UpsertGlobalFsrsRetention(r.Context(), db.UpsertGlobalFsrsRetentionParams{
 			UserID: user.ID, FsrsVersion: int16(params.Version()), DesiredRetention: retention,
 		}); err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 
@@ -208,7 +208,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		user, _ := auth.UserFromContext(r.Context())
 		retention, err := currentRetention(r.Context(), store, user.ID)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 
@@ -261,10 +261,10 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		// left as two separate statements, is a window where the sweep could unlink the file before
 		// the avatar pointer is set, stranding avatar_sha256 on a blob with no bytes on disk.
 		if err := blobs.Put(sha, data); err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
-		tx, ok := startTx(r.Context(), w, store)
+		tx, ok := startTx(w, r, store)
 		if !ok {
 			return
 		}
@@ -273,16 +273,16 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		if err := q.CreateMediaBlob(r.Context(), db.CreateMediaBlobParams{
 			Sha256: sha, SizeBytes: int64(len(data)), Mime: "image/jpeg",
 		}); err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		if err := q.UpdateUserAvatar(r.Context(), db.UpdateUserAvatarParams{
 			ID: user.ID, AvatarSha256: pgtype.Text{String: sha, Valid: true},
 		}); err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
-		if !commitTx(r.Context(), w, tx) {
+		if !commitTx(w, r, tx) {
 			return
 		}
 
@@ -310,7 +310,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 
 		f, err := blobs.Open(sha)
 		if err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		defer func() { _ = f.Close() }()

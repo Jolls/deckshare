@@ -8,7 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/mail"
 	"net/url"
 	"strings"
@@ -177,7 +177,7 @@ func (s *Service) Signup(ctx context.Context, ip, email, password, displayName s
 	// Best-effort: a user with no note types can't create a single note, but a seeding failure
 	// here must never take down signup itself.
 	if err := s.seedDefaultNoteTypes(ctx, user.ID); err != nil {
-		log.Printf("seed default note types for user %s: %v", user.ID, err)
+		slog.Error("seed default note types failed", "user_id", user.ID, "error", err)
 	}
 
 	token, err := createSession(ctx, s.q, user.ID)

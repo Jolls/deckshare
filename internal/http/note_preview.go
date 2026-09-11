@@ -39,11 +39,11 @@ func registerNotePreviewRoutes(mux *http.ServeMux, store db.Beginner, fragments 
 
 		q := db.New(store)
 		note, err := q.GetNoteForContentEdit(r.Context(), db.GetNoteForContentEditParams{UserID: user.ID, NoteID: noteID})
-		if handleQueryErr(w, err) {
+		if handleQueryErr(w, r, err) {
 			return
 		}
 		deck, err := q.GetDeckForContentEdit(r.Context(), db.GetDeckForContentEditParams{UserID: user.ID, DeckID: note.DeckID})
-		if handleQueryErr(w, err) {
+		if handleQueryErr(w, r, err) {
 			return
 		}
 
@@ -55,7 +55,7 @@ func registerNotePreviewRoutes(mux *http.ServeMux, store db.Beginner, fragments 
 		fieldValues := r.PostForm["field[]"]
 
 		view, err := buildNotePreview(r.Context(), q, user.ID, noteTypeID, fieldValues, r.PostForm.Get("tags"), note.DeckID, deck.Name)
-		if !respondNotePreview(w, err) {
+		if !respondNotePreview(w, r, err) {
 			return
 		}
 		renderFragment(w, fragments["note_preview"], http.StatusOK, "note_preview", view)
@@ -74,7 +74,7 @@ func registerNotePreviewRoutes(mux *http.ServeMux, store db.Beginner, fragments 
 
 		q := db.New(store)
 		deck, err := q.GetDeckForContentEdit(r.Context(), db.GetDeckForContentEditParams{UserID: user.ID, DeckID: deckID})
-		if handleQueryErr(w, err) {
+		if handleQueryErr(w, r, err) {
 			return
 		}
 
@@ -86,7 +86,7 @@ func registerNotePreviewRoutes(mux *http.ServeMux, store db.Beginner, fragments 
 		fieldValues := r.PostForm["field[]"]
 
 		view, err := buildNotePreview(r.Context(), q, user.ID, noteTypeID, fieldValues, r.PostForm.Get("tags"), deckID, deck.Name)
-		if !respondNotePreview(w, err) {
+		if !respondNotePreview(w, r, err) {
 			return
 		}
 		renderFragment(w, fragments["note_preview"], http.StatusOK, "note_preview", view)
@@ -97,7 +97,7 @@ func registerNotePreviewRoutes(mux *http.ServeMux, store db.Beginner, fragments 
 // reports whether the caller should continue to render the view. The one hard-error case
 // (errFieldCountMismatch) is 400; anything else is the same pgx.ErrNoRows-collapses-to-404 /
 // bare-500 pattern handleQueryErr uses for every other query in this package.
-func respondNotePreview(w http.ResponseWriter, err error) bool {
+func respondNotePreview(w http.ResponseWriter, r *http.Request, err error) bool {
 	if err == nil {
 		return true
 	}
@@ -105,7 +105,7 @@ func respondNotePreview(w http.ResponseWriter, err error) bool {
 		badRequest(w)
 		return false
 	}
-	handleQueryErr(w, err)
+	handleQueryErr(w, r, err)
 	return false
 }
 

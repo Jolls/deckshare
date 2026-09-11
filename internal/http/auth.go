@@ -36,7 +36,7 @@ func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*t
 				return 0, "", false
 			})
 			if !ok {
-				serverError(w)
+				serverError(w, r, err)
 				return
 			}
 			if retryAfter != "" {
@@ -75,7 +75,7 @@ func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*t
 				return 0, "", false
 			})
 			if !ok {
-				serverError(w)
+				serverError(w, r, err)
 				return
 			}
 			if retryAfter != "" {
@@ -95,7 +95,7 @@ func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*t
 			token = cookie.Value
 		}
 		if err := a.Logout(r.Context(), token); err != nil {
-			serverError(w)
+			serverError(w, r, err)
 			return
 		}
 		auth.ClearSessionCookie(w)

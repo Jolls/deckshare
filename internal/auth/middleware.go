@@ -3,7 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -29,7 +29,7 @@ func UserFromContext(ctx context.Context) (db.User, bool) {
 func (s *Service) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isStateChanging(r.Method) && !s.checkOrigin(r) {
-			log.Printf("csrf: rejected %s %s (Origin=%q Host=%q)", r.Method, r.URL.Path, r.Header.Get("Origin"), r.Host)
+			slog.Warn("csrf rejected", "method", r.Method, "path", r.URL.Path, "origin", r.Header.Get("Origin"), "host", r.Host)
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -44,6 +44,7 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 		row, err := s.q.GetSessionUser(ctx, hashToken(cookie.Value))
 		if err != nil {
 			if !errors.Is(err, pgx.ErrNoRows) {
+				slog.Error("session lookup failed", "method", r.Method, "path", r.URL.Path, "error", err)
 				http.Error(w, "internal server error", http.StatusInternalServerError)
 				return
 			}
@@ -66,7 +67,7 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 			// fail an otherwise-successful authenticated request -- log and continue without
 			// the refreshed cookie rather than returning 500.
 			if err != nil {
-				log.Printf("session renewal: %v", err)
+				slog.Warn("session renewal failed", "error", err)
 			} else {
 				SetSessionCookie(w, cookie.Value)
 			}

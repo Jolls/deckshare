@@ -2,7 +2,7 @@ package auth
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 )
 
@@ -17,7 +17,7 @@ func (s *Service) Run(ctx context.Context, interval time.Duration) {
 			return
 		case <-ticker.C:
 			if _, err := s.q.DeleteExpiredSessions(ctx); err != nil {
-				log.Printf("session cleanup: %v", err)
+				slog.Error("session cleanup failed", "error", err)
 			}
 			s.loginIP.Sweep()
 			s.loginEmail.Sweep()
