@@ -1112,3 +1112,139 @@ func TestNoteRoutes_BulkSetReleaseDay(t *testing.T) {
 		})
 	}
 }
+
+// #223: the per-note Suspend/Unsuspend toggle applies to every card generated from the note, for
+// the caller's own user_card_state rows -- gated on can_study (independent of the
+// CanEditContent-gated bulk toolbar tested above). Uses newReversedNoteTypeBody's 2-template
+// note type so the note has 2 cards, exercising the "flip every card to the same new state"
+// behaviour ToggleSuspendCardsForNote computes from their current combined state.
+func TestNoteRoutes_SuspendCards_GoldenPath(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	ownerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	deckPath := setupDeckAndNoteType(t, handler, ownerCookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+
+	w := doRequest(handler, "POST", "/note-types", newReversedNoteTypeBody("Reversed2"), ownerCookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("create reversed note type status = %d: %s", w.Code, w.Body.String())
+	}
+	var reversedID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Reversed2'`).Scan(&reversedID); err != nil {
+		t.Fatalf("lookup Reversed2: %v", err)
+	}
+	noteBody := url.Values{}
+	noteBody.Set("note_type_id", reversedID)
+	noteBody.Add("field[]", "Q")
+	noteBody.Add("field[]", "A")
+	w = doRequest(handler, "POST", deckPath+"/notes", noteBody.Encode(), ownerCookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("create note status = %d: %s", w.Code, w.Body.String())
+	}
+	var noteID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM notes WHERE note_type_id = $1`, reversedID).Scan(&noteID); err != nil {
+		t.Fatalf("lookup note: %v", err)
+	}
+	if countRows(t, tx, `SELECT count(*) FROM cards WHERE note_id = $1`, noteID) != 2 {
+		t.Fatal("note should have 2 cards (one per template)")
+	}
+
+	studentEmail := testEmail()
+	studentCookie := loginCookie(t, tx, a, studentEmail, "correct-horse-battery")
+	studentID := userID(t, ctx, tx, studentEmail)
+	if _, err := tx.Exec(ctx, `INSERT INTO deck_access (deck_id, user_id, can_view, can_study) VALUES ($1, $2, true, true)`,
+		deckID, studentID); err != nil {
+		t.Fatalf("grant student access: %v", err)
+	}
+
+	suspendPath := deckPath + "/notes/" + noteID + "/suspend-cards"
+	countSuspended := func(t *testing.T) int64 {
+		t.Helper()
+		return countRows(t, tx, `SELECT count(*) FROM user_card_state ucs
+			JOIN cards c ON c.id = ucs.card_id
+			WHERE c.note_id = $1 AND ucs.user_id = $2 AND ucs.suspended`, noteID, studentID)
+	}
+
+	// Never-seen cards (no user_card_state rows yet): toggling suspends both.
+	w = doRequest(handler, "POST", suspendPath, "", studentCookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("suspend status = %d, want 303: %s", w.Code, w.Body.String())
+	}
+	if n := countSuspended(t); n != 2 {
+		t.Fatalf("suspended card count = %d, want 2", n)
+	}
+
+	// Toggling again un-suspends both.
+	w = doRequest(handler, "POST", suspendPath, "", studentCookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("unsuspend status = %d, want 303: %s", w.Code, w.Body.String())
+	}
+	if n := countSuspended(t); n != 0 {
+		t.Fatalf("suspended card count = %d, want 0 after toggling back", n)
+	}
+}
+
+// Mirrors TestFlagRoutes_AccessControl's shape: stranger/view-only/manager-without-can_study
+// all 404, and a note real but belonging to a different deck than the URL's {deckId} also 404s.
+func TestNoteRoutes_SuspendCards_AccessControl(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	ownerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	deckPath := setupDeckAndNoteType(t, handler, ownerCookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	noteID := createTestNote(t, tx, handler, deckPath, ownerCookie, "")
+
+	strangerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	viewOnlyEmail := testEmail()
+	viewOnlyCookie := loginCookie(t, tx, a, viewOnlyEmail, "correct-horse-battery")
+	viewOnlyID := userID(t, ctx, tx, viewOnlyEmail)
+	if _, err := tx.Exec(ctx, `INSERT INTO deck_access (deck_id, user_id, can_view) VALUES ($1, $2, true)`,
+		deckID, viewOnlyID); err != nil {
+		t.Fatalf("grant view-only access: %v", err)
+	}
+
+	managerEmail := testEmail()
+	managerCookie := loginCookie(t, tx, a, managerEmail, "correct-horse-battery")
+	managerID := userID(t, ctx, tx, managerEmail)
+	if _, err := tx.Exec(ctx, `INSERT INTO deck_access (deck_id, user_id, can_view, can_manage_access) VALUES ($1, $2, true, true)`,
+		deckID, managerID); err != nil {
+		t.Fatalf("grant manager access: %v", err)
+	}
+
+	suspendPath := deckPath + "/notes/" + noteID + "/suspend-cards"
+	tests := []struct {
+		name       string
+		cookie     *http.Cookie
+		wantStatus int
+	}{
+		{"stranger", strangerCookie, http.StatusNotFound},
+		{"view-only (no can_study)", viewOnlyCookie, http.StatusNotFound},
+		{"manager (can_manage_access, no can_study)", managerCookie, http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := doRequest(handler, "POST", suspendPath, "", tt.cookie, "http://example.com")
+			if w.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d: %s", w.Code, tt.wantStatus, w.Body.String())
+			}
+		})
+	}
+	if n := countRows(t, tx, `SELECT count(*) FROM user_card_state ucs JOIN cards c ON c.id = ucs.card_id
+		WHERE c.note_id = $1 AND ucs.suspended`, noteID); n != 0 {
+		t.Error("an unauthorized suspend-cards request must not have suspended anything")
+	}
+
+	// A note real but belonging to a different deck than the URL's {deckId} must 404. No note
+	// type needed on deck B -- it only has to exist, matching flags_test.go's equivalent
+	// cross-deck check -- and setupDeckAndNoteType can't be reused here since note types are
+	// owner-scoped unique by name (CLAUDE.md §2.2), so a second call for the same owner 409s.
+	w := doRequest(handler, "POST", "/decks", "name=Other Deck", ownerCookie, "http://example.com")
+	deckBID := strings.TrimPrefix(w.Header().Get("Location"), "/decks/")
+	w = doRequest(handler, "POST", "/decks/"+deckBID+"/notes/"+noteID+"/suspend-cards", "", ownerCookie, "http://example.com")
+	if w.Code != http.StatusNotFound {
+		t.Errorf("suspending deck A's note via deck B's URL status = %d, want 404: %s", w.Code, w.Body.String())
+	}
+}

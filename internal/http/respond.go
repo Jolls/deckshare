@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -12,6 +13,15 @@ import (
 	"github.com/Jolls/deckshare/internal/auth"
 	"github.com/Jolls/deckshare/internal/db"
 )
+
+// respondJSON writes body as a JSON response with the given status code. Used by routes the
+// client applies to its own in-memory state rather than swapping in server-rendered HTML (#223's
+// cards/state route) -- unlike flags.go's fragment-typed responses.
+func respondJSON(w http.ResponseWriter, status int, body any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}
 
 // serverError writes the generic 500 response for an unexpected error and logs the cause. The
 // client-facing body is unchanged and never carries err -- §2.7 and CLAUDE.md §10.1: the error

@@ -101,12 +101,13 @@ func newTestHandler(t *testing.T, tx pgx.Tx, cfg auth.Config, clocks ...func() t
 	mux := http.NewServeMux()
 	blobs := media.New(t.TempDir())
 	registerStaticRoutes(mux)
-	registerAuthRoutes(mux, a, pages)
+	registerAuthRoutes(mux, a, pages, nil)
 	registerSettingsRoutes(mux, a, tx, pages, blobs)
 	registerDeckRoutes(mux, tx, pages, clock)
 	registerAccessRoutes(mux, tx, pages)
 	registerProgressRoutes(mux, tx, pages, clock)
 	registerFlagRoutes(mux, tx, pages, fragments)
+	registerCardStateRoutes(mux, tx)
 	registerNoteTypeRoutes(mux, tx, pages)
 	registerNoteRoutes(mux, tx, pages)
 	registerNotePreviewRoutes(mux, tx, fragments)
@@ -343,6 +344,34 @@ func TestPostWithForeignOrigin_403_IsLogged(t *testing.T) {
 	}
 }
 
+func TestSignupMode_ClosedBlocksGetAndPost(t *testing.T) {
+	tx := beginTx(t)
+	handler, _ := newTestHandler(t, tx, auth.Config{SignupMode: "closed"})
+	email := testEmail()
+
+	if w := doRequest(handler, "GET", "/signup", "", nil, ""); w.Code != 404 {
+		t.Errorf("GET /signup status = %d, want 404", w.Code)
+	}
+
+	w := doRequest(handler, "POST", "/signup",
+		"email="+email+"&password=correct-horse-battery&display_name=New",
+		nil, "http://example.com")
+	if w.Code != 403 {
+		t.Errorf("POST /signup status = %d, want 403", w.Code)
+	}
+	if n := countRows(t, tx, `SELECT count(*) FROM users WHERE lower(email) = lower($1)`, email); n != 0 {
+		t.Error("no user should have been created")
+	}
+}
+
+func TestSignupMode_OpenExplicitUnaffected(t *testing.T) {
+	tx := beginTx(t)
+	handler, _ := newTestHandler(t, tx, auth.Config{SignupMode: "open"})
+	if w := doRequest(handler, "GET", "/signup", "", nil, ""); w.Code != 200 {
+		t.Errorf("GET /signup status = %d, want 200", w.Code)
+	}
+}
+
 func TestLoginRateLimited(t *testing.T) {
 	tx := beginTx(t)
 	handler, a := newTestHandler(t, tx, auth.Config{})
@@ -375,6 +404,46 @@ func TestSignupRateLimited(t *testing.T) {
 	}
 	if last.Code != 429 {
 		t.Fatalf("6th attempt status = %d, want 429", last.Code)
+	}
+}
+
+// TestSignupRateLimit_PerForwardedClient proves the actual bug (#211) is fixed: behind a
+// trusted proxy, distinct clients (distinguished by X-Forwarded-For) get distinct signup rate
+// limit buckets instead of collapsing into one instance-wide bucket keyed on the proxy's own
+// RemoteAddr. Contrast with TestSignupRateLimited, which keeps asserting the 429 for the
+// shared-RemoteAddr (no trusted proxy) case.
+func TestSignupRateLimit_PerForwardedClient(t *testing.T) {
+	tx := beginTx(t)
+	a, err := auth.New(tx, auth.Config{})
+	if err != nil {
+		t.Fatalf("auth.New: %v", err)
+	}
+	pages, err := parseTemplates()
+	if err != nil {
+		t.Fatalf("parseTemplates: %v", err)
+	}
+	trusted, err := parseTrustedProxies("10.0.0.0/8")
+	if err != nil {
+		t.Fatalf("parseTrustedProxies: %v", err)
+	}
+	mux := http.NewServeMux()
+	registerAuthRoutes(mux, a, pages, trusted)
+	handler := a.Middleware(mux)
+
+	for i := 1; i <= 6; i++ {
+		body := fmt.Sprintf("email=%s&password=correct-horse-battery&display_name=Test", testEmail())
+		r := httptest.NewRequest("POST", "/signup", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Origin", "http://example.com")
+		r.Host = "example.com"
+		r.RemoteAddr = "10.0.0.5:5555"
+		r.Header.Set("X-Forwarded-For", fmt.Sprintf("203.0.113.%d", i))
+
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != 303 {
+			t.Fatalf("attempt %d: status = %d, want 303 (buckets still collapsed?)", i, w.Code)
+		}
 	}
 }
 

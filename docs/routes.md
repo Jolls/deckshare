@@ -39,8 +39,8 @@ contract for `POST /api/reviews/batch` is pinned down there in full and is not r
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| GET | `/signup` | public | Signup form |
-| POST | `/signup` | public | Create account, `argon2id`-hash password, start session |
+| GET | `/signup` | public | Signup form (404 when `SIGNUP_MODE=closed`) |
+| POST | `/signup` | public | Create account, `argon2id`-hash password, start session (403 when `SIGNUP_MODE=closed`) |
 | GET | `/login` | public | Login form |
 | POST | `/login` | public | Verify credentials, create session (cookie: hashed token, §12) |
 | POST | `/logout` | session | Destroy session |

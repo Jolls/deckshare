@@ -147,3 +147,74 @@ func (q *Queries) UpsertUserCardStateOnReview(ctx context.Context, arg UpsertUse
 	}
 	return result.RowsAffected(), nil
 }
+
+const upsertUserCardStateSettings = `-- name: UpsertUserCardStateSettings :one
+INSERT INTO user_card_state (user_id, card_id, due, suspended, buried_until, flag)
+VALUES (
+    $1, $2, now(),
+    COALESCE($3::boolean, false),
+    ($4::timestamptz)::date,
+    COALESCE($5::smallint, 0)
+)
+ON CONFLICT (user_id, card_id) DO UPDATE SET
+    suspended    = COALESCE($3::boolean, user_card_state.suspended),
+    buried_until = CASE WHEN $6::boolean THEN NULL
+                        ELSE COALESCE(($4::timestamptz)::date, user_card_state.buried_until) END,
+    flag         = COALESCE($5::smallint, user_card_state.flag)
+RETURNING user_id, card_id, due, stability, difficulty, state, reps, lapses, elapsed_days, scheduled_days, learning_steps, last_review, suspended, buried_until, flag
+`
+
+type UpsertUserCardStateSettingsParams struct {
+	UserID      pgtype.UUID
+	CardID      pgtype.UUID
+	Suspended   pgtype.Bool
+	BuriedUntil pgtype.Timestamptz
+	Flag        pgtype.Int2
+	ClearBuried bool
+}
+
+// Suspend/unsuspend/bury/flag a card (#223): a settings write on the caller's own row, not a
+// scheduling write, so unlike UpsertUserCardStateOnReview this is unconditional -- there is no
+// "newer review wins" question for a column FSRS never touches. A never-seen card has no row
+// yet (migration 00010's PK is (user_id, card_id)), so this must upsert; due defaults to now()
+// on first insert, the same neutral zero-state UpsertUserCardStateOnReview's own first write
+// would produce, and is overwritten by the first real grade. sqlc.narg columns are NULL when the
+// caller isn't setting that field, and COALESCE(EXCLUDED.x, user_card_state.x) on the UPDATE arm
+// leaves an unset field untouched rather than clobbering it back to a zero value.
+//
+// buried_until arrives as a timestamptz (the caller's already-shifted study_day_start + 24h, see
+// cards_state.go's studyTomorrow), cast to ::date here -- the same cast shape
+// ListDueCardsForStudy/CountQueueForDeck use to compare buried_until against study_day_start, so
+// this write's idea of "tomorrow" agrees with what those reads will later test it against
+// regardless of the session's TimeZone GUC. clear_buried disambiguates NULL's two meanings ("not
+// setting buried_until" vs. "explicitly un-burying"), since a single nullable arg can't carry
+// both -- unsuspend needs no such flag because `false` is an ordinary, non-NULL value.
+func (q *Queries) UpsertUserCardStateSettings(ctx context.Context, arg UpsertUserCardStateSettingsParams) (UserCardState, error) {
+	row := q.db.QueryRow(ctx, upsertUserCardStateSettings,
+		arg.UserID,
+		arg.CardID,
+		arg.Suspended,
+		arg.BuriedUntil,
+		arg.Flag,
+		arg.ClearBuried,
+	)
+	var i UserCardState
+	err := row.Scan(
+		&i.UserID,
+		&i.CardID,
+		&i.Due,
+		&i.Stability,
+		&i.Difficulty,
+		&i.State,
+		&i.Reps,
+		&i.Lapses,
+		&i.ElapsedDays,
+		&i.ScheduledDays,
+		&i.LearningSteps,
+		&i.LastReview,
+		&i.Suspended,
+		&i.BuriedUntil,
+		&i.Flag,
+	)
+	return i, err
+}

@@ -517,6 +517,41 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		})
 		finishBulk(w, r, pages, user, deckID, n, err)
 	})))
+
+	// Per-note suspend toggle (#223): can_study, independent of the CanEditContent-gated bulk
+	// toolbar above -- this writes the caller's own scheduling state, not deck content (§2.1), so
+	// it must reach a student on a shared deck too, not just an editor. Applies to every card
+	// generated from the note (ToggleSuspendCardsForNote), toggling based on the note's current
+	// all-suspended state so a double submit is inert.
+	mux.Handle("POST /decks/{deckId}/notes/{id}/suspend-cards", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, _ := auth.UserFromContext(r.Context())
+		deckID, ok := pathUUID(r, "deckId")
+		if !ok {
+			notFoundPage(w, pages, user)
+			return
+		}
+		noteID, ok := pathUUID(r, "id")
+		if !ok {
+			notFoundPage(w, pages, user)
+			return
+		}
+		q := db.New(store)
+		n, err := q.ToggleSuspendCardsForNote(r.Context(), db.ToggleSuspendCardsForNoteParams{
+			UserID: user.ID, NoteID: noteID, DeckID: deckID,
+		})
+		if err != nil {
+			serverError(w, r, err)
+			return
+		}
+		// Same no-rows-means-404 convention as finishBulk/DeleteNote: a note with no cards under
+		// this deck_id, or a caller without can_study on it, both leave target_cards empty and
+		// so 0 rows written -- indistinguishable from "not found" (CLAUDE.md §9).
+		if n == 0 {
+			notFoundPage(w, pages, user)
+			return
+		}
+		http.Redirect(w, r, "/decks/"+deckID.String()+"#notes", http.StatusSeeOther)
+	})))
 }
 
 // parseBulkRequest resolves the {deckId} path param and the "note_id" checkbox selection shared

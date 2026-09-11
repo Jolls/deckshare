@@ -8,8 +8,10 @@ JOIN deck_access da ON da.deck_id = d.id AND da.user_id = sqlc.arg(user_id) AND 
 ORDER BY d.name;
 
 -- name: GetDeckForUser :one
+-- can_study added for #223's per-note suspend control (deck.html), gated independently of
+-- can_edit_content -- a can_study-only viewer (a student on a shared deck) needs it too.
 SELECT d.*, da.can_edit_content, da.can_edit_settings, da.can_manage_access, da.can_view_progress,
-       da.can_view_flags
+       da.can_view_flags, da.can_study
 FROM decks d
 JOIN deck_access da ON da.deck_id = d.id AND da.user_id = sqlc.arg(user_id) AND da.can_view
 WHERE d.id = sqlc.arg(deck_id);

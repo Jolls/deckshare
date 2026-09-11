@@ -143,6 +143,7 @@
     stage.dataset.revealed = 'false';
     stage.dataset.cardId = card.cardId;
     resetFlagControl(stage, card.cardId);
+    resetFlagCycle(stage);
     var revealBtn = stage.querySelector('[data-reveal]');
     if (revealBtn) revealBtn.textContent = 'Show Answer';
     var ratingButtons = stage.querySelector('.rating-buttons');
@@ -281,6 +282,74 @@
       var cancelForm = evt.currentTarget.querySelector('[data-flag-form]');
       if (cancelForm) cancelForm.hidden = true;
     }
+    if (evt.target.closest('[data-suspend]')) {
+      sendCardState({ suspend: '1' });
+      return;
+    }
+    if (evt.target.closest('[data-bury]')) {
+      sendCardState({ bury: '1' });
+      return;
+    }
+    if (evt.target.closest('[data-flag-cycle]')) {
+      var cycleBtn = evt.target.closest('[data-flag-cycle]');
+      var nextFlag = cycleBtn.dataset.flagValue === '1' ? '0' : '1';
+      sendCardState({ flag: nextFlag }, cycleBtn);
+      return;
+    }
+  }
+
+  // Suspend/bury/flag (#223): a settings write on the card, never a review -- it must never
+  // reach the grade batch endpoint or review_log (§2.7). This mirrors grade()'s skip-the-card
+  // bookkeeping (card.done + showNext()) but deliberately omits everything else grade() does:
+  // no push to state.pending, no card-graded event, no scheduleFlush(). A failed request leaves
+  // the card in place and surfaces #review-error rather than silently advancing past a card
+  // whose suspend/bury/flag didn't actually take.
+  function sendCardState(fields, flagBtn) {
+    var stage = document.getElementById('review-stage');
+    if (state.current === null || !stage) return;
+    var card = state.queue[state.current];
+
+    var body = new URLSearchParams(fields);
+    body.set('cardId', card.cardId);
+
+    fetch('/decks/' + deckshareReview.deckId() + '/cards/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    }).then(function (res) {
+      if (!res.ok) {
+        showDeliveryError('Could not update this card (status ' + res.status + ').');
+        return;
+      }
+      clearDeliveryError();
+      // Resolve the flag-button update (if any) *before* advancing: showNext() resets this same
+      // shared button to '0' for the incoming card, and res.json() is a microtask -- running it
+      // after card.done/showNext() would let it land later and stamp the outgoing card's flag
+      // value onto the next card's button.
+      var parsed = flagBtn ? res.json().catch(function () { return null; }) : Promise.resolve(null);
+      parsed.then(function (data) {
+        if (flagBtn) {
+          setFlagButtonState(flagBtn, data && data.flag ? String(data.flag) : '0');
+        }
+        card.done = true;
+        showNext();
+      });
+    }, function () {
+      showDeliveryError('Could not update this card: network error.');
+    });
+  }
+
+  // Resets the flag-cycle button to "not flagged" for the card now on screen -- a fresh card's
+  // flag state isn't carried in the batch payload, so the toggle always starts unflagged and
+  // cycles 0/1 from there, same idea as resetFlagControl for the comment-flag control.
+  function resetFlagCycle(stage) {
+    var btn = stage.querySelector('[data-flag-cycle]');
+    if (btn) setFlagButtonState(btn, '0');
+  }
+
+  function setFlagButtonState(btn, flagValue) {
+    btn.dataset.flagValue = flagValue;
+    btn.setAttribute('aria-pressed', flagValue !== '0' ? 'true' : 'false');
   }
 
   function onKeydown(evt) {
