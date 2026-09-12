@@ -49,8 +49,11 @@
                     </form>
                     {{end}}
                     {{if $.Deck.CanStudy}}
-                    <form method="post" action="/decks/{{$.Deck.ID}}/notes/{{.ID}}/suspend-cards" style="display:inline">
-                        <button type="submit" class="outline btn-sm">{{if .AllSuspended}}Unsuspend{{else}}Suspend{{end}}</button>
+                    <!-- Suspend (#223) hidden pending re-evaluation of its UX -- route stays live,
+                         re-enabling is just removing `hidden`. -->
+                    <form method="post" action="/decks/{{$.Deck.ID}}/notes/{{.ID}}/suspend-cards" style="display:inline" hidden>
+                        <button type="submit" class="outline btn-sm"
+                                title="{{if .AllSuspended}}Unsuspend this note's cards so they return to your queue{{else}}Suspend this note's cards: hide them from your queue until you unsuspend them{{end}}">{{if .AllSuspended}}Unsuspend{{else}}Suspend{{end}}</button>
                     </form>
                     {{end}}
                 </td>

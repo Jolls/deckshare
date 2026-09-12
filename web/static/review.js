@@ -349,7 +349,12 @@
 
   function setFlagButtonState(btn, flagValue) {
     btn.dataset.flagValue = flagValue;
-    btn.setAttribute('aria-pressed', flagValue !== '0' ? 'true' : 'false');
+    var marked = flagValue !== '0';
+    btn.setAttribute('aria-pressed', marked ? 'true' : 'false');
+    btn.textContent = marked ? '🔖 Marked' : '🔖 Mark';
+    btn.title = marked
+      ? 'Remove your personal mark from this card'
+      : 'Mark this card for yourself -- only you see this, separate from reporting a problem above';
   }
 
   function onKeydown(evt) {
