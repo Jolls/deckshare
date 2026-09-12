@@ -65,6 +65,11 @@ type Config struct {
 	// address (StartOS commonly exposes the same instance over LAN and Tor simultaneously).
 	// Empty means compare the request Origin's host to r.Host.
 	Origin string
+
+	// SignupMode gates new-account creation. Empty or "open" is today's behavior. "closed"
+	// disables new-account creation at the route layer (docs/plans/212-signup-mode.md). Any
+	// other value is a startup error.
+	SignupMode string
 }
 
 // Service is the auth package's entry point: session, signup, login, logout, and account
@@ -78,6 +83,8 @@ type Service struct {
 	// rechecked mid-process. Nil when cfg.Origin is empty (the dev fallback: compare against
 	// r.Host per request).
 	origins []*url.URL
+
+	signupMode string
 
 	loginIP        *limiter
 	loginEmail     *limiter
@@ -103,17 +110,29 @@ func New(dbtx db.Beginner, cfg Config) (*Service, error) {
 			origins = append(origins, parsed)
 		}
 	}
+	signupMode := cfg.SignupMode
+	if signupMode == "" {
+		signupMode = "open"
+	}
+	if signupMode != "open" && signupMode != "closed" {
+		return nil, fmt.Errorf("invalid Config.SignupMode %q: must be \"open\" or \"closed\"", cfg.SignupMode)
+	}
+
 	return &Service{
 		q:              db.New(dbtx),
 		beginner:       dbtx,
 		dummyHash:      dummyHash,
 		origins:        origins,
+		signupMode:     signupMode,
 		loginIP:        newLimiter(loginIPLimit, loginIPWindow),
 		loginEmail:     newLimiter(loginEmailLimit, loginEmailWindow),
 		signupIP:       newLimiter(signupIPLimit, signupIPWindow),
 		changePassword: newLimiter(changePasswordLimit, changePasswordWindow),
 	}, nil
 }
+
+// SignupOpen reports whether new-account creation is currently allowed.
+func (s *Service) SignupOpen() bool { return s.signupMode != "closed" }
 
 // Signup validates the input, creates the user and its first session, and returns the raw
 // session token.

@@ -17,7 +17,9 @@ import (
 // (architecture.md §12), wrapped in turn by securityHeaders so the CSP is set on every
 // response including the ones auth rejects (security.go). requestLog wraps outermost of all so
 // every request is logged, including ones auth or securityHeaders rejects (logging.go).
-func NewHandler(pool *pgxpool.Pool, a *auth.Service, blobs *media.Store) (http.Handler, error) {
+// trustedProxy is the raw TRUSTED_PROXY env value; empty means the rate-limit key is
+// r.RemoteAddr only and X-Forwarded-For is never read.
+func NewHandler(pool *pgxpool.Pool, a *auth.Service, blobs *media.Store, trustedProxy string) (http.Handler, error) {
 	pages, err := parseTemplates()
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
@@ -26,16 +28,21 @@ func NewHandler(pool *pgxpool.Pool, a *auth.Service, blobs *media.Store) (http.H
 	if err != nil {
 		return nil, fmt.Errorf("parse fragments: %w", err)
 	}
+	trusted, err := parseTrustedProxies(trustedProxy)
+	if err != nil {
+		return nil, fmt.Errorf("parse TRUSTED_PROXY: %w", err)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler(pool))
 	registerStaticRoutes(mux)
-	registerAuthRoutes(mux, a, pages)
+	registerAuthRoutes(mux, a, pages, trusted)
 	registerSettingsRoutes(mux, a, pool, pages, blobs)
 	registerDeckRoutes(mux, pool, pages, time.Now)
 	registerAccessRoutes(mux, pool, pages)
 	registerProgressRoutes(mux, pool, pages, time.Now)
 	registerFlagRoutes(mux, pool, pages, fragments)
+	registerCardStateRoutes(mux, pool)
 	registerNoteTypeRoutes(mux, pool, pages)
 	registerNoteRoutes(mux, pool, pages)
 	registerNotePreviewRoutes(mux, pool, fragments)

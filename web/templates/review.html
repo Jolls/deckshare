@@ -23,7 +23,8 @@
     <button type="button" data-rating="4">Easy <small data-interval-for="4"></small></button>
   </p>
   <p class="flag-control">
-    <button type="button" class="outline" data-flag-toggle>🚩 Flag this card</button>
+    <button type="button" class="outline btn-sm" data-flag-toggle
+            title="Report a problem with this card to the deck's editors">🚩 Report a problem</button>
     <span data-flag-form hidden>
       <textarea data-flag-comment maxlength="2000" placeholder="What's wrong with this card?"></textarea>
       <input type="hidden" data-flag-card-id>
@@ -35,6 +36,16 @@
       <button type="button" data-flag-cancel>Cancel</button>
     </span>
     <span data-flag-status></span>
+  </p>
+  <!-- Suspend/Bury/Mark (#223) hidden pending re-evaluation of their UX -- the write path and
+       JS wiring stay in place so re-enabling is just removing `hidden` here. -->
+  <p class="state-controls" hidden>
+    <button type="button" class="outline btn-sm" data-suspend
+            title="Suspend this card: hide it from your queue until you unsuspend it">Suspend</button>
+    <button type="button" class="outline btn-sm" data-bury
+            title="Bury this card: hide it from your queue until tomorrow">Bury</button>
+    <button type="button" class="outline btn-sm" data-flag-cycle
+            title="Mark this card for yourself -- only you see this, separate from reporting a problem above">🔖 Mark</button>
   </p>
 </section>
 

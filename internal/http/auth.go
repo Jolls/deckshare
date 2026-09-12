@@ -3,14 +3,17 @@ package http
 import (
 	"errors"
 	"html/template"
-	"net"
 	"net/http"
 
 	"github.com/Jolls/deckshare/internal/auth"
 )
 
-func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*template.Template) {
+func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*template.Template, trusted proxySet) {
 	mux.HandleFunc("GET /signup", func(w http.ResponseWriter, r *http.Request) {
+		if !a.SignupOpen() {
+			notFound(w)
+			return
+		}
 		if _, ok := auth.UserFromContext(r.Context()); ok {
 			http.Redirect(w, r, "/decks", http.StatusSeeOther)
 			return
@@ -19,6 +22,10 @@ func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*t
 	})
 
 	mux.HandleFunc("POST /signup", func(w http.ResponseWriter, r *http.Request) {
+		if !a.SignupOpen() {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		if err := r.ParseForm(); err != nil {
 			badRequest(w)
 			return
@@ -27,7 +34,7 @@ func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*t
 		password := r.PostForm.Get("password")
 		displayName := r.PostForm.Get("display_name")
 
-		_, token, err := a.Signup(r.Context(), clientIP(r), email, password, displayName)
+		_, token, err := a.Signup(r.Context(), trusted.clientIP(r), email, password, displayName)
 		if err != nil {
 			status, msg, retryAfter, ok := classifyFormError(err, func(e error) (int, string, bool) {
 				if errors.Is(e, auth.ErrEmailTaken) {
@@ -66,7 +73,7 @@ func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*t
 		email := r.PostForm.Get("email")
 		password := r.PostForm.Get("password")
 
-		_, token, err := a.Login(r.Context(), clientIP(r), email, password)
+		_, token, err := a.Login(r.Context(), trusted.clientIP(r), email, password)
 		if err != nil {
 			status, msg, retryAfter, ok := classifyFormError(err, func(e error) (int, string, bool) {
 				if errors.Is(e, auth.ErrInvalidCredentials) {
@@ -109,12 +116,4 @@ func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*t
 		}
 		http.Redirect(w, r, "/decks", http.StatusSeeOther)
 	})
-}
-
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }

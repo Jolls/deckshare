@@ -8,6 +8,26 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.11] - 2026-09-11
+
+### Added
+- `SIGNUP_MODE=open|closed` env var to disable new-account registration on a closed instance
+  ([#212](https://github.com/Jolls/deckshare/issues/212)).
+- Suspend, bury, and flag controls: a route to write `user_card_state.suspended`/
+  `.buried_until`/`.flag` (previously read-only dead columns), plus reviewer and note-list
+  controls ([#223](https://github.com/Jolls/deckshare/issues/223))
+
+### Fixed
+- The login and signup per-IP rate limiters no longer collapse into one instance-wide bucket
+  behind a reverse proxy: set `TRUSTED_PROXY` to the proxy's CIDRs and the limiter key comes
+  from the rightmost untrusted `X-Forwarded-For` hop. Unset (the default) is unchanged --
+  `X-Forwarded-For` is never read ([#211](https://github.com/Jolls/deckshare/issues/211)).
+- The Settings page no longer renders `<no value>` for the desired-retention field after a
+  profile or password change, or for the version line after an avatar upload -- every
+  `/settings` render now goes through one `settingsView` struct instead of hand-built
+  `map[string]any` literals that some branches forgot a key on
+  ([#218](https://github.com/Jolls/deckshare/issues/218)).
+
 ## [0.3.10] - 2026-09-10
 
 ### Added

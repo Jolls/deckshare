@@ -62,7 +62,10 @@ func run() error {
 	}
 	defer pool.Close()
 
-	authSvc, err := auth.New(pool, auth.Config{Origin: os.Getenv("ORIGIN")})
+	authSvc, err := auth.New(pool, auth.Config{
+		Origin:     os.Getenv("ORIGIN"),
+		SignupMode: os.Getenv("SIGNUP_MODE"),
+	})
 	if err != nil {
 		return fmt.Errorf("init auth: %w", err)
 	}
@@ -71,7 +74,7 @@ func run() error {
 	blobs := media.New(mediaRoot)
 	go media.NewGC(pool, blobs, mediaGCGrace).Run(ctx, time.Hour)
 
-	handler, err := apphttp.NewHandler(pool, authSvc, blobs)
+	handler, err := apphttp.NewHandler(pool, authSvc, blobs, os.Getenv("TRUSTED_PROXY"))
 	if err != nil {
 		return fmt.Errorf("build handler: %w", err)
 	}

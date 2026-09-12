@@ -14,14 +14,24 @@
 WITH ordered_notes AS (
     SELECT n.id, n.fields ->> nt.sort_field_idx AS sort_text, n.tags, n.modified_at, nt.name AS note_type_name,
            n.release_day,   -- the lesson this note is assigned to (#242); gate-only, never an order
-           (SELECT count(*) FROM cards c WHERE c.note_id = n.id) AS card_count,
-           COALESCE((SELECT min(c2.import_due_position) FROM cards c2 WHERE c2.note_id = n.id), 2147483647)::bigint AS sort_key
+           count(c.id) AS card_count,
+           COALESCE(min(c.import_due_position), 2147483647)::bigint AS sort_key,
+           -- Whether every one of this note's cards is currently suspended for the CALLER (#223):
+           -- feeds the per-note Suspend/Unsuspend toggle's label (deck.html). bool_and over a
+           -- LEFT JOIN so a never-seen card (no user_card_state row) counts as "not suspended"
+           -- rather than dropping out of the aggregate. card_count/sort_key reuse this same
+           -- cards join instead of their own correlated subqueries -- one join-and-aggregate over
+           -- cards/user_card_state rather than three separate touches of the same table (#223 review).
+           bool_and(COALESCE(ucs.suspended, false)) AS all_suspended
     FROM notes n
     JOIN note_types nt ON nt.id = n.note_type_id
     JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = sqlc.arg(user_id) AND da.can_view
+    LEFT JOIN cards c ON c.note_id = n.id
+    LEFT JOIN user_card_state ucs ON ucs.user_id = sqlc.arg(user_id) AND ucs.card_id = c.id
     WHERE n.deck_id = sqlc.arg(deck_id)
+    GROUP BY n.id, nt.sort_field_idx, nt.name
 )
-SELECT id, sort_text, tags, modified_at, note_type_name, release_day, card_count, sort_key
+SELECT id, sort_text, tags, modified_at, note_type_name, release_day, card_count, sort_key, all_suspended
 FROM ordered_notes
 WHERE sqlc.arg(at_start)::boolean
    OR (sort_key, id) > (sqlc.arg(cursor_sort_key)::bigint, sqlc.arg(cursor_id)::uuid)
@@ -192,6 +202,29 @@ JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = sqlc.arg(user_id)
 WHERE n.deck_id = sqlc.arg(deck_id)
 GROUP BY 1
 ORDER BY 1;
+
+-- #223: suspend (or unsuspend, toggling) every card under one note, for the caller's own
+-- user_card_state rows only. Authorised on can_study (not can_edit_content, unlike the other
+-- bulk-* routes in this file, which edit deck content) -- this writes the caller's own
+-- scheduling state. A never-seen card has no row yet, so this upserts one per card with the
+-- same due=now() neutral default as UpsertUserCardStateSettings.
+-- name: ToggleSuspendCardsForNote :execrows
+WITH target_cards AS (
+    SELECT c.id AS card_id
+    FROM cards c
+    JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = sqlc.arg(user_id)
+                       AND da.can_view AND da.can_study
+    WHERE c.note_id = sqlc.arg(note_id) AND c.deck_id = sqlc.arg(deck_id)
+), currently AS (
+    SELECT bool_and(COALESCE(ucs.suspended, false)) AS all_suspended
+    FROM target_cards tc
+    LEFT JOIN user_card_state ucs ON ucs.user_id = sqlc.arg(user_id) AND ucs.card_id = tc.card_id
+)
+INSERT INTO user_card_state (user_id, card_id, due, suspended)
+SELECT sqlc.arg(user_id), tc.card_id, now(), NOT currently.all_suspended
+FROM target_cards tc, currently
+ON CONFLICT (user_id, card_id) DO UPDATE
+SET suspended = EXCLUDED.suspended;
 
 -- Removes tags idempotently and leaves every unrelated tag untouched. COALESCE keeps a note
 -- that loses its last tag at '{}' rather than NULL (notes.tags is NOT NULL, migration 00008).

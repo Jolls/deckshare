@@ -52,6 +52,42 @@ func currentRetention(ctx context.Context, store db.Beginner, userID pgtype.UUID
 	return retention, nil
 }
 
+// settingsView is the render data for pages["settings"]. Every /settings handler branch
+// builds one via buildSettingsView and renders it directly, so a field the template needs
+// on every render (Version, DesiredRetention, User) cannot be silently omitted by a branch
+// that only means to set one section's error/success message (#218).
+type settingsView struct {
+	User             db.User
+	Version          string
+	DesiredRetention float64
+	// BodyClass unconditionally read by layout.html:13; a struct field, unlike a map key,
+	// errors at template execution if absent rather than rendering empty, so it must be
+	// declared even though /settings never needs a non-default value (unlike review.go's
+	// "hide-account-bar").
+	BodyClass string
+
+	AvatarError     string
+	AvatarSuccess   string
+	ProfileError    string
+	ProfileSuccess  string
+	PasswordError   string
+	PasswordSuccess string
+	FsrsError       string
+	FsrsSuccess     string
+}
+
+// buildSettingsView assembles the fields every /settings render needs regardless of which
+// section's form was submitted. Callers set whichever section-specific Error/Success field
+// applies before rendering; the rest stay at their zero value (""), which errorMsg/successMsg
+// already render as nothing.
+func buildSettingsView(user db.User, retention float64) settingsView {
+	return settingsView{
+		User:             user,
+		Version:          appVersion,
+		DesiredRetention: retention,
+	}
+}
+
 func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginner, pages map[string]*template.Template, blobs *media.Store) {
 	mux.Handle("GET /settings", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, _ := auth.UserFromContext(r.Context())
@@ -60,12 +96,17 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 			serverError(w, r, err)
 			return
 		}
-		render(w, pages["settings"], http.StatusOK, map[string]any{"User": user, "DesiredRetention": retention, "Version": appVersion})
+		render(w, pages["settings"], http.StatusOK, buildSettingsView(user, retention))
 	})))
 
 	mux.Handle("POST /settings", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, _ := auth.UserFromContext(r.Context())
 		if !parseForm(w, r) {
+			return
+		}
+		retention, err := currentRetention(r.Context(), store, user.ID)
+		if err != nil {
+			serverError(w, r, err)
 			return
 		}
 		displayName := r.PostForm.Get("display_name")
@@ -84,11 +125,9 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		if atoiErr != nil || dayStartHour < math.MinInt16 || dayStartHour > math.MaxInt16 {
 			// This only guards the int16 conversion below against overflow -- the actual
 			// 0-23 business rule is enforced once, downstream in a.UpdateProfile.
-			render(w, pages["settings"], http.StatusBadRequest, map[string]any{
-				"User":         user,
-				"Version":      appVersion,
-				"ProfileError": "Day start hour must be a valid number",
-			})
+			view := buildSettingsView(user, retention)
+			view.ProfileError = "Day start hour must be a valid number"
+			render(w, pages["settings"], http.StatusBadRequest, view)
 			return
 		}
 
@@ -98,19 +137,15 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 				serverError(w, r, err)
 				return
 			}
-			render(w, pages["settings"], status, map[string]any{
-				"User":         user,
-				"Version":      appVersion,
-				"ProfileError": msg,
-			})
+			view := buildSettingsView(user, retention)
+			view.ProfileError = msg
+			render(w, pages["settings"], status, view)
 			return
 		}
 
-		render(w, pages["settings"], http.StatusOK, map[string]any{
-			"User":           user,
-			"Version":        appVersion,
-			"ProfileSuccess": "Profile updated",
-		})
+		view := buildSettingsView(user, retention)
+		view.ProfileSuccess = "Profile updated"
+		render(w, pages["settings"], http.StatusOK, view)
 	})))
 
 	mux.Handle("POST /settings/password", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -118,16 +153,19 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		if !parseForm(w, r) {
 			return
 		}
+		retention, err := currentRetention(r.Context(), store, user.ID)
+		if err != nil {
+			serverError(w, r, err)
+			return
+		}
 		currentPassword := r.PostForm.Get("current_password")
 		newPassword := r.PostForm.Get("new_password")
 		confirmPassword := r.PostForm.Get("confirm_password")
 
 		if newPassword != confirmPassword {
-			render(w, pages["settings"], http.StatusBadRequest, map[string]any{
-				"User":          user,
-				"Version":       appVersion,
-				"PasswordError": "Passwords do not match",
-			})
+			view := buildSettingsView(user, retention)
+			view.PasswordError = "Passwords do not match"
+			render(w, pages["settings"], http.StatusBadRequest, view)
 			return
 		}
 
@@ -146,21 +184,17 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 			if retryAfter != "" {
 				w.Header().Set("Retry-After", retryAfter)
 			}
-			render(w, pages["settings"], status, map[string]any{
-				"User":          user,
-				"Version":       appVersion,
-				"PasswordError": msg,
-			})
+			view := buildSettingsView(user, retention)
+			view.PasswordError = msg
+			render(w, pages["settings"], status, view)
 			return
 		}
 
 		// Must precede render: render calls w.WriteHeader, after which headers are frozen.
 		auth.SetSessionCookie(w, token)
-		render(w, pages["settings"], http.StatusOK, map[string]any{
-			"User":            user,
-			"Version":         appVersion,
-			"PasswordSuccess": "Password changed",
-		})
+		view := buildSettingsView(user, retention)
+		view.PasswordSuccess = "Password changed"
+		render(w, pages["settings"], http.StatusOK, view)
 	})))
 
 	mux.Handle("POST /settings/fsrs", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -170,19 +204,17 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		}
 		retention, atoiErr := strconv.ParseFloat(r.PostForm.Get("desired_retention"), 64)
 		if atoiErr != nil {
-			render(w, pages["settings"], http.StatusBadRequest, map[string]any{
-				"User": user, "DesiredRetention": retention, "Version": appVersion,
-				"FsrsError": "Desired retention must be a number",
-			})
+			view := buildSettingsView(user, retention)
+			view.FsrsError = "Desired retention must be a number"
+			render(w, pages["settings"], http.StatusBadRequest, view)
 			return
 		}
 
 		params, err := fsrs.NewDefaultParams(retention)
 		if err != nil {
-			render(w, pages["settings"], http.StatusBadRequest, map[string]any{
-				"User": user, "DesiredRetention": retention, "Version": appVersion,
-				"FsrsError": "Desired retention must be between 0 and 1",
-			})
+			view := buildSettingsView(user, retention)
+			view.FsrsError = "Desired retention must be between 0 and 1"
+			render(w, pages["settings"], http.StatusBadRequest, view)
 			return
 		}
 
@@ -194,10 +226,9 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 			return
 		}
 
-		render(w, pages["settings"], http.StatusOK, map[string]any{
-			"User": user, "DesiredRetention": retention, "Version": appVersion,
-			"FsrsSuccess": "Retention target updated",
-		})
+		view := buildSettingsView(user, retention)
+		view.FsrsSuccess = "Retention target updated"
+		render(w, pages["settings"], http.StatusOK, view)
 	})))
 
 	// The old avatar (if any) is not deleted here: it's simply no longer referenced by this row,
@@ -214,25 +245,25 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 
 		r.Body = http.MaxBytesReader(w, r.Body, maxAvatarUploadBytes)
 		if err := r.ParseMultipartForm(maxAvatarUploadBytes); err != nil {
-			render(w, pages["settings"], http.StatusBadRequest, map[string]any{
-				"User": user, "DesiredRetention": retention, "AvatarError": "Image too large",
-			})
+			view := buildSettingsView(user, retention)
+			view.AvatarError = "Image too large"
+			render(w, pages["settings"], http.StatusBadRequest, view)
 			return
 		}
 		file, _, err := r.FormFile("avatar")
 		if err != nil {
-			render(w, pages["settings"], http.StatusBadRequest, map[string]any{
-				"User": user, "DesiredRetention": retention, "AvatarError": "Choose an image to upload",
-			})
+			view := buildSettingsView(user, retention)
+			view.AvatarError = "Choose an image to upload"
+			render(w, pages["settings"], http.StatusBadRequest, view)
 			return
 		}
 		defer func() { _ = file.Close() }()
 
 		data, err := io.ReadAll(file)
 		if err != nil {
-			render(w, pages["settings"], http.StatusBadRequest, map[string]any{
-				"User": user, "DesiredRetention": retention, "AvatarError": "Could not read upload",
-			})
+			view := buildSettingsView(user, retention)
+			view.AvatarError = "Could not read upload"
+			render(w, pages["settings"], http.StatusBadRequest, view)
 			return
 		}
 
@@ -240,15 +271,15 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		// anything else means a bypassed client rather than a legitimate format to support.
 		cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
 		if err != nil || format != "jpeg" {
-			render(w, pages["settings"], http.StatusBadRequest, map[string]any{
-				"User": user, "DesiredRetention": retention, "AvatarError": "Avatar must be a JPEG image",
-			})
+			view := buildSettingsView(user, retention)
+			view.AvatarError = "Avatar must be a JPEG image"
+			render(w, pages["settings"], http.StatusBadRequest, view)
 			return
 		}
 		if cfg.Width > maxAvatarDimension || cfg.Height > maxAvatarDimension {
-			render(w, pages["settings"], http.StatusBadRequest, map[string]any{
-				"User": user, "DesiredRetention": retention, "AvatarError": "Image dimensions too large",
-			})
+			view := buildSettingsView(user, retention)
+			view.AvatarError = "Image dimensions too large"
+			render(w, pages["settings"], http.StatusBadRequest, view)
 			return
 		}
 
@@ -287,9 +318,9 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		}
 
 		user.AvatarSha256 = pgtype.Text{String: sha, Valid: true}
-		render(w, pages["settings"], http.StatusOK, map[string]any{
-			"User": user, "DesiredRetention": retention, "AvatarSuccess": "Avatar updated",
-		})
+		view := buildSettingsView(user, retention)
+		view.AvatarSuccess = "Avatar updated"
+		render(w, pages["settings"], http.StatusOK, view)
 	})))
 
 	// Self-only (no cohort/sharing concept exists yet to define "who else may see this user").

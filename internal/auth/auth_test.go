@@ -13,6 +13,12 @@ func TestNew_InvalidOrigin(t *testing.T) {
 	}
 }
 
+func TestNew_InvalidSignupMode(t *testing.T) {
+	if _, err := New(nil, Config{SignupMode: "sometimes"}); err == nil {
+		t.Error("New with an invalid Config.SignupMode should error")
+	}
+}
+
 func TestValidateEmail(t *testing.T) {
 	tests := []struct {
 		name  string

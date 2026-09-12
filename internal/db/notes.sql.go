@@ -433,14 +433,24 @@ const listNotesInDeck = `-- name: ListNotesInDeck :many
 WITH ordered_notes AS (
     SELECT n.id, n.fields ->> nt.sort_field_idx AS sort_text, n.tags, n.modified_at, nt.name AS note_type_name,
            n.release_day,   -- the lesson this note is assigned to (#242); gate-only, never an order
-           (SELECT count(*) FROM cards c WHERE c.note_id = n.id) AS card_count,
-           COALESCE((SELECT min(c2.import_due_position) FROM cards c2 WHERE c2.note_id = n.id), 2147483647)::bigint AS sort_key
+           count(c.id) AS card_count,
+           COALESCE(min(c.import_due_position), 2147483647)::bigint AS sort_key,
+           -- Whether every one of this note's cards is currently suspended for the CALLER (#223):
+           -- feeds the per-note Suspend/Unsuspend toggle's label (deck.html). bool_and over a
+           -- LEFT JOIN so a never-seen card (no user_card_state row) counts as "not suspended"
+           -- rather than dropping out of the aggregate. card_count/sort_key reuse this same
+           -- cards join instead of their own correlated subqueries -- one join-and-aggregate over
+           -- cards/user_card_state rather than three separate touches of the same table (#223 review).
+           bool_and(COALESCE(ucs.suspended, false)) AS all_suspended
     FROM notes n
     JOIN note_types nt ON nt.id = n.note_type_id
     JOIN deck_access da ON da.deck_id = n.deck_id AND da.user_id = $5 AND da.can_view
+    LEFT JOIN cards c ON c.note_id = n.id
+    LEFT JOIN user_card_state ucs ON ucs.user_id = $5 AND ucs.card_id = c.id
     WHERE n.deck_id = $6
+    GROUP BY n.id, nt.sort_field_idx, nt.name
 )
-SELECT id, sort_text, tags, modified_at, note_type_name, release_day, card_count, sort_key
+SELECT id, sort_text, tags, modified_at, note_type_name, release_day, card_count, sort_key, all_suspended
 FROM ordered_notes
 WHERE $1::boolean
    OR (sort_key, id) > ($2::bigint, $3::uuid)
@@ -466,6 +476,7 @@ type ListNotesInDeckRow struct {
 	ReleaseDay   int32
 	CardCount    int64
 	SortKey      int64
+	AllSuspended bool
 }
 
 // Teaching-order keyset pagination (#90, needed by #238's release-day pacing: assigning lesson
@@ -505,6 +516,7 @@ func (q *Queries) ListNotesInDeck(ctx context.Context, arg ListNotesInDeckParams
 			&i.ReleaseDay,
 			&i.CardCount,
 			&i.SortKey,
+			&i.AllSuspended,
 		); err != nil {
 			return nil, err
 		}
@@ -624,6 +636,44 @@ type RemapNoteFieldsParams struct {
 // costs one UPDATE regardless of note count -- it scales in rows touched, not round trips.
 func (q *Queries) RemapNoteFields(ctx context.Context, arg RemapNoteFieldsParams) (int64, error) {
 	result, err := q.db.Exec(ctx, remapNoteFields, arg.OldOrdinals, arg.NoteTypeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const toggleSuspendCardsForNote = `-- name: ToggleSuspendCardsForNote :execrows
+WITH target_cards AS (
+    SELECT c.id AS card_id
+    FROM cards c
+    JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $1
+                       AND da.can_view AND da.can_study
+    WHERE c.note_id = $2 AND c.deck_id = $3
+), currently AS (
+    SELECT bool_and(COALESCE(ucs.suspended, false)) AS all_suspended
+    FROM target_cards tc
+    LEFT JOIN user_card_state ucs ON ucs.user_id = $1 AND ucs.card_id = tc.card_id
+)
+INSERT INTO user_card_state (user_id, card_id, due, suspended)
+SELECT $1, tc.card_id, now(), NOT currently.all_suspended
+FROM target_cards tc, currently
+ON CONFLICT (user_id, card_id) DO UPDATE
+SET suspended = EXCLUDED.suspended
+`
+
+type ToggleSuspendCardsForNoteParams struct {
+	UserID pgtype.UUID
+	NoteID pgtype.UUID
+	DeckID pgtype.UUID
+}
+
+// #223: suspend (or unsuspend, toggling) every card under one note, for the caller's own
+// user_card_state rows only. Authorised on can_study (not can_edit_content, unlike the other
+// bulk-* routes in this file, which edit deck content) -- this writes the caller's own
+// scheduling state. A never-seen card has no row yet, so this upserts one per card with the
+// same due=now() neutral default as UpsertUserCardStateSettings.
+func (q *Queries) ToggleSuspendCardsForNote(ctx context.Context, arg ToggleSuspendCardsForNoteParams) (int64, error) {
+	result, err := q.db.Exec(ctx, toggleSuspendCardsForNote, arg.UserID, arg.NoteID, arg.DeckID)
 	if err != nil {
 		return 0, err
 	}
