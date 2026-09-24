@@ -3,6 +3,7 @@ package apkg
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 )
 
 // protoWireType is the low three bits of a protobuf tag.
@@ -41,7 +42,7 @@ func decodeProto(b []byte) ([]protoField, error) {
 			return nil, fmt.Errorf("apkg: truncated protobuf tag: %w", ErrSchema18Config)
 		}
 		b = b[n:]
-		num := uint32(tag >> 3)
+		num := uint32(tag >> 3) //nolint:gosec // G115: protobuf field numbers are 29-bit; a malformed larger one truncates to a field no reader looks up
 		wt := protoWireType(tag & 0x7)
 		switch wt {
 		case protoVarint:
@@ -116,6 +117,16 @@ func protoString(fields []protoField, n uint32) (string, bool) {
 func protoUint(fields []protoField, n uint32) (uint64, bool) {
 	f, ok := protoLast(fields, n, protoVarint)
 	return f.Varint, ok
+}
+
+// protoInt32 is protoUint for a value the IR carries as int32. A value past int32 range -- only
+// a malformed or hostile file has one -- reads as absent (0) rather than wrapping.
+func protoInt32(fields []protoField, n uint32) int32 {
+	v, _ := protoUint(fields, n)
+	if v > math.MaxInt32 {
+		return 0
+	}
+	return int32(v) //nolint:gosec // G115: range-checked above
 }
 
 // protoMessage returns the last length-delimited occurrence of n, decoded as a nested message.

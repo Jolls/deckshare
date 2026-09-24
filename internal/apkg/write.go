@@ -16,7 +16,7 @@ import (
 
 // WriteFile serialises col as a .apkg package and writes it to path.
 func WriteFile(col *IrCollection, path string) error {
-	f, err := os.Create(path)
+	f, err := os.Create(path) //nolint:gosec // path is a trusted local filesystem path supplied by the caller, not raw network input
 	if err != nil {
 		return fmt.Errorf("apkg: creating %q: %w", path, err)
 	}
@@ -105,7 +105,7 @@ func buildCollection(col *IrCollection) ([]byte, error) {
 		return nil, fmt.Errorf("apkg: closing temp collection file: %w", err)
 	}
 
-	b, err := os.ReadFile(p)
+	b, err := os.ReadFile(p) //nolint:gosec // path is a trusted local filesystem path supplied by the caller, not raw network input
 	if err != nil {
 		return nil, fmt.Errorf("apkg: reading temp collection file: %w", err)
 	}

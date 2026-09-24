@@ -6,8 +6,10 @@ package apkg
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -221,6 +223,64 @@ func TestRead_NegativeIntervalIsSeconds(t *testing.T) {
 	}
 	if got := intervalSeconds(3); got != 259200 {
 		t.Errorf("intervalSeconds(3) = %d, want 259200", got)
+	}
+}
+
+// A value no real collection holds must saturate, never wrap into a plausible one.
+func TestRead_OutOfRangeIntegersSaturate(t *testing.T) {
+	for _, ivl := range []int64{math.MaxInt64 / secondsPerDay * 2, math.MinInt64} {
+		if got := intervalSeconds(ivl); got != math.MaxInt64 {
+			t.Errorf("intervalSeconds(%d) = %d, want MaxInt64", ivl, got)
+		}
+	}
+	for v, want := range map[int64]int32{1 << 40: math.MaxInt32, -1 << 40: math.MinInt32, 42: 42} {
+		if got := clampInt32(v); got != want {
+			t.Errorf("clampInt32(%d) = %d, want %d", v, got, want)
+		}
+	}
+	if got := resolveDue(ankiQueueNew, ankiTypeNew, 1<<32+5, 0, 0, time.Time{}); got.Position != math.MaxInt32 {
+		t.Errorf("new-card position 2^32+5 = %d, want MaxInt32 (not a wrapped 5)", got.Position)
+	}
+
+	fields, err := decodeProto(append(encodeProtoVarint(1, 1<<32+5), encodeProtoVarint(2, 7)...))
+	if err != nil {
+		t.Fatalf("decodeProto: %v", err)
+	}
+	if got := protoInt32(fields, 1); got != 0 {
+		t.Errorf("protoInt32 of 2^32+5 = %d, want 0 (absent), not a wrapped 5", got)
+	}
+	if got := protoInt32(fields, 2); got != 7 {
+		t.Errorf("protoInt32 of 7 = %d, want 7", got)
+	}
+}
+
+// review_log CHECKs rating 1..4 and review_kind 0..4; a revlog row outside them is dropped with
+// a warning rather than failing the import or wrapping into a valid-looking rating (65537 -> 1).
+func TestRead_RevlogOutOfRangeRowsDropped(t *testing.T) {
+	spec := defaultSynthSpec(t)
+	spec.Revlog = append(spec.Revlog,
+		synthRevlog{AnkiID: 303, CardAnkiID: 201, Ease: 65537, Ivl: 1, Type: 1},
+		synthRevlog{AnkiID: 304, CardAnkiID: 201, Ease: 5, Ivl: 1, Type: 1},
+		synthRevlog{AnkiID: 305, CardAnkiID: 201, Ease: 3, Ivl: 1, Type: 65537},
+	)
+	got := readBytes(t, buildSchema11Package(t, spec))
+
+	if len(got.Reviews) != 2 {
+		t.Fatalf("reviews = %d, want the 2 in-range rows", len(got.Reviews))
+	}
+	for _, r := range got.Reviews {
+		if r.AnkiID >= 303 {
+			t.Errorf("out-of-range revlog row %d was kept as rating %d kind %d", r.AnkiID, r.Rating, r.Kind)
+		}
+	}
+	dropped := 0
+	for _, w := range got.Warnings {
+		if strings.Contains(w, "out-of-range ease") {
+			dropped++
+		}
+	}
+	if dropped != 3 {
+		t.Errorf("out-of-range warnings = %d, want 3: %q", dropped, got.Warnings)
 	}
 }
 

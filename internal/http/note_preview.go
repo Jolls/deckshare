@@ -206,8 +206,8 @@ func buildNotePreview(ctx context.Context, q *db.Queries, userID pgtype.UUID, no
 		// renderQueueRows. It matters: the type-answer widget must not be fed through the media
 		// rewriter's HTML tokeniser (docs/plans/127-render-sanitization-audit.md), which is
 		// exactly what happens if these two steps swap.
-		rendered.Question.HTML = template.HTML(noterender.RewriteMediaSrcs(string(rendered.Question.HTML), resolveMedia))
-		rendered.Answer.HTML = template.HTML(noterender.RewriteMediaSrcs(string(rendered.Answer.HTML), resolveMedia))
+		rendered.Question.HTML = template.HTML(noterender.RewriteMediaSrcs(string(rendered.Question.HTML), resolveMedia)) //nolint:gosec // HTML was sanitised by render; RewriteMediaSrcs only rewrites media src URLs
+		rendered.Answer.HTML = template.HTML(noterender.RewriteMediaSrcs(string(rendered.Answer.HTML), resolveMedia))     //nolint:gosec // HTML was sanitised by render; RewriteMediaSrcs only rewrites media src URLs
 		cards = append(cards, previewCardView{
 			Number:   i + 1,
 			Question: noterender.TypeAnswerInput(rendered.Question),

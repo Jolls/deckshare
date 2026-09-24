@@ -123,7 +123,7 @@ func finaliseRendered(html string, ta *TypeAnswer) (Rendered, error) {
 			return Rendered{}, fmt.Errorf("render: type answer placeholder appeared %d times, want 1", n)
 		}
 	}
-	return Rendered{HTML: template.HTML(html), Type: ta}, nil
+	return Rendered{HTML: template.HTML(html), Type: ta}, nil //nolint:gosec // html already passed through sanitiseCardHTML above
 }
 
 type frame struct {

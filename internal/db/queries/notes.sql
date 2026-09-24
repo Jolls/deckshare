@@ -175,7 +175,10 @@ SET tags = (SELECT array_agg(DISTINCT t ORDER BY t) FROM unnest(n.tags || sqlc.a
 FROM deck_access da
 WHERE n.id = ANY(sqlc.arg(note_ids)::uuid[]) AND n.deck_id = sqlc.arg(deck_id)
   AND da.deck_id = n.deck_id AND da.user_id = sqlc.arg(user_id)
-  AND da.can_view AND da.can_edit_content;
+  AND da.can_view AND da.can_edit_content
+  -- #231: a note the merge would push past max_tags is skipped, so repeated adds cannot grow a
+  -- note's tag list without bound.
+  AND cardinality(ARRAY(SELECT DISTINCT t FROM unnest(n.tags || sqlc.arg(tags)::text[]) AS t)) <= sqlc.arg(max_tags)::int;
 
 -- Assigns the lesson a selection of notes belongs to (#242) -- the same bulk surface and the same
 -- per-row authorization shape as the tag actions below. 0 is how a lesson is un-assigned: it is

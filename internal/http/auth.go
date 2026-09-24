@@ -96,6 +96,61 @@ func registerAuthRoutes(mux *http.ServeMux, a *auth.Service, pages map[string]*t
 		http.Redirect(w, r, "/decks", http.StatusSeeOther)
 	})
 
+	// Operator-issued reset (#225): the link is minted only by cmd/reset-password, never over
+	// HTTP. Rendered regardless of an existing session -- the person at the keyboard may be
+	// resetting an account whose stale session is still in this browser.
+	mux.HandleFunc("GET /reset-password", func(w http.ResponseWriter, r *http.Request) {
+		token := r.URL.Query().Get("token")
+		ok, err := a.PasswordResetValid(r.Context(), token)
+		if err != nil {
+			serverError(w, r, err)
+			return
+		}
+		if !ok {
+			render(w, pages["reset_password"], http.StatusOK, map[string]any{"Invalid": true})
+			return
+		}
+		render(w, pages["reset_password"], http.StatusOK, map[string]any{"Token": token})
+	})
+
+	mux.HandleFunc("POST /reset-password", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			badRequest(w)
+			return
+		}
+		token := r.PostForm.Get("token")
+		newPassword := r.PostForm.Get("new_password")
+		confirmPassword := r.PostForm.Get("confirm_password")
+
+		if newPassword != confirmPassword {
+			render(w, pages["reset_password"], http.StatusBadRequest,
+				map[string]any{"Token": token, "Error": "Passwords do not match"})
+			return
+		}
+
+		sessionToken, err := a.ResetPassword(r.Context(), trusted.clientIP(r), token, newPassword)
+		if err != nil {
+			status, msg, retryAfter, ok := classifyFormError(err, func(e error) (int, string, bool) {
+				if errors.Is(e, auth.ErrInvalidResetToken) {
+					return http.StatusBadRequest, "This reset link is invalid, expired, or already used. Ask for a new one.", true
+				}
+				return 0, "", false
+			})
+			if !ok {
+				serverError(w, r, err)
+				return
+			}
+			if retryAfter != "" {
+				w.Header().Set("Retry-After", retryAfter)
+			}
+			render(w, pages["reset_password"], status, map[string]any{"Token": token, "Error": msg})
+			return
+		}
+
+		auth.SetSessionCookie(w, sessionToken)
+		http.Redirect(w, r, "/decks", http.StatusSeeOther)
+	})
+
 	mux.Handle("POST /logout", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var token string
 		if cookie, err := r.Cookie(auth.CookieName); err == nil {

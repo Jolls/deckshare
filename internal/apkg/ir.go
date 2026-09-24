@@ -1,6 +1,7 @@
 package apkg
 
 import (
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -143,12 +144,24 @@ const secondsPerDay = 86400
 
 // intervalSeconds normalises Anki's dual-unit interval: days when positive, seconds when
 // negative (apkg-format.md). Applies to cards.ivl, revlog.ivl and revlog.lastIvl alike -- the IR
-// carries seconds throughout so the distinction cannot reappear downstream.
+// carries seconds throughout so the distinction cannot reappear downstream. Saturates rather than
+// overflowing on a value no real collection holds, so a hostile ivl cannot wrap into a plausible
+// interval.
 func intervalSeconds(ivl int64) int64 {
-	if ivl < 0 {
+	switch {
+	case ivl == math.MinInt64, ivl > math.MaxInt64/secondsPerDay:
+		return math.MaxInt64
+	case ivl < 0:
 		return -ivl
 	}
 	return ivl * secondsPerDay
+}
+
+// clampInt32 saturates an int64 read from a package into int32 range. Every int64 -> int32
+// narrowing of package data goes through here: a bare conversion would wrap an out-of-range value
+// (only a malformed or hostile file has one) into a plausible-looking wrong one.
+func clampInt32(v int64) int32 {
+	return int32(min(max(v, math.MinInt32), math.MaxInt32)) //nolint:gosec // G115: clamped into int32 range on this line
 }
 
 // splitFields splits notes.flds on \x1f (unit separator).
@@ -187,14 +200,14 @@ func resolveDue(queue, typ int32, due, odue, odid int64, crt time.Time) IrDue {
 	}
 	switch queue {
 	case ankiQueueNew:
-		return IrDue{Kind: DuePosition, Position: int32(v)}
+		return IrDue{Kind: DuePosition, Position: clampInt32(v)}
 	case ankiQueueLearning, ankiQueuePreview:
 		return IrDue{Kind: DueAt, At: time.Unix(v, 0).UTC()}
 	case ankiQueueReview, ankiQueueDayLearning:
 		return IrDue{Kind: DueAt, At: crt.Add(time.Duration(v) * 24 * time.Hour)}
 	case ankiQueueSuspended, ankiQueueSchedBuried, ankiQueueUserBuried:
 		if typ == ankiTypeNew {
-			return IrDue{Kind: DuePosition, Position: int32(v)}
+			return IrDue{Kind: DuePosition, Position: clampInt32(v)}
 		}
 		if v >= epochSecondsThreshold {
 			return IrDue{Kind: DueAt, At: time.Unix(v, 0).UTC()}

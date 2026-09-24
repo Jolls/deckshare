@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -78,6 +79,23 @@ func pluralDecks(n int) string {
 	return fmt.Sprintf("%d decks", n)
 }
 
+// #231: the note-type form is the one input surface that establishes a permanent storage
+// multiplier -- a note type with N templates generates N cards for every note ever written with
+// it (desiredCards, notes.go) -- so it is bounded here the way every other write surface already
+// is (deck name <= 200, note field <= 64 KiB, bulk selection <= 200). Names are counted in
+// characters (runes), the unit the form's maxlength and the error messages use; CSS and formats in
+// bytes, matching validateNoteFields's maxFieldBytes. The .apkg importer is deliberately not
+// subject to these (it carries someone else's already-authored deck, and a hard limit there would
+// fail a legitimate import) -- which is why an edit grandfathers what it doesn't change
+// (noteTypeLimitErr).
+const (
+	maxFieldsPerNoteType    = 64
+	maxTemplatesPerNoteType = 64
+	maxNameChars            = 200 // deck, note-type, field and template names alike
+	maxCSSBytes             = 64 * 1024
+	maxFormatBytes          = 64 * 1024 // qfmt / afmt each
+)
+
 func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]*template.Template) {
 	mux.Handle("GET /note-types", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, _ := auth.UserFromContext(r.Context())
@@ -134,6 +152,14 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 				return
 			}
 			templates = append(templates, db.TemplateEdit{Name: n, Qfmt: templateQfmts[i], Afmt: templateAfmts[i]})
+		}
+		fields := make([]db.FieldEdit, len(fieldNames))
+		for i, n := range fieldNames {
+			fields[i] = db.FieldEdit{Name: n}
+		}
+		if msg := noteTypeLimitErr(name, css, fields, templates, db.NoteType{}, nil, nil); msg != "" {
+			http.Error(w, msg, http.StatusBadRequest)
+			return
 		}
 
 		tx, ok := startTx(w, r, store)
@@ -245,6 +271,10 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 			serverError(w, r, err)
 			return
 		}
+		if msg := noteTypeLimitErr(name, css, fields, templates, nt, existingFields, existingTemplates); msg != "" {
+			http.Error(w, msg, http.StatusBadRequest)
+			return
+		}
 
 		structural := db.FieldOrderChanged(existingFields, fields) || db.TemplateOrderChanged(existingTemplates, templates)
 		noteCount, err := q.CountNotesOfNoteType(r.Context(), id)
@@ -317,6 +347,52 @@ func registerNoteTypeRoutes(mux *http.ServeMux, store db.Beginner, pages map[str
 		}
 		http.Redirect(w, r, "/note-types", http.StatusSeeOther)
 	})))
+}
+
+// noteTypeLimitErr applies #231's limits to a note-type write, returning the user-facing reason it
+// is over one, or "" when it is within them. prev, prevFields and prevTemplates are the note type
+// being edited (zero values for a create): since imports are not bounded, a value the edit leaves
+// alone is grandfathered -- a count may stay where it is, and an unchanged name, CSS or format
+// passes at any size -- or resubmitting an imported note type's own form would make it uneditable.
+// Unchanged is judged by ID, so a new row always gets the limit.
+func noteTypeLimitErr(name, css string, fields []db.FieldEdit, templates []db.TemplateEdit, prev db.NoteType, prevFields []db.Field, prevTemplates []db.Template) string {
+	if name != prev.Name && utf8.RuneCountInString(name) > maxNameChars {
+		return fmt.Sprintf("the note type name is too long (max %d characters)", maxNameChars)
+	}
+	if css != prev.Css && len(css) > maxCSSBytes {
+		return fmt.Sprintf("the CSS is too large (max %d KiB)", maxCSSBytes/1024)
+	}
+	if len(fields) > maxFieldsPerNoteType && len(fields) > len(prevFields) {
+		return fmt.Sprintf("a note type can have at most %d fields", maxFieldsPerNoteType)
+	}
+	if len(templates) > maxTemplatesPerNoteType && len(templates) > len(prevTemplates) {
+		return fmt.Sprintf("a note type can have at most %d templates", maxTemplatesPerNoteType)
+	}
+
+	prevFieldNames := make(map[pgtype.UUID]string, len(prevFields))
+	for _, f := range prevFields {
+		prevFieldNames[f.ID] = f.Name
+	}
+	for i, f := range fields {
+		if f.Name != prevFieldNames[f.ID] && utf8.RuneCountInString(f.Name) > maxNameChars {
+			return fmt.Sprintf("field %d's name is too long (max %d characters)", i+1, maxNameChars)
+		}
+	}
+
+	prevTemplatesByID := make(map[pgtype.UUID]db.Template, len(prevTemplates))
+	for _, t := range prevTemplates {
+		prevTemplatesByID[t.ID] = t
+	}
+	for i, t := range templates {
+		p := prevTemplatesByID[t.ID]
+		if t.Name != p.Name && utf8.RuneCountInString(t.Name) > maxNameChars {
+			return fmt.Sprintf("template %d's name is too long (max %d characters)", i+1, maxNameChars)
+		}
+		if (t.Qfmt != p.Qfmt && len(t.Qfmt) > maxFormatBytes) || (t.Afmt != p.Afmt && len(t.Afmt) > maxFormatBytes) {
+			return fmt.Sprintf("template %d's question or answer format is too large (max %d KiB each)", i+1, maxFormatBytes/1024)
+		}
+	}
+	return ""
 }
 
 func trimmedNonEmpty(vals []string) []string {

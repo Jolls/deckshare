@@ -8,6 +8,33 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.12] - 2026-09-24
+
+### Added
+- Operator password reset: `go run ./cmd/reset-password <email>` prints a single-use,
+  24-hour reset link for the operator to relay out of band; `/reset-password` consumes it,
+  sets the password, and purges every session. No HTTP route mints a link and nothing is
+  emailed ([#225](https://github.com/Jolls/deckshare/issues/225)).
+- CI runs `govulncheck`, `gosec` (via golangci-lint), and `go test -race`
+  ([#233](https://github.com/Jolls/deckshare/issues/233)).
+
+### Fixed
+- `.apkg` import no longer lets out-of-range integers wrap: revlog rows with a rating outside
+  1–4 or a type outside 0–4 are dropped with a warning (a rating of 65537 was stored as
+  Again), a card type outside 0–3 imports without seeded state, and positions, intervals,
+  sort-field index and font size saturate or read as absent
+  ([#233](https://github.com/Jolls/deckshare/issues/233)).
+
+### Security
+- Note types, tags, and deck names are bounded: at most 64 fields and 64 templates per note
+  type, 200-character names, 64 KiB CSS and template formats, and at most 64 tags of 100
+  characters per note (bulk add included). Edits grandfather over-limit values an import
+  left behind ([#231](https://github.com/Jolls/deckshare/issues/231)).
+- Changing your password also revokes any outstanding reset link
+  ([#225](https://github.com/Jolls/deckshare/issues/225)).
+- `compose.yaml` publishes Postgres on `127.0.0.1` only, not every interface
+  ([#234](https://github.com/Jolls/deckshare/issues/234)).
+
 ## [0.3.11] - 2026-09-11
 
 ### Added

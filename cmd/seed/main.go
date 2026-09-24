@@ -756,7 +756,7 @@ func fieldsAndChecksum(first, second string) ([]byte, int64, error) {
 		return nil, 0, err
 	}
 	stripped := htmlTagRe.ReplaceAllString(first, "")
-	sum := sha1.Sum([]byte(stripped))
+	sum := sha1.Sum([]byte(stripped)) //nolint:gosec // Anki csum compatibility, not a security use of SHA-1
 	checksum := int64(binary.BigEndian.Uint32(sum[:4]))
 	return fieldsJSON, checksum, nil
 }

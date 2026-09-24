@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -1123,5 +1124,215 @@ func TestNoteTypeAccess_NewNoteForm_CollaboratorSeesDecksExistingNoteTypes(t *te
 	}
 	if n := countRows(t, tx, `SELECT count(*) FROM notes WHERE note_type_id = $1 AND deck_id = $2`, noteTypeID, deckID); n != 2 {
 		t.Errorf("deck should have 2 notes of this type (owner's + collaborator's), got %d", n)
+	}
+}
+
+// limitsBody builds a create-note-type body with nFields fields and nTemplates templates, for the
+// #231 boundary tests; mutate lets a case override one value.
+func limitsBody(name string, nFields, nTemplates int, mutate func(v url.Values)) string {
+	v := url.Values{}
+	v.Set("name", name)
+	v.Set("css", "")
+	for i := 0; i < nFields; i++ {
+		v.Add("field_name[]", fmt.Sprintf("F%d", i))
+	}
+	for i := 0; i < nTemplates; i++ {
+		v.Add("template_name[]", fmt.Sprintf("T%d", i))
+		v.Add("qfmt[]", "{{F0}}")
+		v.Add("afmt[]", "{{FrontSide}}")
+	}
+	if mutate != nil {
+		mutate(v)
+	}
+	return v.Encode()
+}
+
+// #231: each create-form limit is a boundary pair -- at the limit succeeds and writes, one over is
+// a 400 and writes nothing.
+func TestNoteTypeCreate_LimitBoundaries(t *testing.T) {
+	big := strings.Repeat("x", 64*1024)
+	over := big + "x"
+	tests := []struct {
+		name   string
+		body   string
+		wantOK bool
+	}{
+		{"fields at limit", limitsBody("L1", 64, 1, nil), true},
+		{"fields over limit", limitsBody("L2", 65, 1, nil), false},
+		{"templates at limit", limitsBody("L3", 1, 64, nil), true},
+		{"templates over limit", limitsBody("L4", 1, 65, nil), false},
+		{"name at limit", limitsBody(strings.Repeat("a", 200), 1, 1, nil), true},
+		{"name over limit", limitsBody(strings.Repeat("a", 201), 1, 1, nil), false},
+		{"non-ASCII name at limit", limitsBody(strings.Repeat("é", 200), 1, 1, nil), true},
+		{"field name at limit", limitsBody("L5", 1, 1, func(v url.Values) { v["field_name[]"] = []string{strings.Repeat("a", 200)} }), true},
+		{"field name over limit", limitsBody("L6", 1, 1, func(v url.Values) { v["field_name[]"] = []string{strings.Repeat("a", 201)} }), false},
+		{"template name at limit", limitsBody("L7", 1, 1, func(v url.Values) { v["template_name[]"] = []string{strings.Repeat("a", 200)} }), true},
+		{"template name over limit", limitsBody("L8", 1, 1, func(v url.Values) { v["template_name[]"] = []string{strings.Repeat("a", 201)} }), false},
+		{"css at limit", limitsBody("L9", 1, 1, func(v url.Values) { v.Set("css", big) }), true},
+		{"css over limit", limitsBody("L10", 1, 1, func(v url.Values) { v.Set("css", over) }), false},
+		{"qfmt at limit", limitsBody("L11", 1, 1, func(v url.Values) { v["qfmt[]"] = []string{big} }), true},
+		{"qfmt over limit", limitsBody("L12", 1, 1, func(v url.Values) { v["qfmt[]"] = []string{over} }), false},
+		{"afmt at limit", limitsBody("L13", 1, 1, func(v url.Values) { v["afmt[]"] = []string{big} }), true},
+		{"afmt over limit", limitsBody("L14", 1, 1, func(v url.Values) { v["afmt[]"] = []string{over} }), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tx := beginTx(t)
+			handler, a := newTestHandler(t, tx, auth.Config{})
+			email := testEmail()
+			cookie := loginCookie(t, tx, a, email, "correct-horse-battery")
+
+			w := doRequest(handler, "POST", "/note-types", tt.body, cookie, "http://example.com")
+			want := http.StatusSeeOther
+			if !tt.wantOK {
+				want = http.StatusBadRequest
+			}
+			if w.Code != want {
+				t.Fatalf("status = %d, want %d: %.200s", w.Code, want, w.Body.String())
+			}
+			parsed, err := url.ParseQuery(tt.body)
+			if err != nil {
+				t.Fatalf("parse body: %v", err)
+			}
+			rows := countRows(t, tx, `SELECT count(*) FROM note_types nt JOIN users u ON u.id = nt.owner_id WHERE nt.name = $1 AND u.email = $2`, parsed.Get("name"), email)
+			if tt.wantOK && rows != 1 {
+				t.Errorf("note type rows = %d, want 1", rows)
+			}
+			if !tt.wantOK && rows != 0 {
+				t.Errorf("rejected request still wrote %d note type rows", rows)
+			}
+		})
+	}
+}
+
+// createOwnBasic2 creates newNoteTypeBody's "Basic2" and returns its id, looked up by the owner's
+// email so another user's "Basic2" in a populated database is never picked up.
+func createOwnBasic2(t *testing.T, tx pgx.Tx, handler http.Handler, cookie *http.Cookie, email string) string {
+	t.Helper()
+	if w := doRequest(handler, "POST", "/note-types", newNoteTypeBody(), cookie, "http://example.com"); w.Code != http.StatusSeeOther {
+		t.Fatalf("create note type status = %d: %s", w.Code, w.Body.String())
+	}
+	var id string
+	if err := tx.QueryRow(context.Background(),
+		`SELECT nt.id FROM note_types nt JOIN users u ON u.id = nt.owner_id WHERE nt.name = 'Basic2' AND u.email = $1`, email,
+	).Scan(&id); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+	return id
+}
+
+// #231: the importer is not bounded, so an edit grandfathers the over-limit values it leaves alone
+// -- renaming an imported note type must not 400 on its own CSS, field name or format -- while a
+// value the edit does change is still bounded, with a message saying which one.
+func TestNoteTypeEdit_GrandfathersImportedValues(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	email := testEmail()
+	cookie := loginCookie(t, tx, a, email, "correct-horse-battery")
+	ctx := context.Background()
+
+	noteTypeID := createOwnBasic2(t, tx, handler, cookie, email)
+	front, back, tmpl := lookupFieldAndTemplate(t, tx, noteTypeID)
+	path := "/note-types/" + noteTypeID + "/edit"
+	big := strings.Repeat("x", 64*1024+1)
+	longName := strings.Repeat("a", 201)
+	if _, err := tx.Exec(ctx, `UPDATE note_types SET css = $2 WHERE id = $1`, noteTypeID, big); err != nil {
+		t.Fatalf("seed imported css: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE fields SET name = $2 WHERE id = $1`, front, longName); err != nil {
+		t.Fatalf("seed imported field name: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE templates SET qfmt = $2 WHERE id = $1`, tmpl, big); err != nil {
+		t.Fatalf("seed imported qfmt: %v", err)
+	}
+	imported := func() url.Values {
+		v := renameNoteTypeEditBody("Renamed", front, back, tmpl)
+		v.Set("css", big)
+		v["field_name[]"][0] = longName
+		v["qfmt[]"][0] = big
+		return v
+	}
+
+	v := imported()
+	v["field_name[]"][1] = longName // Back is not grandfathered: it was never over the limit
+	w := doRequest(handler, "POST", path, v.Encode(), cookie, "http://example.com")
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "field 2") {
+		t.Errorf("changed field over limit: status = %d body = %q, want 400 naming field 2", w.Code, w.Body.String())
+	}
+
+	w = doRequest(handler, "POST", path, imported().Encode(), cookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("rename of an imported note type status = %d, want 303: %.200s", w.Code, w.Body.String())
+	}
+	if n := countRows(t, tx, `SELECT count(*) FROM note_types WHERE id = $1 AND name = 'Renamed'`, noteTypeID); n != 1 {
+		t.Error("rename was not written")
+	}
+}
+
+// #231: the edit endpoint enforces the same limits and a rejected edit changes nothing.
+func TestNoteTypeEdit_LimitsEnforced(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	email := testEmail()
+	cookie := loginCookie(t, tx, a, email, "correct-horse-battery")
+
+	noteTypeID := createOwnBasic2(t, tx, handler, cookie, email)
+	front, back, tmpl := lookupFieldAndTemplate(t, tx, noteTypeID)
+	path := "/note-types/" + noteTypeID + "/edit"
+	big := strings.Repeat("x", 64*1024+1)
+
+	tests := []struct {
+		name   string
+		mutate func(v url.Values)
+	}{
+		{"65 fields", func(v url.Values) {
+			for i := 2; i < 65; i++ {
+				v.Add("field_id[]", "")
+				v.Add("field_name[]", fmt.Sprintf("N%d", i))
+				v.Add("field_position[]", fmt.Sprint(i))
+			}
+		}},
+		{"65 templates", func(v url.Values) {
+			for i := 1; i < 65; i++ {
+				v.Add("template_id[]", "")
+				v.Add("template_name[]", fmt.Sprintf("N%d", i))
+				v.Add("qfmt[]", "{{Front}}")
+				v.Add("afmt[]", "{{Back}}")
+				v.Add("template_position[]", fmt.Sprint(i))
+			}
+		}},
+		{"201-byte name", func(v url.Values) { v.Set("name", strings.Repeat("a", 201)) }},
+		{"201-byte field name", func(v url.Values) { v["field_name[]"][0] = strings.Repeat("a", 201) }},
+		{"oversized qfmt", func(v url.Values) { v["qfmt[]"][0] = big }},
+		{"oversized css", func(v url.Values) { v.Set("css", big) }},
+	}
+	for _, tt := range tests {
+		v := renameNoteTypeEditBody("Basic2", front, back, tmpl)
+		tt.mutate(v)
+		w := doRequest(handler, "POST", path, v.Encode(), cookie, "http://example.com")
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400", tt.name, w.Code)
+		}
+	}
+	if n := countRows(t, tx, `SELECT count(*) FROM fields WHERE note_type_id = $1`, noteTypeID); n != 2 {
+		t.Errorf("fields = %d after rejected edits, want 2", n)
+	}
+	if n := countRows(t, tx, `SELECT count(*) FROM templates WHERE note_type_id = $1`, noteTypeID); n != 1 {
+		t.Errorf("templates = %d after rejected edits, want 1", n)
+	}
+	if n := countRows(t, tx, `SELECT count(*) FROM note_types WHERE id = $1 AND name = 'Basic2' AND css = ''`, noteTypeID); n != 1 {
+		t.Error("note type name/css changed by a rejected edit")
+	}
+
+	// At the limit: 64 fields succeeds.
+	v := renameNoteTypeEditBody("Basic2", front, back, tmpl)
+	for i := 2; i < 64; i++ {
+		v.Add("field_id[]", "")
+		v.Add("field_name[]", fmt.Sprintf("N%d", i))
+		v.Add("field_position[]", fmt.Sprint(i))
+	}
+	w := doRequest(handler, "POST", path, v.Encode(), cookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("64-field edit status = %d, want 303: %.200s", w.Code, w.Body.String())
 	}
 }

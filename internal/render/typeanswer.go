@@ -17,7 +17,7 @@ func TypeAnswerInput(r Rendered) template.HTML {
 	}
 	widget := `<input type="text" class="type-answer" data-expected="` + html.EscapeString(r.Type.Expected) +
 		`" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Type the answer">`
-	return template.HTML(strings.Replace(string(r.HTML), r.Type.Placeholder, widget, 1))
+	return template.HTML(strings.Replace(string(r.HTML), r.Type.Placeholder, widget, 1)) //nolint:gosec // r.HTML is already-sanitised card output; only a locally-built escaped widget is substituted
 }
 
 // TypeAnswerExpected splices the expected answer, escaped, into r.HTML at the placeholder -- the
@@ -28,5 +28,5 @@ func TypeAnswerExpected(r Rendered) template.HTML {
 		return r.HTML
 	}
 	widget := `<span class="type-answer-expected">` + html.EscapeString(r.Type.Expected) + `</span>`
-	return template.HTML(strings.Replace(string(r.HTML), r.Type.Placeholder, widget, 1))
+	return template.HTML(strings.Replace(string(r.HTML), r.Type.Placeholder, widget, 1)) //nolint:gosec // r.HTML is already-sanitised card output; only a locally-built escaped widget is substituted
 }

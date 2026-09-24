@@ -177,7 +177,7 @@ func Schedule(p Params, prior CardState, rating Rating, now time.Time) (Outcome,
 	if err != nil {
 		return Outcome{}, err
 	}
-	info, err := p.engine().Next(card, now, gofsrs.Rating(rating))
+	info, err := p.engine().Next(card, now, gofsrs.Rating(rating)) //nolint:gosec // G115: rating.Valid() checked above (1-4)
 	if err != nil {
 		return Outcome{}, fmt.Errorf("%w: %v", ErrSchedule, err)
 	}
@@ -266,7 +266,7 @@ func toLibCard(prior CardState) (gofsrs.Card, error) {
 		ScheduledDays:  uint64(prior.ScheduledDays),
 		Reps:           uint64(prior.Reps),
 		Lapses:         uint64(prior.Lapses),
-		State:          gofsrs.State(prior.State),
+		State:          gofsrs.State(prior.State), //nolint:gosec // G115: prior.State.Valid() checked at the top of toLibCard (0-3)
 		LastReview:     prior.LastReview,
 		RemainingSteps: int(prior.LearningSteps),
 	}, nil
@@ -277,7 +277,7 @@ func fromLibCard(card gofsrs.Card) Outcome {
 		Due:           card.Due.UTC(),
 		Stability:     card.Stability,
 		Difficulty:    card.Difficulty,
-		State:         State(card.State),
+		State:         State(card.State), //nolint:gosec // G115: the library only produces its own State enum (0-3)
 		Reps:          clampToInt32(card.Reps),
 		Lapses:        clampToInt32(card.Lapses),
 		ScheduledDays: clampToInt32(card.ScheduledDays),

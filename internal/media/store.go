@@ -44,7 +44,7 @@ func (s *Store) Put(sha256Hex string, data []byte) error {
 	}
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("media: creating %s: %w", dir, err)
 	}
 	tmp, err := os.CreateTemp(dir, ".tmp-*")
@@ -116,7 +116,7 @@ func (s *Store) Open(sha256Hex string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	return os.Open(path)
+	return os.Open(path) //nolint:gosec // path is validated by sha256Hex.MatchString in path() above, not attacker-controlled
 }
 
 func (s *Store) path(digest string) (string, error) {

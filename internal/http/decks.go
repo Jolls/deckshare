@@ -2,12 +2,14 @@ package http
 
 import (
 	"context"
+	"fmt"
 	"html/template"
 	"net/http"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -120,10 +122,10 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		}
 		name := strings.TrimSpace(r.PostForm.Get("name"))
 		description := r.PostForm.Get("description")
-		if name == "" || len(name) > 200 {
+		if name == "" || utf8.RuneCountInString(name) > maxNameChars {
 			render(w, pages["deck_new"], http.StatusBadRequest, map[string]any{
 				"User": user, "Name": name, "Description": description,
-				"Error": "Name must be between 1 and 200 characters",
+				"Error": fmt.Sprintf("Name must be between 1 and %d characters", maxNameChars),
 			})
 			return
 		}
@@ -315,7 +317,7 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		}
 		name := strings.TrimSpace(r.PostForm.Get("name"))
 		description := r.PostForm.Get("description")
-		if name == "" || len(name) > 200 {
+		if name == "" || utf8.RuneCountInString(name) > maxNameChars {
 			badRequest(w)
 			return
 		}
