@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
@@ -1246,5 +1247,143 @@ func TestNoteRoutes_SuspendCards_AccessControl(t *testing.T) {
 	w = doRequest(handler, "POST", "/decks/"+deckBID+"/notes/"+noteID+"/suspend-cards", "", ownerCookie, "http://example.com")
 	if w.Code != http.StatusNotFound {
 		t.Errorf("suspending deck A's note via deck B's URL status = %d, want 404: %s", w.Code, w.Body.String())
+	}
+}
+
+// #231: tags are bounded by count (after dedup) and per-tag byte length, on create and on bulk add.
+func TestNoteTags_Limits(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	ctx := context.Background()
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+
+	manyTags := func(n int) string {
+		parts := make([]string, n)
+		for i := range parts {
+			parts[i] = fmt.Sprintf("t%d", i)
+		}
+		return strings.Join(parts, " ")
+	}
+	var noteTypeID string
+	if err := tx.QueryRow(ctx, `SELECT nt.id FROM note_types nt JOIN decks d ON d.owner_id = nt.owner_id WHERE nt.name = 'Basic2' AND d.id = $1`, deckID).Scan(&noteTypeID); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+	create := func(tags string) int {
+		v := url.Values{"note_type_id": {noteTypeID}, "field[]": {"Q", "A"}, "tags": {tags}}
+		return doRequest(handler, "POST", deckPath+"/notes", v.Encode(), cookie, "http://example.com").Code
+	}
+	tests := []struct {
+		name string
+		tags string
+		want int
+	}{
+		{"64 tags", manyTags(64), http.StatusSeeOther},
+		{"65 tags", manyTags(65), http.StatusBadRequest},
+		{"100-byte tag", strings.Repeat("a", 100), http.StatusSeeOther},
+		{"101-byte tag", strings.Repeat("a", 101), http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		before := countRows(t, tx, `SELECT count(*) FROM notes WHERE deck_id = $1`, deckID)
+		if got := create(tt.tags); got != tt.want {
+			t.Errorf("%s: status = %d, want %d", tt.name, got, tt.want)
+		}
+		after := countRows(t, tx, `SELECT count(*) FROM notes WHERE deck_id = $1`, deckID)
+		if wrote := after - before; (tt.want == http.StatusSeeOther) != (wrote == 1) {
+			t.Errorf("%s: wrote %d notes", tt.name, wrote)
+		}
+	}
+
+	noteID := createTestNote(t, tx, handler, deckPath, cookie, "keep")
+	body := url.Values{"note_id": {noteID}, "tags": {manyTags(65)}}.Encode()
+	w := doRequest(handler, "POST", deckPath+"/notes/bulk-tag-add", body, cookie, "http://example.com")
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("bulk-tag-add 65 tags status = %d, want 400", w.Code)
+	}
+	if n := countRows(t, tx, `SELECT cardinality(tags) FROM notes WHERE id = $1`, noteID); n != 1 {
+		t.Errorf("tags changed by rejected bulk add: cardinality = %d, want 1", n)
+	}
+
+	// Bulk add bounds each note's merged list, not just the request: 60 + 5 new would be 65.
+	if _, err := tx.Exec(ctx, `UPDATE notes SET tags = string_to_array($2, ' ') WHERE id = $1`, noteID, manyTags(60)); err != nil {
+		t.Fatalf("seed 60 tags: %v", err)
+	}
+	body = url.Values{"note_id": {noteID}, "tags": {"x1 x2 x3 x4 x5"}}.Encode()
+	doRequest(handler, "POST", deckPath+"/notes/bulk-tag-add", body, cookie, "http://example.com")
+	if n := countRows(t, tx, `SELECT cardinality(tags) FROM notes WHERE id = $1`, noteID); n != 60 {
+		t.Errorf("bulk add past the per-note cap: cardinality = %d, want 60", n)
+	}
+	body = url.Values{"note_id": {noteID}, "tags": {"x1 x2 x3 x4"}}.Encode()
+	if w := doRequest(handler, "POST", deckPath+"/notes/bulk-tag-add", body, cookie, "http://example.com"); w.Code != http.StatusSeeOther {
+		t.Errorf("bulk add up to the cap status = %d, want 303", w.Code)
+	}
+	if n := countRows(t, tx, `SELECT cardinality(tags) FROM notes WHERE id = $1`, noteID); n != 64 {
+		t.Errorf("bulk add up to the cap: cardinality = %d, want 64", n)
+	}
+
+	// Characters, not bytes: 100 two-byte runes is at the limit.
+	if got := create(strings.Repeat("é", 100)); got != http.StatusSeeOther {
+		t.Errorf("100-char non-ASCII tag status = %d, want 303", got)
+	}
+}
+
+// #231: an edit grandfathers the tags an (unbounded) import left on the note, so resubmitting them
+// still saves, but it bounds whatever the edit adds.
+func TestNoteEdit_GrandfathersImportedTags(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	ctx := context.Background()
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	noteID := createTestNote(t, tx, handler, deckPath, cookie, "keep")
+	var noteTypeID string
+	if err := tx.QueryRow(ctx, `SELECT note_type_id FROM notes WHERE id = $1`, noteID).Scan(&noteTypeID); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+
+	parts := make([]string, 65)
+	for i := range parts {
+		parts[i] = fmt.Sprintf("t%d", i)
+	}
+	imported := strings.Join(parts, " ") + " " + strings.Repeat("a", 101) // 66 tags, one over-long
+	if _, err := tx.Exec(ctx, `UPDATE notes SET tags = string_to_array($2, ' ') WHERE id = $1`, noteID, imported); err != nil {
+		t.Fatalf("seed imported tags: %v", err)
+	}
+	edit := func(tags string) int {
+		v := url.Values{"note_type_id": {noteTypeID}, "field[]": {"Q2", "A"}, "tags": {tags}}
+		return doRequest(handler, "POST", "/notes/"+noteID+"/edit", v.Encode(), cookie, "http://example.com").Code
+	}
+
+	if got := edit(imported); got != http.StatusSeeOther {
+		t.Errorf("resubmitting imported tags status = %d, want 303", got)
+	}
+	if got := edit(imported + " extra"); got != http.StatusBadRequest {
+		t.Errorf("growing an over-cap tag list status = %d, want 400", got)
+	}
+	if got := edit(strings.Replace(imported, "t0 ", strings.Repeat("b", 101)+" ", 1)); got != http.StatusBadRequest {
+		t.Errorf("adding a new over-long tag status = %d, want 400", got)
+	}
+}
+
+// #231: bulk-tag-remove is not subject to the tag limits, so an oversized tag (e.g. imported) can
+// still be cleared.
+func TestBulkTagRemove_OversizedTagStillRemovable(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	noteID := createTestNote(t, tx, handler, deckPath, cookie, "keep")
+	long := strings.Repeat("a", 101)
+	if _, err := tx.Exec(context.Background(), `UPDATE notes SET tags = ARRAY['keep', $2]::text[] WHERE id = $1`, noteID, long); err != nil {
+		t.Fatalf("seed oversized tag: %v", err)
+	}
+	body := url.Values{"note_id": {noteID}, "tags": {long}}.Encode()
+	w := doRequest(handler, "POST", deckPath+"/notes/bulk-tag-remove", body, cookie, "http://example.com")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("bulk-tag-remove status = %d, want 303: %s", w.Code, w.Body.String())
+	}
+	if n := countRows(t, tx, `SELECT cardinality(tags) FROM notes WHERE id = $1`, noteID); n != 1 {
+		t.Errorf("cardinality = %d, want 1", n)
 	}
 }

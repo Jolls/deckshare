@@ -170,6 +170,16 @@ keeps the filesystem half off imports still in flight. Reasoning in
 [docs/plans/91-orphaned-media-blob-gc.md](plans/91-orphaned-media-blob-gc.md), storage shape in
 [docs/schema.md](schema.md)'s Media section.
 
+**Operator password reset has landed** ([#225](https://github.com/Jolls/deckshare/issues/225)):
+`cmd/reset-password <email>`, run on the host with `DATABASE_URL` and `ORIGIN` set, mints a
+single-use reset link valid for 24 hours and prints it for the operator to relay out of band —
+there is no SMTP and no end-user-reachable "forgot password" trigger. Only the token's SHA-256
+hash is stored (`password_reset_tokens`, migration `00022`, the same shape as `sessions`), and
+issuing a new link supersedes any outstanding one. `GET /reset-password` peeks without consuming;
+`POST /reset-password` consumes the token with a `DELETE ... RETURNING`, sets the password, and
+purges every session for the account in one transaction, the same contract as
+`POST /settings/password`. See [docs/plans/225-password-reset-cli.md](plans/225-password-reset-cli.md).
+
 ---
 
 ## 3. Stack

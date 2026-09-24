@@ -109,6 +109,13 @@ type NoteType struct {
 	AnkiID       pgtype.Int8
 }
 
+type PasswordResetToken struct {
+	ID        string
+	UserID    pgtype.UUID
+	ExpiresAt pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
+}
+
 type ReviewLog struct {
 	ID                  pgtype.UUID
 	UserID              pgtype.UUID

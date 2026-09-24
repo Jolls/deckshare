@@ -290,7 +290,7 @@ func SanitiseCSS(raw string) (template.CSS, []string) {
 	if strings.ContainsAny(result, "<>") {
 		return "", append(dropped, "output contained markup")
 	}
-	return template.CSS(result), dropped
+	return template.CSS(result), dropped //nolint:gosec // result already passed through SanitiseCSS in this function, not raw input
 }
 
 var (

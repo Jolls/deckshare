@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -410,6 +412,37 @@ func TestImport_SeedsStateOnlyWhenCardHasState(t *testing.T) {
 	}
 	if !state.Suspended {
 		t.Error("card 204 user_card_state.suspended should be true")
+	}
+}
+
+// user_card_state.state is CHECKed 0..3: a card type outside it is imported without seeded state
+// and a warning, rather than failing the import or wrapping (65538 -> int16 2, "review").
+func TestImport_OutOfRangeCardTypeNotSeeded(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	ownerID := seedUser(t, tx)
+
+	spec := defaultSynthSpec(t)
+	for i := range spec.Cards {
+		if spec.Cards[i].AnkiID == 204 {
+			spec.Cards[i].Type = 65538
+		}
+	}
+	col := readBytes(t, buildSchema11Package(t, spec))
+	result, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	card204, err := findCardByAnkiID(ctx, tx, 204)
+	if err != nil {
+		t.Fatalf("card 204: %v", err)
+	}
+	if _, err := db.New(tx).GetUserCardState(ctx, db.GetUserCardStateParams{UserID: ownerID, CardID: card204.ID}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("card 204 (type 65538) should have no user_card_state row, err=%v", err)
+	}
+	if !slices.ContainsFunc(result.Warnings, func(w string) bool { return strings.Contains(w, "out-of-range type 65538") }) {
+		t.Errorf("no out-of-range type warning: %q", result.Warnings)
 	}
 }
 

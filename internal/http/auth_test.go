@@ -161,6 +161,7 @@ func TestRoutes_NoSession(t *testing.T) {
 		{"GET", "/login", 200, ""},
 		{"GET", "/signup", 200, ""},
 		{"GET", "/settings", 303, "/login"},
+		{"GET", "/reset-password", 200, ""},
 		{"GET", "/media/" + testSHA, 303, "/login"},
 		{"GET", "/import", 303, "/login"},
 	}
@@ -191,6 +192,7 @@ func TestRoutes_ValidSession(t *testing.T) {
 		{"GET", "/login", 303, "/decks"},
 		{"GET", "/signup", 303, "/decks"},
 		{"GET", "/settings", 200, ""},
+		{"GET", "/reset-password", 200, ""}, // no redirect-when-signed-in, unlike /login (#225)
 	}
 	for _, tt := range tests {
 		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
@@ -491,5 +493,152 @@ func TestSignupSetsCookieAndLandsHome(t *testing.T) {
 	c := resp.Cookies()[0]
 	if c.Name != auth.CookieName || !c.Secure || !c.HttpOnly {
 		t.Errorf("cookie = %+v, want __Host- session attributes", c)
+	}
+}
+
+// mintResetLink signs up an account and issues it an operator reset link, returning the raw token
+// -- what cmd/reset-password prints, minus the base URL.
+func mintResetLink(t *testing.T, tx pgx.Tx, a *auth.Service) string {
+	t.Helper()
+	email := testEmail()
+	loginCookie(t, tx, a, email, "correct-horse-battery")
+	_, raw, err := a.CreatePasswordReset(context.Background(), email)
+	if err != nil {
+		t.Fatalf("CreatePasswordReset: %v", err)
+	}
+	return raw
+}
+
+func resetBody(token, newPassword, confirm string) string {
+	return "token=" + token + "&new_password=" + newPassword + "&confirm_password=" + confirm
+}
+
+func TestGetResetPassword_ValidToken(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	raw := mintResetLink(t, tx, a)
+
+	w := doRequest(handler, "GET", "/reset-password?token="+raw, "", nil, "")
+	if w.Code != 200 {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if want := `name="token" value="` + raw + `"`; !strings.Contains(w.Body.String(), want) {
+		t.Errorf("body should carry the token in the hidden form input %q", want)
+	}
+}
+
+func TestGetResetPassword_InvalidOrMissingToken(t *testing.T) {
+	tx := beginTx(t)
+	handler, _ := newTestHandler(t, tx, auth.Config{})
+
+	for _, path := range []string{"/reset-password", "/reset-password?token=not-a-real-reset-token"} {
+		t.Run(path, func(t *testing.T) {
+			w := doRequest(handler, "GET", path, "", nil, "")
+			if w.Code != 200 {
+				t.Errorf("status = %d, want 200", w.Code)
+			}
+			body := w.Body.String()
+			if !strings.Contains(body, "invalid, expired, or has already been used") {
+				t.Error("body should explain the link is unusable")
+			}
+			if strings.Contains(body, `action="/reset-password"`) {
+				t.Error("body should not render the set-password form")
+			}
+		})
+	}
+}
+
+// Proves the peek/consume split: a link preview or prefetch GETs the page, and must not burn it.
+func TestGetResetPassword_DoesNotConsume(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	raw := mintResetLink(t, tx, a)
+
+	for i := 0; i < 2; i++ {
+		if w := doRequest(handler, "GET", "/reset-password?token="+raw, "", nil, ""); w.Code != 200 {
+			t.Fatalf("GET %d status = %d, want 200", i+1, w.Code)
+		}
+	}
+	w := doRequest(handler, "POST", "/reset-password",
+		resetBody(raw, "brand-new-password", "brand-new-password"), nil, "http://example.com")
+	if w.Code != 303 {
+		t.Fatalf("POST after two GETs status = %d, want 303", w.Code)
+	}
+}
+
+func TestPostResetPassword_Success(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	raw := mintResetLink(t, tx, a)
+
+	w := doRequest(handler, "POST", "/reset-password",
+		resetBody(raw, "brand-new-password", "brand-new-password"), nil, "http://example.com")
+	if w.Code != 303 {
+		t.Fatalf("status = %d, want 303", w.Code)
+	}
+	if loc := w.Header().Get("Location"); loc != "/decks" {
+		t.Errorf("Location = %q, want /decks", loc)
+	}
+	cookies := w.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != auth.CookieName {
+		t.Fatalf("cookies = %+v, want one %s cookie", cookies, auth.CookieName)
+	}
+
+	if w := doRequest(handler, "GET", "/decks", "", cookies[0], ""); w.Code != 200 {
+		t.Errorf("GET /decks with the reset's session cookie status = %d, want 200", w.Code)
+	}
+}
+
+func TestPostResetPassword_ConfirmMismatch(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	raw := mintResetLink(t, tx, a)
+
+	w := doRequest(handler, "POST", "/reset-password",
+		resetBody(raw, "brand-new-password", "different-password"), nil, "http://example.com")
+	if w.Code != 400 {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "Passwords do not match") {
+		t.Error("body should say the passwords do not match")
+	}
+	if ok, err := a.PasswordResetValid(context.Background(), raw); err != nil || !ok {
+		t.Errorf("a confirm mismatch must not consume the link: PasswordResetValid = %v, %v", ok, err)
+	}
+}
+
+func TestPostResetPassword_UsedToken(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	raw := mintResetLink(t, tx, a)
+
+	if w := doRequest(handler, "POST", "/reset-password",
+		resetBody(raw, "brand-new-password", "brand-new-password"), nil, "http://example.com"); w.Code != 303 {
+		t.Fatalf("first POST status = %d, want 303", w.Code)
+	}
+	w := doRequest(handler, "POST", "/reset-password",
+		resetBody(raw, "another-new-password", "another-new-password"), nil, "http://example.com")
+	if w.Code != 400 {
+		t.Fatalf("second POST status = %d, want 400", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "invalid, expired, or already used") {
+		t.Error("body should carry the invalid-link message")
+	}
+}
+
+// The route is public but state-changing, so it inherits the central CSRF Origin check and must
+// never be exempted from it.
+func TestPostResetPassword_MissingOrigin(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	raw := mintResetLink(t, tx, a)
+
+	w := doRequest(handler, "POST", "/reset-password",
+		resetBody(raw, "brand-new-password", "brand-new-password"), nil, "")
+	if w.Code != 403 {
+		t.Fatalf("status = %d, want 403", w.Code)
+	}
+	if ok, err := a.PasswordResetValid(context.Background(), raw); err != nil || !ok {
+		t.Errorf("a rejected request must not consume the link: PasswordResetValid = %v, %v", ok, err)
 	}
 }

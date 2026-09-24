@@ -1,3 +1,20 @@
 version: "2"
 linters:
   default: standard
+  enable:
+    - gosec
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+      # scripts/run-app is a local dev-only launcher, never built into the shipped server.
+      - path: scripts/run-app/
+        linters:
+          - gosec
+      # Integer-narrowing checks stay on in the correctness-critical packages (CLAUDE.md §9), where
+      # each audited conversion carries its own nolint; elsewhere they are excluded wholesale.
+      - path-except: internal/(apkg|fsrs)/
+        text: "G115|G109"
+        linters:
+          - gosec

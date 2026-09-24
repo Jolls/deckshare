@@ -291,6 +291,7 @@ another user can reach, or that is training data, never cascades.
 | `card_flags.deck_id → decks` | CASCADE | Deleting a deck deletes its cards' flags along with the cards themselves. |
 | `card_flags.flagged_by_user_id → users` | RESTRICT | See below. |
 | `card_flags.resolved_by_user_id → users` | SET NULL | Who resolved a flag is informational, not load-bearing — unlike `flagged_by_user_id`, losing it doesn't strand anything. |
+| `password_reset_tokens.user_id → users` | CASCADE | An auth artifact, not content — same reasoning as `sessions.user_id`. |
 
 **User deletion is not a supported operation in Phase 1.** No route deletes a user, and eight
 FKs restrict on `users` so it is impossible rather than silently wrong: cascading
@@ -382,6 +383,13 @@ sessions         id text pk,             -- SHA-256 hex of the session token; th
                                           -- lives only in the cookie, never in the database
                  user_id, expires_at, created_at
                  -- INDEX (user_id)      -- to invalidate all of a user's sessions
+
+password_reset_tokens
+                 id text pk,             -- SHA-256 hex of the reset token; the raw token
+                                          -- exists only in the operator-relayed link
+                 user_id, expires_at, created_at
+                 -- INDEX (user_id)      -- purge a user's outstanding tokens
+                 -- operator-minted only (#225); no HTTP route creates a row
 ```
 
 **CHECK constraints.** A handful of columns produce wrong schedules rather than errors when

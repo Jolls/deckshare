@@ -19,6 +19,9 @@ FROM deck_access da
 WHERE n.id = ANY($2::uuid[]) AND n.deck_id = $3
   AND da.deck_id = n.deck_id AND da.user_id = $4
   AND da.can_view AND da.can_edit_content
+  -- #231: a note the merge would push past max_tags is skipped, so repeated adds cannot grow a
+  -- note's tag list without bound.
+  AND cardinality(ARRAY(SELECT DISTINCT t FROM unnest(n.tags || $1::text[]) AS t)) <= $5::int
 `
 
 type BulkAddNoteTagsParams struct {
@@ -26,6 +29,7 @@ type BulkAddNoteTagsParams struct {
 	NoteIds []pgtype.UUID
 	DeckID  pgtype.UUID
 	UserID  pgtype.UUID
+	MaxTags int32
 }
 
 // Adds tags idempotently and preserves every tag already present: array_agg(DISTINCT ...) over
@@ -37,6 +41,7 @@ func (q *Queries) BulkAddNoteTags(ctx context.Context, arg BulkAddNoteTagsParams
 		arg.NoteIds,
 		arg.DeckID,
 		arg.UserID,
+		arg.MaxTags,
 	)
 	if err != nil {
 		return 0, err

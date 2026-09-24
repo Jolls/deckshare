@@ -2,8 +2,11 @@ services:
   db:
     image: postgres:18
     restart: always
+    # Development only. Loopback-only binding + default credentials are fine here because
+    # nothing outside this machine should ever reach this port; do not reuse this file as-is
+    # for a deployment.
     ports:
-      - 5432:5432
+      - 127.0.0.1:5432:5432
     environment:
       POSTGRES_USER: root
       POSTGRES_PASSWORD: mysecretpassword

@@ -244,7 +244,7 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 		}
 
 		r.Body = http.MaxBytesReader(w, r.Body, maxAvatarUploadBytes)
-		if err := r.ParseMultipartForm(maxAvatarUploadBytes); err != nil {
+		if err := r.ParseMultipartForm(maxAvatarUploadBytes); err != nil { //nolint:gosec // body size is already capped by the http.MaxBytesReader wrap above
 			view := buildSettingsView(user, retention)
 			view.AvatarError = "Image too large"
 			render(w, pages["settings"], http.StatusBadRequest, view)

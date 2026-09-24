@@ -33,7 +33,7 @@ func registerImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 		user, _ := auth.UserFromContext(r.Context())
 
 		r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
-		if err := r.ParseMultipartForm(32 << 20); err != nil {
+		if err := r.ParseMultipartForm(32 << 20); err != nil { //nolint:gosec // body size is already capped by the http.MaxBytesReader wrap above
 			render(w, pages["import"], http.StatusBadRequest, map[string]any{
 				"User": user, "Error": "Upload too large or malformed",
 			})

@@ -2,7 +2,7 @@ package db
 
 import (
 	"context"
-	"crypto/sha1"
+	"crypto/sha1" //nolint:gosec // Anki csum compatibility, not a security use of SHA-1
 	"encoding/binary"
 	"regexp"
 

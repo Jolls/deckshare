@@ -454,8 +454,8 @@ func renderQueueRows(ctx context.Context, q *db.Queries, deckID pgtype.UUID, dec
 		if err != nil {
 			return nil, fmt.Errorf("review: render card %s: %w", r.CardID.String(), err)
 		}
-		rendered.Question.HTML = template.HTML(render.RewriteMediaSrcs(string(rendered.Question.HTML), resolveMedia))
-		rendered.Answer.HTML = template.HTML(render.RewriteMediaSrcs(string(rendered.Answer.HTML), resolveMedia))
+		rendered.Question.HTML = template.HTML(render.RewriteMediaSrcs(string(rendered.Question.HTML), resolveMedia)) //nolint:gosec // HTML was sanitised by render; RewriteMediaSrcs only rewrites media src URLs
+		rendered.Answer.HTML = template.HTML(render.RewriteMediaSrcs(string(rendered.Answer.HTML), resolveMedia))     //nolint:gosec // HTML was sanitised by render; RewriteMediaSrcs only rewrites media src URLs
 
 		prior := fsrs.CardState{
 			Due:           r.Due.Time,

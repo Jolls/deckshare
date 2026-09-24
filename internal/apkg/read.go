@@ -89,7 +89,7 @@ func DefaultArchiveLimits() ArchiveLimits {
 
 // ReadFile reads the package at path. It is the entry point the import handler (#62) calls.
 func ReadFile(path string, limits ArchiveLimits) (*IrCollection, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // path is a server-chosen local path (e.g. a temp file), never a client-supplied filename
 	if err != nil {
 		return nil, fmt.Errorf("apkg: opening %q: %w", path, err)
 	}
@@ -208,7 +208,7 @@ func openArchive(r io.ReaderAt, size int64, limits ArchiveLimits) (*zip.Reader, 
 // memberBytes reads one member with both ceilings enforced against actual bytes, not the zip
 // header's claim (a header can lie). budget is the running total, decremented in place.
 func memberBytes(f *zip.File, limits ArchiveLimits, budget *int64) ([]byte, error) {
-	if int64(f.UncompressedSize64) > limits.MaxMemberBytes {
+	if int64(f.UncompressedSize64) > limits.MaxMemberBytes { //nolint:gosec // G115: header size is advisory; a lying one that wraps negative is still caught against actual bytes below
 		return nil, ErrMemberTooLarge
 	}
 	rc, err := f.Open()
@@ -340,7 +340,7 @@ func decompressZstd(b []byte, limits ArchiveLimits, budget *int64) ([]byte, erro
 		return nil, ErrMemberTooLarge
 	}
 
-	dec, err := zstd.NewReader(bytes.NewReader(b), zstd.WithDecoderMaxMemory(uint64(limits.MaxMemberBytes)))
+	dec, err := zstd.NewReader(bytes.NewReader(b), zstd.WithDecoderMaxMemory(uint64(limits.MaxMemberBytes))) //nolint:gosec // G115: MaxMemberBytes is a positive configured ceiling
 	if err != nil {
 		return nil, fmt.Errorf("apkg: opening zstd frame: %w", ErrBadZstdFrame)
 	}
@@ -554,7 +554,6 @@ func readNotetypes18(dbh *sql.DB) ([]IrNoteType, map[int64]int, error) {
 			return nil, nil, fmt.Errorf("apkg: decoding notetypes.config for %q: %w", name, err)
 		}
 		kind, _ := protoUint(fields, ntConfigKindField)
-		sortField, _ := protoUint(fields, ntConfigSortFieldField)
 		css, _ := protoString(fields, ntConfigCSSField)
 		ntByID[id] = len(noteTypes)
 		noteTypes = append(noteTypes, IrNoteType{
@@ -562,7 +561,7 @@ func readNotetypes18(dbh *sql.DB) ([]IrNoteType, map[int64]int, error) {
 			Name:         name,
 			CSS:          css,
 			IsCloze:      kind == 1,
-			SortFieldIdx: int32(sortField),
+			SortFieldIdx: protoInt32(fields, ntConfigSortFieldField),
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -595,14 +594,13 @@ func readFields18(dbh *sql.DB, noteTypes []IrNoteType, ntByID map[int64]int) err
 			return fmt.Errorf("apkg: decoding fields.config for %q: %w", name, err)
 		}
 		font, _ := protoString(fields, fieldConfigFontField)
-		size, _ := protoUint(fields, fieldConfigSizeField)
 		// IsRTL/Sticky are left at their zero value: no field in a real export has either set,
 		// so their protobuf field numbers are still unverified (ankischema.go, #61).
 		noteTypes[i].Fields = append(noteTypes[i].Fields, IrField{
 			Ordinal: ord,
 			Name:    name,
 			Font:    font,
-			Size:    int32(size),
+			Size:    protoInt32(fields, fieldConfigSizeField),
 		})
 	}
 	return rowsErr(rows, "iterating fields")
@@ -826,16 +824,23 @@ func readRevlog(dbh *sql.DB) ([]IrReview, []string, error) {
 			warnings = append(warnings, fmt.Sprintf("revlog: dropped manual reschedule row (id %d)", id))
 			continue
 		}
+		// review_log's CHECKs are rating 1..4 and review_kind 0..4. Outside them the row would
+		// either fail the whole import or, narrowed to int16, wrap into a valid-looking rating --
+		// silently wrong training data (§2.5). Only a malformed or hostile file gets here.
+		if ease < 1 || ease > 4 || typ < 0 || typ > 4 {
+			warnings = append(warnings, fmt.Sprintf("revlog: dropped row with out-of-range ease %d or type %d (id %d)", ease, typ, id))
+			continue
+		}
 		reviews = append(reviews, IrReview{
 			AnkiID:              id,
 			CardAnkiID:          cid,
 			ReviewedAt:          time.UnixMilli(id).UTC(),
-			Rating:              int16(ease),
+			Rating:              int16(ease), //nolint:gosec // G115: range-checked to 1..4 above
 			IntervalSeconds:     intervalSeconds(ivl),
 			LastIntervalSeconds: intervalSeconds(lastIvl),
 			Factor:              factor,
 			DurationMs:          dur,
-			Kind:                int16(typ),
+			Kind:                int16(typ), //nolint:gosec // G115: range-checked to 0..4 above
 		})
 	}
 	if err := rows.Err(); err != nil {

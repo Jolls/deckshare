@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -168,7 +170,10 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		tags := parseTags(r.PostForm.Get("tags"))
+		tags, ok := parseNoteTags(w, r, nil)
+		if !ok {
+			return
+		}
 		guid, err := randomGuid()
 		if err != nil {
 			serverError(w, r, err)
@@ -341,7 +346,10 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		tags := parseTags(r.PostForm.Get("tags"))
+		tags, ok := parseNoteTags(w, r, note.Tags)
+		if !ok {
+			return
+		}
 
 		if targetNoteTypeID != note.NoteTypeID && r.PostForm.Get("confirm_note_type_change") != "1" {
 			existingOrdinals, err := q.ListCardsForNote(r.Context(), noteID)
@@ -478,8 +486,14 @@ func registerNoteRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		if !ok {
 			return
 		}
+		// #231: only add is bounded; bulk-tag-remove must still clear oversized (e.g. imported) tags.
+		// This bounds the request; the query's max_tags guard bounds each note's merged list.
+		if err := validateTags(tags, nil); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		q := db.New(store)
-		n, err := q.BulkAddNoteTags(r.Context(), db.BulkAddNoteTagsParams{Tags: tags, NoteIds: noteIDs, DeckID: deckID, UserID: user.ID})
+		n, err := q.BulkAddNoteTags(r.Context(), db.BulkAddNoteTagsParams{Tags: tags, NoteIds: noteIDs, DeckID: deckID, UserID: user.ID, MaxTags: maxTagsPerNote})
 		finishBulk(w, r, pages, user, deckID, n, err)
 	})))
 
@@ -649,7 +663,7 @@ func finishBulk(w http.ResponseWriter, r *http.Request, pages map[string]*templa
 	if cur, ok := decodeNoteCursor(r.PostForm.Get("notesCursor")); ok && !cur.atStart {
 		dest += "?notesCursor=" + encodeNoteCursor(cur)
 	}
-	http.Redirect(w, r, dest+"#notes", http.StatusSeeOther)
+	http.Redirect(w, r, dest+"#notes", http.StatusSeeOther) //nolint:gosec // dest is built from a server-known deck UUID and this file's own cursor alphabet, never echoed user input (see finishBulk)
 }
 
 // fieldsCompatible implements the #138 v1 field-compatibility rule for a note-type change: the
@@ -698,6 +712,43 @@ func desiredCards(nt db.NoteType, templates []db.Template, fieldValues []string)
 }
 
 const maxFieldBytes = 64 * 1024
+
+// #231: parseTags was the other unbounded write on this surface -- tags are a text[] column with
+// no cap, and nothing stopped a direct POST from writing thousands.
+const (
+	maxTagsPerNote = 64
+	maxTagChars    = 100
+)
+
+// validateTags bounds the tag list a note can carry (#231). The count is checked AFTER parseTags's
+// dedup, so a paste with repeats is not rejected for length it does not actually store. Length is
+// in characters (runes), the unit the error message states. existing is the note's current tag
+// list (nil for a new note): .apkg import is not bounded, so a tag the note already carries, or a
+// count it already has, is grandfathered -- otherwise resubmitting an imported note's own tags
+// would make it uneditable.
+func validateTags(tags, existing []string) error {
+	if len(tags) > maxTagsPerNote && len(tags) > len(existing) {
+		return fmt.Errorf("at most %d tags", maxTagsPerNote)
+	}
+	for _, t := range tags {
+		if utf8.RuneCountInString(t) > maxTagChars && !slices.Contains(existing, t) {
+			return fmt.Errorf("a tag is too long (max %d characters)", maxTagChars)
+		}
+	}
+	return nil
+}
+
+// parseNoteTags reads the "tags" field off an already-parsed note form and bounds it against the
+// note's existing tags (validateTags), writing the 400 response and reporting ok=false when it is
+// over a limit. The caller must return immediately when this reports false.
+func parseNoteTags(w http.ResponseWriter, r *http.Request, existing []string) (tags []string, ok bool) {
+	tags = parseTags(r.PostForm.Get("tags"))
+	if err := validateTags(tags, existing); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return nil, false
+	}
+	return tags, true
+}
 
 // validateNoteFields marshals field values to the notes.fields jsonb shape and computes the
 // Anki-style checksum (truncated SHA-1 of the first field with HTML tags stripped). wantCount is

@@ -278,7 +278,7 @@ func exportAnkiID(existing pgtype.Int8, fallback int64) int64 {
 // within one table would require two different UUIDs sharing 8 leading bytes -- not a case worth
 // guarding against for a single owner's export.
 func uuidFallbackID(id pgtype.UUID) int64 {
-	v := int64(binary.BigEndian.Uint64(id.Bytes[:8]))
+	v := int64(binary.BigEndian.Uint64(id.Bytes[:8])) //nolint:gosec // G115: deliberate bit reinterpretation; a negative result is folded positive just below
 	if v < 0 {
 		v = -v
 	}

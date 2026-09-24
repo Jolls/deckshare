@@ -8,7 +8,7 @@ column-level detail. Regenerate this by hand if the shape in `schema.md` changes
   notes, cards
 - [Per-user scheduling](#per-user-scheduling) — the FSRS-critical subset
 - [Access & sharing](#access--sharing) — users, decks, deck access
-- [Media & auth](#media--auth) — content-addressed media, sessions
+- [Media & auth](#media--auth) — content-addressed media, sessions, password reset tokens
 
 ---
 
@@ -17,6 +17,7 @@ column-level detail. Regenerate this by hand if the shape in `schema.md` changes
 ```mermaid
 erDiagram
     USERS ||--o{ SESSIONS : "has"
+    USERS ||--o{ PASSWORD_RESET_TOKENS : "has"
     USERS ||--o{ DECKS : "owns"
     USERS ||--o{ NOTE_TYPES : "owns"
     USERS ||--o{ DECK_ACCESS : "granted"
@@ -55,6 +56,13 @@ erDiagram
     }
 
     SESSIONS {
+        text id PK "sha256 of token"
+        uuid user_id FK
+        timestamptz expires_at
+        timestamptz created_at
+    }
+
+    PASSWORD_RESET_TOKENS {
         text id PK "sha256 of token"
         uuid user_id FK
         timestamptz expires_at
@@ -432,6 +440,7 @@ erDiagram
     MEDIA_BLOBS ||--o{ MEDIA_REFS : "stored as"
     MEDIA_BLOBS ||--o{ USERS : "avatar"
     USERS ||--o{ SESSIONS : "has"
+    USERS ||--o{ PASSWORD_RESET_TOKENS : "has"
 
     DECKS {
         uuid id PK
@@ -463,10 +472,19 @@ erDiagram
         timestamptz expires_at
         timestamptz created_at
     }
+
+    PASSWORD_RESET_TOKENS {
+        text id PK "sha256 of token"
+        uuid user_id FK
+        timestamptz expires_at
+        timestamptz created_at
+    }
 ```
 
 Media is content-addressed and deduplicated across *all* decks, not just one owner's — two
 decks shipping an identical image share one `MEDIA_BLOBS` row. Sessions store only the
 token's hash; the raw token lives in the cookie and never touches the database.
+`PASSWORD_RESET_TOKENS` has the same shape for the same reason: the raw token exists only in the
+link the operator relays (#225).
 `USERS` reaches `MEDIA_BLOBS` directly through `avatar_sha256` rather than through a deck-scoped
 filename, so an avatar dedups against deck media like anything else (#176).

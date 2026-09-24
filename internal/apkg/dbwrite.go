@@ -503,7 +503,7 @@ func importReviews(ctx context.Context, tx pgx.Tx, q *db.Queries, ownerID pgtype
 				StateBefore:         reviewKindToState(r.Kind),
 				LearningStepsBefore: 0,
 				ElapsedDaysBefore:   0,
-				ScheduledDaysAfter:  max(0, int32(r.IntervalSeconds/secondsPerDay)),
+				ScheduledDaysAfter:  max(0, clampInt32(r.IntervalSeconds/secondsPerDay)),
 				ReviewKind:          r.Kind,
 				AnkiID:              pgtype.Int8{Int64: r.AnkiID, Valid: true},
 			})
@@ -599,7 +599,7 @@ func seedDeckRetention(ctx context.Context, q *db.Queries, ownerID pgtype.UUID, 
 		if err := q.SeedDeckFsrsRetention(ctx, db.SeedDeckFsrsRetentionParams{
 			UserID:           ownerID,
 			DeckID:           deckID,
-			FsrsVersion:      int16(params.Version()),
+			FsrsVersion:      int16(params.Version()), //nolint:gosec // G115: Version() is a validated FSRS version (4-6)
 			DesiredRetention: best,
 		}); err != nil {
 			return fmt.Errorf("apkg: seeding desired retention for deck (id %s): %w", deckID.String(), err)
@@ -621,6 +621,12 @@ func seedCardStates(ctx context.Context, q *db.Queries, ownerID pgtype.UUID, car
 		}
 		hasState := c.FSRS != nil || c.Type != ankiTypeNew || c.Suspended || c.Flag != 0
 		if !hasState {
+			continue
+		}
+		// user_card_state.state is CHECKed 0..3, the same range as Anki's cards.type. Outside it
+		// the seed would fail the whole import or, narrowed to int16, wrap into a real state.
+		if c.Type < ankiTypeNew || c.Type > ankiTypeRelearning {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("card (anki_id %d): out-of-range type %d; imported as new", c.AnkiID, c.Type))
 			continue
 		}
 
@@ -645,11 +651,11 @@ func seedCardStates(ctx context.Context, q *db.Queries, ownerID pgtype.UUID, car
 			Due:           pgtype.Timestamptz{Time: due, Valid: true},
 			Stability:     stability,
 			Difficulty:    difficulty,
-			State:         int16(c.Type),
+			State:         int16(c.Type), //nolint:gosec // G115: range-checked to 0..3 above
 			Reps:          c.Reps,
 			Lapses:        c.Lapses,
 			ElapsedDays:   0,
-			ScheduledDays: max(0, int32(c.IntervalSeconds/secondsPerDay)),
+			ScheduledDays: max(0, clampInt32(c.IntervalSeconds/secondsPerDay)),
 			LearningSteps: 0,
 			LastReview:    lastReview,
 			Suspended:     c.Suspended,

@@ -38,6 +38,9 @@ const (
 
 	changePasswordLimit  = 5
 	changePasswordWindow = 15 * time.Minute
+
+	resetPasswordIPLimit  = 10
+	resetPasswordIPWindow = 15 * time.Minute
 )
 
 var (
@@ -90,6 +93,7 @@ type Service struct {
 	loginEmail     *limiter
 	signupIP       *limiter
 	changePassword *limiter
+	resetPassword  *limiter
 }
 
 // New builds the service over any Beginner -- a *pgxpool.Pool in production, a pgx.Tx in tests
@@ -128,6 +132,7 @@ func New(dbtx db.Beginner, cfg Config) (*Service, error) {
 		loginEmail:     newLimiter(loginEmailLimit, loginEmailWindow),
 		signupIP:       newLimiter(signupIPLimit, signupIPWindow),
 		changePassword: newLimiter(changePasswordLimit, changePasswordWindow),
+		resetPassword:  newLimiter(resetPasswordIPLimit, resetPasswordIPWindow),
 	}, nil
 }
 
@@ -420,6 +425,11 @@ func (s *Service) ChangePassword(ctx context.Context, userID pgtype.UUID, curren
 	// sessions_user_id_idx (migration 00002) exists for exactly this query.
 	if _, err := qtx.DeleteSessionsForUser(ctx, userID); err != nil {
 		return "", fmt.Errorf("delete sessions for user: %w", err)
+	}
+	// An outstanding reset link (#225) dies too: it could otherwise overwrite the password the
+	// holder just chose, for the rest of its lifetime.
+	if _, err := qtx.DeletePasswordResetTokensForUser(ctx, userID); err != nil {
+		return "", fmt.Errorf("delete password reset tokens for user: %w", err)
 	}
 	token, err := createSession(ctx, qtx, userID)
 	if err != nil {

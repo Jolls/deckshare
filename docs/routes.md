@@ -44,6 +44,8 @@ contract for `POST /api/reviews/batch` is pinned down there in full and is not r
 | GET | `/login` | public | Login form |
 | POST | `/login` | public | Verify credentials, create session (cookie: hashed token, §12) |
 | POST | `/logout` | session | Destroy session |
+| GET | `/reset-password` | public | Render the set-new-password form for a valid operator-issued token (#225). The token is never minted over HTTP — only by the operator CLI. Peeks, never consumes |
+| POST | `/reset-password` | public | Consume the one-time token, set the password, purge every session for the account, start a fresh one (same transaction as `POST /settings/password`) |
 | GET | `/` | public | Authed: redirects to `/decks` (step 5, #54); redirects to `/login` otherwise |
 
 ---
