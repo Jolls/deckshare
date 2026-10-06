@@ -442,3 +442,8 @@ importer is unbounded and otherwise an imported note or note type could not be e
 `maxNameChars` is shared with the deck-name check. (3) `BulkAddNoteTags` caps each note's merged
 list at `max_tags` in SQL, so repeated bulk adds cannot grow it past 64. (4) Every note-type limit
 rejection names the value that failed.
+
+Amendment (user decision after `/code-review low`, option B): `validateTags` is called only in the
+bulk-tag-add path, not in the shared `parseBulkTags`, so bulk-tag-remove can still clear oversized
+tags (e.g. imported ones). Note create and note edit keep `validateTags`. Covered by
+`TestBulkTagRemove_OversizedTagStillRemovable`.
