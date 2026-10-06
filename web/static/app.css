@@ -160,3 +160,11 @@ body.hide-account-bar .account-bar {
 .bulk-action-bar[hidden] {
     display: none;
 }
+
+/* Learner stats charts (#261): inline SVG scales to the column; strokes/fills use currentColor so
+   it follows the Pico theme in light and dark mode. */
+svg.chart {
+    width: 100%;
+    height: auto;
+    color: var(--pico-primary);
+}

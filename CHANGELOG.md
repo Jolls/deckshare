@@ -8,6 +8,14 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.13] - 2026-10-06
+
+### Added
+- Learner stats page (`GET /stats`, linked from `/decks`): a user's own Recall now, pass rate
+  (30d), reviews (30d) and due count, overall and per deck, plus server-rendered SVG charts of
+  reviews and pass rate per day over the last 30 study days. Own data only, no new permission
+  flag ([#261](https://github.com/Jolls/deckshare/issues/261)).
+
 ## [0.3.12] - 2026-09-24
 
 ### Added
