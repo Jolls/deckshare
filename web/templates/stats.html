@@ -1,0 +1,60 @@
+{{define "content"}}
+<h1>Stats</h1>
+<p>Your progress · as of {{.AsOf.Format "2006-01-02 15:04 MST"}}</p>
+
+<section>
+    <h2>Overall</h2>
+    <div class="table-scroll">
+    <table>
+        <thead>
+            <tr><th>Recall now</th><th>Pass rate 30d</th><th>Reviews 30d</th><th>Due</th></tr>
+        </thead>
+        <tbody>
+            <tr id="overall-row">
+                <td>{{.Overall.RecallDisplay}}</td>
+                <td>{{.Overall.PassRateDisplay}}</td>
+                <td>{{.Overall.Reviews}}</td>
+                <td>{{.Overall.Due}}</td>
+            </tr>
+        </tbody>
+    </table>
+    </div>
+</section>
+
+<section>
+    <h2>By deck</h2>
+    <div class="table-scroll">
+    <table>
+        <thead>
+            <tr><th>Deck</th><th>Recall now</th><th>Pass rate 30d</th><th>Reviews 30d</th><th>Due</th></tr>
+        </thead>
+        <tbody>
+            {{range .Decks}}
+            <tr>
+                <td><a href="/decks/{{.DeckID}}">{{.Name}}</a></td>
+                <td>{{.RecallDisplay}}</td>
+                <td>{{.PassRateDisplay}}</td>
+                <td>{{.Reviews}}</td>
+                <td>{{.Due}}</td>
+            </tr>
+            {{else}}
+            <tr><td colspan="5">No decks you can study yet.</td></tr>
+            {{end}}
+        </tbody>
+    </table>
+    </div>
+</section>
+
+<section>
+    <h2>Reviews per day</h2>
+    {{.ReviewsChart}}
+</section>
+
+<section>
+    <h2>Pass rate per day</h2>
+    {{.PassRateChart}}
+    <p><small>Days with no reviews are left blank.</small></p>
+</section>
+
+{{template "backToDecks" .}}
+{{end}}

@@ -21,6 +21,7 @@ var pagePartials = map[string][]string{
 	"deck_edit":      {"templates/back_to_deck.html"},
 	"access":         {"templates/messages.html", "templates/back_to_deck.html"},
 	"progress":       {"templates/back_to_deck.html"},
+	"stats":          {"templates/back_to_decks.html"},
 	"flags":          {"templates/back_to_deck.html"},
 	"login":          {"templates/messages.html"},
 	"signup":         {"templates/messages.html"},
@@ -37,7 +38,7 @@ func parseTemplates() (map[string]*template.Template, error) {
 	pages := map[string]*template.Template{}
 	for _, name := range []string{
 		"login", "signup", "reset_password", "settings",
-		"decks", "deck_new", "deck", "deck_edit", "access", "progress", "flags",
+		"decks", "deck_new", "deck", "deck_edit", "access", "progress", "stats", "flags",
 		"notetypes", "notetype_form", "note_form",
 		"review", "study", "import", "import_ai",
 		"not_found",

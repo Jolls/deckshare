@@ -191,6 +191,21 @@ already exists behind `can_manage_access` (`POST /decks/{id}/access/{userId}/res
 
 ---
 
+## Stats — `stats.go` ([#261](https://github.com/Jolls/deckshare/issues/261))
+
+The learner's own view of how they're doing — the counterpart to the instructor dashboard above.
+Full reasoning in docs/plans/261-learner-stats-page.md.
+
+| Method | Path | Permission | Purpose |
+|---|---|---|---|
+| GET | `/stats` | session | The caller's own Recall now (card-weighted mean over seen cards, `fsrs.Retrievability`, same fold as #87), Pass rate 30d / Reviews 30d (`review_log`, review-state answers) and Due (`CountQueueForUser`, so it equals the `/decks` Due column), overall and per deck, over the decks the caller holds `can_study` on. Two server-rendered inline-SVG charts, overall for the last 30 study days (the caller's `timezone` + `day_start_hour`): reviews per day (bars, empty days plot as 0) and pass rate per day (a day with no reviews has no point and breaks the line) |
+
+Adds no permission flag and no write route: every query takes the caller's `user_id`, joins
+`deck_access` on `can_view AND can_study`, and reads only that user's `user_card_state` /
+`review_log` rows. No client-side JS.
+
+---
+
 ## Flags — `flags.go` ([#207](https://github.com/Jolls/deckshare/issues/207))
 
 A student flags a card mid-review with a text comment; the deck owner (or anyone else holding

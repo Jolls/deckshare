@@ -13,6 +13,8 @@ import (
 
 	"github.com/Jolls/deckshare/internal/auth"
 	"github.com/Jolls/deckshare/internal/db"
+	"github.com/Jolls/deckshare/internal/fsrs"
+	"github.com/Jolls/deckshare/internal/review"
 )
 
 // TestProgressTemplateRenders exercises progress.html directly against representative data,
@@ -390,4 +392,81 @@ func pgUUID(t *testing.T, s string) pgtype.UUID {
 		t.Fatalf("parse uuid %q: %v", s, err)
 	}
 	return u
+}
+
+// Pins the Recall definition #261's stats page must match (docs/plans/261-learner-stats-page.md):
+// mean fsrs.Retrievability across the student's seen cards, never-seen cards excluded.
+func TestFoldStudentProgress_RecallIsMeanRetrievability(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	ownerCookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	deckPath := setupDeckAndNoteType(t, handler, ownerCookie)
+	deckID := strings.TrimPrefix(deckPath, "/decks/")
+	var noteTypeID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+	addNotes(t, handler, ownerCookie, deckPath, noteTypeID, 3)
+	cardIDs := lookupCardIDs(t, ctx, tx, deckID)
+
+	studentEmail := testEmail()
+	loginCookie(t, tx, a, studentEmail, "correct-horse-battery")
+	studentID := userID(t, ctx, tx, studentEmail)
+	if _, err := tx.Exec(ctx, `INSERT INTO deck_access (deck_id, user_id, can_view, can_study) VALUES ($1, $2, true, true)`,
+		deckID, studentID); err != nil {
+		t.Fatalf("grant access: %v", err)
+	}
+
+	// Two seen cards; the third card has no user_card_state row and must not dilute the mean.
+	now := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	seen := []struct {
+		cardID    string
+		stability float64
+		lastDays  int
+	}{{cardIDs[0], 10, 5}, {cardIDs[1], 20, 12}}
+	var want float64
+	params, err := review.EffectiveParams(ctx, db.New(tx), pgUUID(t, studentID), pgUUID(t, deckID))
+	if err != nil {
+		t.Fatalf("EffectiveParams: %v", err)
+	}
+	for _, s := range seen {
+		last := now.AddDate(0, 0, -s.lastDays)
+		if _, err := tx.Exec(ctx, `INSERT INTO user_card_state
+			(user_id, card_id, due, stability, difficulty, state, reps, last_review)
+			VALUES ($1, $2, $3, $4, 5, 2, 1, $3)`, studentID, s.cardID, last, s.stability); err != nil {
+			t.Fatalf("seed user_card_state: %v", err)
+		}
+		r, err := fsrs.Retrievability(params, fsrs.CardState{
+			Stability: s.stability, Difficulty: 5, State: fsrs.State(2), LastReview: last,
+		}, now)
+		if err != nil {
+			t.Fatalf("Retrievability: %v", err)
+		}
+		want += r / float64(len(seen))
+	}
+
+	q := db.New(tx)
+	rows, err := q.ListStudentProgressForDeck(ctx, db.ListStudentProgressForDeckParams{
+		DeckID: pgUUID(t, deckID), Now: pgtype.Timestamptz{Time: now, Valid: true},
+		LookAheadMinutes: 0, WindowDays: progressWindowDays, LimitCount: progressPageSize,
+	})
+	if err != nil {
+		t.Fatalf("ListStudentProgressForDeck: %v", err)
+	}
+	students, _, err := foldStudentProgress(ctx, q, pgUUID(t, deckID), now, rows)
+	if err != nil {
+		t.Fatalf("foldStudentProgress: %v", err)
+	}
+	for _, s := range students {
+		if s.UserID != pgUUID(t, studentID) {
+			continue
+		}
+		if s.RecallDisplay != formatPercent(want) {
+			t.Errorf("RecallDisplay = %q, want %q (mean of the two seen cards' retrievability)", s.RecallDisplay, formatPercent(want))
+		}
+		return
+	}
+	t.Fatalf("student not in roster: %+v", students)
 }
