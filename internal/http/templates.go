@@ -22,6 +22,7 @@ var pagePartials = map[string][]string{
 	"access":         {"templates/messages.html", "templates/back_to_deck.html"},
 	"progress":       {"templates/back_to_deck.html"},
 	"stats":          {"templates/back_to_decks.html"},
+	"release_notes":  {"templates/back_to_decks.html"},
 	"flags":          {"templates/back_to_deck.html"},
 	"login":          {"templates/messages.html"},
 	"signup":         {"templates/messages.html"},
@@ -34,17 +35,24 @@ var pagePartials = map[string][]string{
 	"not_found":      {"templates/back_to_decks.html"},
 }
 
+// pageFuncs feed the layout/header chrome (version footer, what's-new bar) from package state, so
+// no handler's view struct has to carry them (#266).
+var pageFuncs = template.FuncMap{
+	"appVersion":   func() string { return appVersion },
+	"showWhatsNew": showWhatsNew,
+}
+
 func parseTemplates() (map[string]*template.Template, error) {
 	pages := map[string]*template.Template{}
 	for _, name := range []string{
 		"login", "signup", "reset_password", "settings",
 		"decks", "deck_new", "deck", "deck_edit", "access", "progress", "stats", "flags",
-		"notetypes", "notetype_form", "note_form",
+		"notetypes", "notetype_form", "note_form", "release_notes",
 		"review", "study", "import", "import_ai",
 		"not_found",
 	} {
 		files := append([]string{"templates/layout.html", "templates/header.html", "templates/" + name + ".html"}, pagePartials[name]...)
-		t, err := template.ParseFS(web.Templates, files...)
+		t, err := template.New("").Funcs(pageFuncs).ParseFS(web.Templates, files...)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s template: %w", name, err)
 		}

@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/Jolls/deckshare"
 	"github.com/Jolls/deckshare/internal/db"
 )
 
@@ -190,6 +191,8 @@ func (s *Service) Signup(ctx context.Context, ip, email, password, displayName s
 		Email:        email,
 		PasswordHash: hash,
 		DisplayName:  displayName,
+		// A new account has no history to catch up on (#266).
+		LastSeenVersion: deckshare.Version(),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

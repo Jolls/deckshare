@@ -305,3 +305,17 @@ docs/plans/192-note-type-authority.md; see the note-types section above.
 by design ([#51](https://github.com/Jolls/deckshare/issues/51)) â€” a user's decks, notes, note types,
 access grants, scheduling state, and review history all restrict. Account closure needs an
 ownership-transfer decision for shared decks and a written `review_log` decision first.
+
+## Release notes — `releasenotes.go` ([#266](https://github.com/Jolls/deckshare/issues/266))
+
+User-facing changelog from the embedded `docs/release-notes.md` (one `## [x.y.z]` section per
+user-visible release; internal-only releases have none).
+
+| Method | Path | Permission | Purpose |
+|---|---|---|---|
+| GET | `/release-notes` | session | Release notes, newest first. Opening it marks the running version seen for the caller (`users.last_seen_version`) |
+| POST | `/release-notes/dismiss` | session | Mark the running version seen and redirect to `/decks`. Writes only the caller's own row; the version comes from the binary, never the form |
+
+The what's-new bar (every authenticated page except the reviewer) shows while the newest noted
+version is greater than the caller's `last_seen_version`; the footer links the running version
+to `/release-notes`.

@@ -8,8 +8,8 @@ SELECT * FROM users WHERE lower(email) = lower(sqlc.arg(email));
 SELECT EXISTS (SELECT 1 FROM users WHERE lower(email) = lower(sqlc.arg(email)));
 
 -- name: CreateUser :one
-INSERT INTO users (email, password_hash, display_name)
-VALUES ($1, $2, $3)
+INSERT INTO users (email, password_hash, display_name, last_seen_version)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT (lower(email)) DO NOTHING
 RETURNING *;
 
@@ -28,3 +28,8 @@ UPDATE users SET avatar_sha256 = $2 WHERE id = $1;
 -- Appearance (#268). Keyed only on the session user's id -- no id ever comes from the form.
 -- name: UpdateUserColorScheme :exec
 UPDATE users SET color_scheme = $2 WHERE id = $1;
+
+-- Release notes (#266). Keyed only on the session user's id -- the version comes from the running
+-- binary, never the form.
+-- name: UpdateUserLastSeenVersion :exec
+UPDATE users SET last_seen_version = $2 WHERE id = $1;

@@ -333,7 +333,10 @@ The parts you need without opening it:
   types dedup on `UNIQUE (owner_id, name)`.
 - Per-user UI preferences live on `users`, not a side table: `users.color_scheme`
   (`auto`/`light`/`dark`, default `auto`, #268) is rendered server-side as `data-theme` on
-  `<html>`, omitted for `auto` so Pico follows `prefers-color-scheme`.
+  `<html>`, omitted for `auto` so Pico follows `prefers-color-scheme`. Likewise
+  `users.last_seen_version` (#266): the newest app version whose release notes the user has
+  opened or dismissed; `docs/release-notes.md` (embedded, user-facing, only user-visible
+  releases) drives `/release-notes` and the what's-new bar.
 - `review_log` is append-only training data. `user_fsrs_params.params` is a JSON array plus
   an explicit `fsrs_version`.
 - **The day boundary is not midnight UTC.** It's a per-user rollover hour (default 04:00

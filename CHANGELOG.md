@@ -8,6 +8,15 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.15] - 2026-10-06
+
+### Added
+- User-facing release notes: `GET /release-notes` renders the embedded `docs/release-notes.md`;
+  a dismissible what's-new bar (`POST /release-notes/dismiss`) appears on authenticated pages
+  when a newer noted version exists; the footer shows the version and links to the notes.
+  Seen-state is `users.last_seen_version` (migration 00024); new signups start at the running
+  version ([#266](https://github.com/Jolls/deckshare/issues/266)).
+
 ## [0.3.14] - 2026-10-06
 
 ### Added

@@ -6,4 +6,10 @@
     </span>
     <a href="/settings" aria-label="Account settings">⚙</a>
 </header>
+{{if showWhatsNew .User.LastSeenVersion}}
+<aside class="whats-new" role="status">
+    <a class="whats-new-link" href="/release-notes">DeckShare was updated to {{appVersion}} &mdash; see what's new</a>
+    <form method="post" action="/release-notes/dismiss"><button type="submit" class="whats-new-dismiss" aria-label="Dismiss">&times;</button></form>
+</aside>
+{{end}}
 {{end}}

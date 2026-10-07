@@ -153,15 +153,16 @@ type Template struct {
 }
 
 type User struct {
-	ID           pgtype.UUID
-	Email        string
-	PasswordHash string
-	DisplayName  string
-	Timezone     string
-	DayStartHour int16
-	CreatedAt    pgtype.Timestamptz
-	AvatarSha256 pgtype.Text
-	ColorScheme  string
+	ID              pgtype.UUID
+	Email           string
+	PasswordHash    string
+	DisplayName     string
+	Timezone        string
+	DayStartHour    int16
+	CreatedAt       pgtype.Timestamptz
+	AvatarSha256    pgtype.Text
+	ColorScheme     string
+	LastSeenVersion string
 }
 
 type UserCardState struct {
