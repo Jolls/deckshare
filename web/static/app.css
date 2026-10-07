@@ -144,8 +144,87 @@ details > summary ~ * {
    costs vertical space on a phone, and a later issue hangs account-switch/lock controls off this
    bar, which must not sit one mis-tap from a grading button. layout.html sets this class on
    <body> only for the review and study pages (internal/http/review.go). */
-body.hide-account-bar .account-bar {
+body.hide-account-bar .account-bar,
+body.hide-account-bar .whats-new,
+body.hide-account-bar .app-footer {
     display: none;
+}
+
+/* What's-new bar (#266): the whole bar links to the release notes (stretched link); the x sits
+   above it and dismisses. */
+.whats-new {
+    position: relative;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.4rem 0.5rem 0.4rem 0.75rem;
+    margin-bottom: 1rem;
+    border-radius: var(--pico-border-radius);
+    background: var(--pico-card-sectioning-background-color);
+    font-size: 0.875rem;
+}
+
+.whats-new-link {
+    text-decoration: none;
+}
+
+.whats-new-link::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+}
+
+.whats-new form {
+    margin: 0;
+}
+
+.whats-new-dismiss {
+    position: relative;
+    z-index: 1;
+    width: auto;
+    margin: 0;
+    padding: 0 0.5rem;
+    border: 0;
+    background: none;
+    color: var(--pico-muted-color);
+    font-size: 1.25rem;
+    line-height: 1.5;
+}
+
+.whats-new-dismiss:hover {
+    color: var(--pico-color);
+}
+
+.app-footer {
+    display: none;
+}
+
+/* What's-new bar (#266): sits under the account bar after an upgrade. */
+.whats-new {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 1rem;
+    border-radius: var(--pico-border-radius);
+    background: var(--pico-card-sectioning-background-color);
+}
+
+.whats-new form,
+.whats-new button {
+    margin: 0;
+}
+
+.whats-new button {
+    width: auto;
+    padding: 0.25rem 0.75rem;
+}
+
+.app-footer {
+    padding-bottom: 1rem;
+    text-align: center;
 }
 
 /* Deck notes list apply-to-many bar (#241): appears once the selection is non-empty. */

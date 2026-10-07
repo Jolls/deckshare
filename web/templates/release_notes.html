@@ -1,0 +1,14 @@
+{{define "content"}}
+<h1>Release notes</h1>
+{{range .Notes}}
+<section>
+    <h2>{{.Version}}{{if .Date}} <small>{{.Date}}</small>{{end}}</h2>
+    <ul>
+        {{range .Items}}<li>{{.}}</li>{{end}}
+    </ul>
+</section>
+{{else}}
+<p>No release notes yet.</p>
+{{end}}
+{{template "backToDecks" .}}
+{{end}}

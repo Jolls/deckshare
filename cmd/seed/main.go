@@ -363,20 +363,26 @@ func run() error {
 }
 
 // ensureUser signs up the given account, or looks it up if a prior seed run already created it.
+// Either way last_seen_version is cleared (#266), so every seed run leaves the what's-new bar
+// showing on first login.
 func ensureUser(ctx context.Context, pool *pgxpool.Pool, authSvc *auth.Service, email, password, displayName string) (db.User, error) {
 	user, _, err := authSvc.Signup(ctx, "127.0.0.1", email, password, displayName)
-	if err == nil {
+	switch {
+	case err == nil:
 		log.Printf("created test user: %s / %s", email, password)
-		return user, nil
-	}
-	if !errors.Is(err, auth.ErrEmailTaken) {
+	case errors.Is(err, auth.ErrEmailTaken):
+		user, err = db.New(pool).GetUserByEmail(ctx, email)
+		if err != nil {
+			return db.User{}, fmt.Errorf("look up existing user: %w", err)
+		}
+		log.Printf("test user already exists: %s", email)
+	default:
 		return db.User{}, fmt.Errorf("create user: %w", err)
 	}
-	user, err = db.New(pool).GetUserByEmail(ctx, email)
-	if err != nil {
-		return db.User{}, fmt.Errorf("look up existing user: %w", err)
+	if err := db.New(pool).UpdateUserLastSeenVersion(ctx, db.UpdateUserLastSeenVersionParams{ID: user.ID}); err != nil {
+		return db.User{}, fmt.Errorf("clear last_seen_version: %w", err)
 	}
-	log.Printf("test user already exists: %s", email)
+	user.LastSeenVersion = ""
 	return user, nil
 }
 

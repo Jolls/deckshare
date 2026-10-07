@@ -375,11 +375,13 @@ user_fsrs_params id, user_id, deck_id NULL,   -- deck_id NULL = the user's globa
 
 users            id, email, password_hash, display_name, timezone,
                  day_start_hour smallint DEFAULT 4, avatar_sha256 NULL,
-                 color_scheme text DEFAULT 'auto', created_at
+                 color_scheme text DEFAULT 'auto',
+                 last_seen_version text DEFAULT '', created_at
                  -- UNIQUE on lower(email): one account per address, any casing
                  -- password_hash is argon2id (@node-rs/argon2), never a weaker algorithm
                  -- avatar_sha256 -> media_blobs, ON DELETE RESTRICT; NULL = no avatar (#176)
                  -- color_scheme: 'auto' | 'light' | 'dark' (users_color_scheme_check); 'auto' = follow prefers-color-scheme (#268)
+                 -- last_seen_version: newest release-notes version the user has seen; '' = never (#266)
 
 sessions         id text pk,             -- SHA-256 hex of the session token; the raw token
                                           -- lives only in the cookie, never in the database

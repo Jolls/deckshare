@@ -12,20 +12,26 @@ import (
 )
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (email, password_hash, display_name)
-VALUES ($1, $2, $3)
+INSERT INTO users (email, password_hash, display_name, last_seen_version)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT (lower(email)) DO NOTHING
-RETURNING id, email, password_hash, display_name, timezone, day_start_hour, created_at, avatar_sha256, color_scheme
+RETURNING id, email, password_hash, display_name, timezone, day_start_hour, created_at, avatar_sha256, color_scheme, last_seen_version
 `
 
 type CreateUserParams struct {
-	Email        string
-	PasswordHash string
-	DisplayName  string
+	Email           string
+	PasswordHash    string
+	DisplayName     string
+	LastSeenVersion string
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
-	row := q.db.QueryRow(ctx, createUser, arg.Email, arg.PasswordHash, arg.DisplayName)
+	row := q.db.QueryRow(ctx, createUser,
+		arg.Email,
+		arg.PasswordHash,
+		arg.DisplayName,
+		arg.LastSeenVersion,
+	)
 	var i User
 	err := row.Scan(
 		&i.ID,
@@ -37,6 +43,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.CreatedAt,
 		&i.AvatarSha256,
 		&i.ColorScheme,
+		&i.LastSeenVersion,
 	)
 	return i, err
 }
@@ -53,7 +60,7 @@ func (q *Queries) EmailExists(ctx context.Context, email string) (bool, error) {
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, email, password_hash, display_name, timezone, day_start_hour, created_at, avatar_sha256, color_scheme FROM users WHERE id = $1
+SELECT id, email, password_hash, display_name, timezone, day_start_hour, created_at, avatar_sha256, color_scheme, last_seen_version FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id pgtype.UUID) (User, error) {
@@ -69,12 +76,13 @@ func (q *Queries) GetUser(ctx context.Context, id pgtype.UUID) (User, error) {
 		&i.CreatedAt,
 		&i.AvatarSha256,
 		&i.ColorScheme,
+		&i.LastSeenVersion,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, display_name, timezone, day_start_hour, created_at, avatar_sha256, color_scheme FROM users WHERE lower(email) = lower($1)
+SELECT id, email, password_hash, display_name, timezone, day_start_hour, created_at, avatar_sha256, color_scheme, last_seen_version FROM users WHERE lower(email) = lower($1)
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -90,6 +98,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.CreatedAt,
 		&i.AvatarSha256,
 		&i.ColorScheme,
+		&i.LastSeenVersion,
 	)
 	return i, err
 }
@@ -123,6 +132,22 @@ type UpdateUserColorSchemeParams struct {
 // Appearance (#268). Keyed only on the session user's id -- no id ever comes from the form.
 func (q *Queries) UpdateUserColorScheme(ctx context.Context, arg UpdateUserColorSchemeParams) error {
 	_, err := q.db.Exec(ctx, updateUserColorScheme, arg.ID, arg.ColorScheme)
+	return err
+}
+
+const updateUserLastSeenVersion = `-- name: UpdateUserLastSeenVersion :exec
+UPDATE users SET last_seen_version = $2 WHERE id = $1
+`
+
+type UpdateUserLastSeenVersionParams struct {
+	ID              pgtype.UUID
+	LastSeenVersion string
+}
+
+// Release notes (#266). Keyed only on the session user's id -- the version comes from the running
+// binary, never the form.
+func (q *Queries) UpdateUserLastSeenVersion(ctx context.Context, arg UpdateUserLastSeenVersionParams) error {
+	_, err := q.db.Exec(ctx, updateUserLastSeenVersion, arg.ID, arg.LastSeenVersion)
 	return err
 }
 

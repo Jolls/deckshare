@@ -15,6 +15,7 @@
         {{if .User}}{{template "header" .}}{{end}}
         {{template "content" .}}
     </main>
+    {{if .User}}<footer class="container app-footer"><small><a href="/release-notes">Version {{appVersion}}</a></small></footer>{{end}}
 </body>
 </html>
 {{end}}
