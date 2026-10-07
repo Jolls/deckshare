@@ -168,3 +168,17 @@ svg.chart {
     height: auto;
     color: var(--pico-primary);
 }
+
+/* Form feedback (messages.html, import_ai.html): Pico's per-scheme del/ins colours so error and
+   success text stay legible in dark mode (#268). */
+.msg-error { color: var(--pico-del-color); }
+.msg-success { color: var(--pico-ins-color); }
+
+/* #268: card content is authored for a light page (note-type CSS and imported HTML routinely
+   hard-code black text / white backgrounds), so every card container carries data-theme="light"
+   and is a light surface in every mode -- Pico's light variables apply inside it. :where() keeps
+   this at zero specificity so a note type's own .card rules (scoped to .deckshare-card) win. */
+:where(.deckshare-card[data-theme="light"]) {
+    background-color: var(--pico-background-color);
+    color: var(--pico-color);
+}

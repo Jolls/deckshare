@@ -161,6 +161,7 @@ type User struct {
 	DayStartHour int16
 	CreatedAt    pgtype.Timestamptz
 	AvatarSha256 pgtype.Text
+	ColorScheme  string
 }
 
 type UserCardState struct {

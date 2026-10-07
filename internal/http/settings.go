@@ -34,6 +34,10 @@ const maxAvatarUploadBytes = 5 << 20
 // of the client-side canvas resize -- which a request can skip entirely.
 const maxAvatarDimension = 2048
 
+// colorSchemes is the users.color_scheme allowlist (#268) -- must match users_color_scheme_check
+// (migration 00023). Exact match: no trimming or case folding.
+var colorSchemes = map[string]bool{"auto": true, "light": true, "dark": true}
+
 // appVersion is read from the top CHANGELOG.md entry at startup, so it can never drift from
 // the version already bumped alongside every PR (CLAUDE.md §14).
 var appVersion = deckshare.Version()
@@ -66,14 +70,16 @@ type settingsView struct {
 	// "hide-account-bar").
 	BodyClass string
 
-	AvatarError     string
-	AvatarSuccess   string
-	ProfileError    string
-	ProfileSuccess  string
-	PasswordError   string
-	PasswordSuccess string
-	FsrsError       string
-	FsrsSuccess     string
+	AvatarError       string
+	AvatarSuccess     string
+	ProfileError      string
+	ProfileSuccess    string
+	PasswordError     string
+	PasswordSuccess   string
+	FsrsError         string
+	FsrsSuccess       string
+	AppearanceError   string
+	AppearanceSuccess string
 }
 
 // buildSettingsView assembles the fields every /settings render needs regardless of which
@@ -228,6 +234,35 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 
 		view := buildSettingsView(user, retention)
 		view.FsrsSuccess = "Retention target updated"
+		render(w, pages["settings"], http.StatusOK, view)
+	})))
+
+	mux.Handle("POST /settings/appearance", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, _ := auth.UserFromContext(r.Context())
+		if !parseForm(w, r) {
+			return
+		}
+		retention, err := currentRetention(r.Context(), store, user.ID)
+		if err != nil {
+			serverError(w, r, err)
+			return
+		}
+		scheme := r.PostForm.Get("color_scheme")
+		if !colorSchemes[scheme] {
+			view := buildSettingsView(user, retention)
+			view.AppearanceError = "Choose Light, Dark or Auto"
+			render(w, pages["settings"], http.StatusBadRequest, view)
+			return
+		}
+		if err := db.New(store).UpdateUserColorScheme(r.Context(), db.UpdateUserColorSchemeParams{
+			ID: user.ID, ColorScheme: scheme,
+		}); err != nil {
+			serverError(w, r, err)
+			return
+		}
+		user.ColorScheme = scheme // so this very response paints in the new scheme
+		view := buildSettingsView(user, retention)
+		view.AppearanceSuccess = "Appearance updated"
 		render(w, pages["settings"], http.StatusOK, view)
 	})))
 

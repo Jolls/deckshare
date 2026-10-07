@@ -76,7 +76,7 @@ func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
 }
 
 const getSessionUser = `-- name: GetSessionUser :one
-SELECT u.id, u.email, u.password_hash, u.display_name, u.timezone, u.day_start_hour, u.created_at, u.avatar_sha256, s.expires_at
+SELECT u.id, u.email, u.password_hash, u.display_name, u.timezone, u.day_start_hour, u.created_at, u.avatar_sha256, u.color_scheme, s.expires_at
 FROM sessions s
 JOIN users u ON u.id = s.user_id
 WHERE s.id = $1 AND s.expires_at > now()
@@ -99,6 +99,7 @@ func (q *Queries) GetSessionUser(ctx context.Context, id string) (GetSessionUser
 		&i.User.DayStartHour,
 		&i.User.CreatedAt,
 		&i.User.AvatarSha256,
+		&i.User.ColorScheme,
 		&i.ExpiresAt,
 	)
 	return i, err

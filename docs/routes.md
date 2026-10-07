@@ -141,7 +141,7 @@ deck's `rev.order`/`priority` preset — `(group_bit, sort_key, cardId)` for the
 modes, a pair of independent sub-cursors for `mixed` (§6, `internal/review/types.go`'s `Cursor`);
 server excludes cards already reviewed this study day (§6). **401 JSON**, not the usual `RequireUser` redirect, on no session — an XHR hitting a login-page redirect would silently lose the request. Optional query param `extraRounds` (int, default 0, clamped server-side to `maxExtraRounds` = 20, #172): grants that many additional full daily presets for this fetch ("Keep studying"), never changes what is stored |
 | POST | `/api/reviews/batch` | `can_view` + `can_study` | Grade. `{events:[{id,cardId,rating,reviewedAt,durationMs}]}` — exactly these fields, idempotent, returns `{results:[{id,cardId,status,after,preview}]}` per event (`status` ∈ `applied\|duplicate\|forbidden\|rejected`, always HTTP 200 once authenticated — a single bad event must not wedge the rest of the batch; `preview` = the four rating branches recomputed from `after`, display-only, so a card the client requeued in-session can be relabelled — absent on forbidden/rejected). Same 401-JSON auth posture as `/api/reviews/next`. See §6 for the full authorise/recompute/store sequence and the concurrency mechanisms. Optional query param `u` (uuid, #178): the acting account the client believes it is grading as — a mismatch against the session user answers **409** and writes nothing, an absent value is tolerated. Rejection-only; it can never cause or shape a write (§2.7) |
-| GET | `/static/{path...}` | public | Vendored htmx + the reviewer's queue module (`web/static/`, see its README for versions/licences) — no CDN dependency |
+| GET | `/static/{path...}` | public | Vendored htmx, Alpine, Pico CSS and the app's JS/CSS (`web/static/`, see its README for versions/licences) — no CDN dependency |
 
 ---
 
@@ -230,14 +230,15 @@ does not get a flag control in this pass — its queued cards don't carry a per-
 
 ---
 
-## Settings — `settings.go` (Phase 1: account settings step 3 -- built (#52), FSRS default step 9 -- built (#63))
+## Settings — `settings.go` (Phase 1: account settings step 3 -- built (#52), FSRS default step 9 -- built (#63), appearance -- built (#268))
 
 | Method | Path | Permission | Purpose |
 |---|---|---|---|
-| GET | `/settings` | session | Profile (display name, timezone, `day_start_hour`), password change, global FSRS default (`desired_retention` where `deck_id IS NULL`) |
+| GET | `/settings` | session | Profile (display name, timezone, `day_start_hour`), appearance (colour scheme: Auto/Light/Dark), password change, global FSRS default (`desired_retention` where `deck_id IS NULL`) |
 | POST | `/settings` | session | Update profile |
 | POST | `/settings/password` | session | Change password |
 | POST | `/settings/fsrs` | session | Update the global `desired_retention` default |
+| POST | `/settings/appearance` | session | Set the caller's colour scheme (`users.color_scheme`: `auto`/`light`/`dark`, #268). Writes only the caller's own row (id from the session, never the form); unknown values 400. Rendered server-side as `data-theme` on `<html>`, none for `auto` |
 | POST | `/decks/{id}/settings/fsrs` | `can_study` | Per-deck override. Scoped to the caller, not the deck — `user_fsrs_params` keys on `(user_id, deck_id)`, so this is "my retention target for this deck," not a deck-wide setting an admin sets for everyone |
 | POST | `/settings/avatar` | session | Upload an avatar image (JPEG only, client resizes to ≤512px before sending; server independently caps size and decoded dimensions). Stored as a content-addressed blob (`media_blobs` + `users.avatar_sha256`, #176) — no `media_refs` row, since an avatar isn't deck-scoped media |
 | GET | `/settings/avatar` | session, self only | Serve the caller's own avatar bytes; 404 if none set. No cross-user visibility rule exists yet, so this doesn't reuse `GetMediaBlobForUser`'s `deck_access` gate |

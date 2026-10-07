@@ -40,7 +40,7 @@ func TestContentSecurityPolicy_Directives(t *testing.T) {
 	}{
 		{"default-src", []string{"'none'"}, "deny by default: font/media/worker/frame/object all fall back here"},
 		{"script-src", []string{"'self'", "'unsafe-eval'"}, "all JS is served from /static/; 'unsafe-eval' is htmx's hx-vals js: Function() -- plan Open question 1"},
-		{"style-src", []string{"'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"}, `card HTML carries inline style="" attributes that cannot take a nonce; layout.html loads Pico from jsDelivr`},
+		{"style-src", []string{"'self'", "'unsafe-inline'"}, `card HTML carries inline style="" attributes that cannot take a nonce; Pico and app.css are served from /static/`},
 		{"img-src", []string{"'self'", "data:"}, "card media is same-origin only; data: is Pico's own form-control icons"},
 		{"connect-src", []string{"'self'"}, "htmx XHR to /api/reviews/next + review.js's fetch()/navigator.sendBeacon to /api/reviews/batch"},
 		{"form-action", []string{"'self'"}, "every form in web/templates/ posts same-origin"},
@@ -83,16 +83,15 @@ func TestContentSecurityPolicy_NoLoosening(t *testing.T) {
 		}
 	})
 
-	t.Run("style-src names exactly one external origin", func(t *testing.T) {
+	t.Run("style-src admits no external origin", func(t *testing.T) {
 		var external []string
 		for _, src := range got["style-src"] {
 			if !strings.HasPrefix(src, "'") {
 				external = append(external, src)
 			}
 		}
-		want := []string{"https://cdn.jsdelivr.net"}
-		if !slices.Equal(external, want) {
-			t.Errorf("style-src external sources = %v, want %v -- drop this when Pico is vendored under /static/", external, want)
+		if len(external) != 0 {
+			t.Errorf("style-src external sources = %v, want none -- Pico is vendored under /static/", external)
 		}
 	})
 

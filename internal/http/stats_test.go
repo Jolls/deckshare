@@ -417,3 +417,21 @@ func TestListStatsDailyReviewsForUser_BucketsByOwnStudyDay(t *testing.T) {
 		})
 	}
 }
+
+// The charts follow the colour scheme only because every fill/stroke is currentColor (#261); a
+// hard-coded colour here would be unreadable in one of the modes (#268).
+func TestStatsCharts_NoFixedColours(t *testing.T) {
+	days := []statsDay{
+		{Date: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), Reviews: 10, Passes: 8},
+		{Date: time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC), Reviews: 0},
+		{Date: time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC), Reviews: 4, Passes: 4},
+	}
+	colour := regexp.MustCompile(`(?:fill|stroke)="([^"]*)"`)
+	for name, svg := range map[string]template.HTML{"reviews": reviewsChartSVG(days), "passRate": passRateChartSVG(days)} {
+		for _, m := range colour.FindAllStringSubmatch(string(svg), -1) {
+			if m[1] != "currentColor" && m[1] != "none" {
+				t.Errorf("%s chart has fixed colour %s", name, m[0])
+			}
+		}
+	}
+}

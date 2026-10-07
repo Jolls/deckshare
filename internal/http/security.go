@@ -28,7 +28,8 @@ import "net/http"
 //	                        (#166) also evaluates its x-data/x-show/@click expressions through
 //	                        the Function constructor and would need this same source if it were
 //	                        ever removed.
-//	style-src 'self'        Covers web/static/app.css (#166) alongside the vendored JS.
+//	style-src 'self'        Covers web/static/app.css (#166) and the vendored Pico, pico.min.css (#270),
+//	                        alongside the vendored JS.
 //	          'unsafe-inline'  Forced, and a nonce would be strictly worse. Sanitised card HTML
 //	                        carries inline style="" attributes on arbitrary elements
 //	                        (sanitise.go's AllowAttrs("style")), and an attribute cannot take a
@@ -38,9 +39,6 @@ import "net/http"
 //	                        nothing. What this permits is CSS injection, already bounded by the
 //	                        property/value allowlist in internal/render/css.go; what CSP is here
 //	                        for -- script injection -- is fully blocked by script-src above.
-//	          https://cdn.jsdelivr.net  web/templates/layout.html loads Pico CSS from jsDelivr
-//	                        (web/static/README.md records why Pico alone is not vendored).
-//	                        Delete this source the day Pico moves under /static/.
 //	img-src 'self'          The card-media origin policy. Card images resolve same-origin only:
 //	                        Anki's relative-filename convention today (AllowRelativeURLs(true)),
 //	                        /media/{sha256} once #60 lands. Remote origins are refused even
@@ -65,7 +63,7 @@ import "net/http"
 //	                        matters here precisely because card media is relative.
 const contentSecurityPolicy = "default-src 'none'; " +
 	"script-src 'self' 'unsafe-eval'; " +
-	"style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
+	"style-src 'self' 'unsafe-inline'; " +
 	"img-src 'self' data:; " +
 	"connect-src 'self'; " +
 	"form-action 'self'; " +

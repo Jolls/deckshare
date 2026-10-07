@@ -51,6 +51,7 @@ erDiagram
         text display_name
         text timezone
         smallint day_start_hour
+        text color_scheme "auto | light | dark"
         text avatar_sha256 FK "NULL = no avatar"
         timestamptz created_at
     }

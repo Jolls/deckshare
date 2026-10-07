@@ -8,6 +8,25 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.14] - 2026-10-06
+
+### Added
+- Light / Dark / Auto colour scheme, chosen under Appearance on `/settings` and stored per user
+  (`users.color_scheme`, migration 00023). Rendered server-side as `data-theme` on `<html>` so
+  first paint is correct; Auto follows the OS. Cards stay a light surface in every mode so
+  note-type CSS authored for a light page remains legible
+  ([#268](https://github.com/Jolls/deckshare/issues/268)).
+
+### Changed
+- Pico CSS is vendored under `/static/` (pinned to 2.1.1) instead of loaded from jsDelivr
+  ([#270](https://github.com/Jolls/deckshare/issues/270)).
+- Form error/success messages use Pico's `del`/`ins` colour variables so they stay legible in
+  dark mode ([#268](https://github.com/Jolls/deckshare/issues/268)).
+
+### Security
+- Removed the `https://cdn.jsdelivr.net` source from the CSP `style-src`; no page now loads an
+  asset from a third-party host ([#270](https://github.com/Jolls/deckshare/issues/270)).
+
 ## [0.3.13] - 2026-10-06
 
 ### Added
