@@ -6,6 +6,11 @@ change get a section; internal-only releases are simply absent. Format: `## [x.y
 followed by `- ` bullets (a bullet may continue on indented lines). Every version here must also
 appear in `CHANGELOG.md`.
 
+## [0.3.17] - 2026-10-07
+- In dark mode your cards are now dark too, instead of a bright white card in a dark page. Cards
+  with their own colours (red or green highlights, for example) keep them; Light mode looks exactly
+  as before.
+
 ## [0.3.16] - 2026-10-06
 - Pick an accent colour under Appearance in Settings: Azure (the default), Blue, Indigo, Purple,
   Pink, Red, Orange or Green. It works with Light, Dark and Auto, and is remembered on every device. Choices preview instantly before you save.

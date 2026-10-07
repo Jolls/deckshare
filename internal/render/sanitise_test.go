@@ -178,7 +178,7 @@ func TestSanitiseCardHTML_UnbalancedTagsAcrossFields(t *testing.T) {
 	}
 }
 
-// Dark mode (#268) puts data-theme="light" on the card container. Card content must not be able
+// Cards follow the page colour scheme (#276) and carry no data-theme of their own. Card content must not be able
 // to set its own: data-* is not on the allowlist. class="nightMode" survives but nothing keys off it.
 func TestSanitiseCardHTML_StripsDataTheme(t *testing.T) {
 	out := sanitiseCardHTML(`<div data-theme="dark" class="nightMode">x</div>`)

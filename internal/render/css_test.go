@@ -60,3 +60,46 @@ func TestSanitiseCSS_NoMarkupInOutput(t *testing.T) {
 		t.Errorf("output contains markup: %q", out)
 	}
 }
+
+// #276: colour declarations get a light-dark() variant after the original, which stays as the
+// fallback; values that aren't one plain colour are left alone.
+func TestSanitiseCSS_DarkModeColour(t *testing.T) {
+	const flip = "calc(l + (0.95 - 1.75 * l) * clamp(0, calc(1 - c / 0.04), 1)) c h"
+	tests := []struct {
+		name string
+		css  string
+		want string // substring; "" means no light-dark() in the output
+	}{
+		{"hex colour", `.card { color: #000; }`, "color: #000;\n  color: light-dark(#000, oklch(from #000 " + flip + "));"},
+		{"named colour", `.card { background-color: white; }`, "background-color: light-dark(white, oklch(from white " + flip + "));"},
+		{"colour function", `.card { color: rgb(1, 2, 3); }`, "color: light-dark(rgb(1, 2, 3), oklch(from rgb(1, 2, 3) " + flip + "));"},
+		{"uppercase name", `.card { color: WHITE; }`, "color: light-dark(WHITE, oklch(from WHITE " + flip + "));"},
+		{"uppercase hex with alpha", `.card { color: #AABBCC80; }`, "color: light-dark(#AABBCC80, oklch(from #AABBCC80 " + flip + "));"},
+		{"rgba function", `.card { color: rgba(0, 0, 0, 0.5); }`, "color: light-dark(rgba(0, 0, 0, 0.5), oklch(from rgba(0, 0, 0, 0.5) " + flip + "));"},
+		{"hsla function", `.card { color: hsla(0, 0%, 20%, 0.5); }`, "color: light-dark(hsla(0, 0%, 20%, 0.5),"},
+		{"border-color", `.card { border-color: #ccc; }`, "border-color: light-dark(#ccc,"},
+		{"text-decoration-color", `.card { text-decoration-color: gray; }`, "text-decoration-color: light-dark(gray,"},
+		{"transparent unchanged", `.card { background-color: transparent; }`, ""},
+		{"currentcolor unchanged", `.card { border-color: currentcolor; }`, ""},
+		{"inherit unchanged", `.card { color: inherit; }`, ""},
+		{"multi-value border-color unchanged", `.card { border-color: red blue; }`, ""},
+		{"shorthand unchanged", `.card { border: 1px solid #000; }`, ""},
+		{"fill unchanged", `path { fill: #000; }`, ""},
+		{"dropped value adds nothing", `.card { color: var(--x); }`, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, _ := SanitiseCSS(tt.css)
+			s := string(out)
+			if tt.want == "" {
+				if strings.Contains(s, "light-dark") {
+					t.Errorf("output = %q, want no light-dark()", s)
+				}
+				return
+			}
+			if !strings.Contains(s, tt.want) {
+				t.Errorf("output = %q, want substring %q", s, tt.want)
+			}
+		})
+	}
+}

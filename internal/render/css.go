@@ -199,6 +199,47 @@ func isColourToken(value string) bool {
 	return strings.Contains(value, "(")
 }
 
+// darkModeColourProps are the single-colour properties SanitiseCSS gives a dark-mode variant
+// (#276). Shorthands (border, background) and multi-value border-color are left as authored.
+var darkModeColourProps = map[string]bool{
+	"color": true, "background-color": true, "border-color": true, "text-decoration-color": true,
+}
+
+var colourFuncValueRe = regexp.MustCompile(`(?i)^(rgb|rgba|hsl|hsla)\([^()]*\)$`)
+
+// darkModeColour returns the declaration value that follows value in dark mode, or "" when value
+// should not change (not a colour property, a keyword like transparent/currentcolor, or a
+// multi-token value). The browser does the colour maths: oklch(from <colour> ...) flips the
+// lightness of near-greys -- white page / black text become dark page / light text -- and leaves
+// chromatic colours (red and green highlights) alone, hue and chroma always untouched. The weight
+// w = clamp(0, 1 - c/0.04, 1) is 1 for a grey and 0 once chroma reaches 0.04. A grey is remapped
+// linearly into lightness [0.2, 0.95] (l -> 0.95 - 0.75*l), not clamped: a flipped white page
+// lands on a dark slab rather than pure black, and a faint #ccc text keeps its order and contrast
+// against it instead of collapsing onto the same value. Blended: l + w*(0.95 - 1.75*l). The
+// result is only meaningful beside the unchanged declaration, which stays as the fallback for
+// browsers without light-dark() or relative colour syntax. value has already passed cssValueOK,
+// and only a hex colour, a known colour name or one colour function reaches the output, so
+// nothing but our own fixed text is added around it.
+func darkModeColour(prop, value string) string {
+	if !darkModeColourProps[prop] {
+		return ""
+	}
+	value = strings.TrimSpace(value)
+	lower := strings.ToLower(value)
+	switch {
+	case hexColourRe.MatchString(value), colourFuncValueRe.MatchString(value):
+	case namedColours[lower]:
+		switch lower {
+		case "transparent", "currentcolor", "inherit", "initial", "unset":
+			return ""
+		}
+	default:
+		return ""
+	}
+	return "light-dark(" + value + ", oklch(from " + value +
+		" calc(l + (0.95 - 1.75 * l) * clamp(0, calc(1 - c / 0.04), 1)) c h))"
+}
+
 func tokenListOK(value string) bool {
 	fields := strings.FieldsFunc(value, func(r rune) bool { return r == ' ' || r == ',' })
 	if len(fields) == 0 {
@@ -271,6 +312,9 @@ func SanitiseCSS(raw string) (template.CSS, []string) {
 				continue
 			}
 			decls = append(decls, prop+": "+strings.TrimSpace(d.Value)+";")
+			if dark := darkModeColour(prop, d.Value); dark != "" {
+				decls = append(decls, prop+": "+dark+";")
+			}
 		}
 		if len(decls) == 0 {
 			continue

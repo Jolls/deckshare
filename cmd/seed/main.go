@@ -26,6 +26,9 @@
 //     (Teacher A as creator, Teacher B via the co-owner grant) and is never the reporter, while
 //     Student C reports on their own personal deck, where reporter and reader are the same
 //     person and no grant is involved.
+//   - "Test Deck" is owned by Teacher A and shared view+study with the students and full co-owner access with Teacher B. Its cards are
+//     not real flashcards: each side says what it exercises (dark-mode colour handling, #276),
+//     so a manual pass is to flip through them (testdeck.go).
 //
 // Safe to re-run: an already-seeded deck (non-zero card count) is left alone, and an existing
 // access grant or note type is left alone too.
@@ -357,6 +360,11 @@ func run() error {
 	if err := ensureCardFlag(ctx, pool, studentCDeck.ID, studentC.ID, 2,
 		"Too easy now -- rewrote it as two separate cards.", studentC.ID); err != nil {
 		return fmt.Errorf("ensure resolved flag in %s: %w", studentCDeckName, err)
+	}
+
+	// A shared "Test Deck" of cards that exist to be eyeballed, not studied (testdeck.go).
+	if err := seedTestDeck(ctx, pool, teacherA, teacherB, []db.User{studentC, studentD, studentE}); err != nil {
+		return fmt.Errorf("seed %s: %w", testDeckName, err)
 	}
 
 	return nil
