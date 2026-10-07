@@ -31,7 +31,7 @@
 {{else}}
 <h1>Import cards made by an AI into {{.Deck.Name}}</h1>
 {{if .Errors}}
-<ul style="color: red;">
+<ul class="msg-error">
     {{range .Errors}}<li>{{.}}</li>{{end}}
 </ul>
 {{end}}

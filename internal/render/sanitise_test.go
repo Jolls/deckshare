@@ -177,3 +177,15 @@ func TestSanitiseCardHTML_UnbalancedTagsAcrossFields(t *testing.T) {
 		t.Errorf("unbalanced-tag assembly survived sanitisation: %q", out)
 	}
 }
+
+// Dark mode (#268) puts data-theme="light" on the card container. Card content must not be able
+// to set its own: data-* is not on the allowlist. class="nightMode" survives but nothing keys off it.
+func TestSanitiseCardHTML_StripsDataTheme(t *testing.T) {
+	out := sanitiseCardHTML(`<div data-theme="dark" class="nightMode">x</div>`)
+	if strings.Contains(out, "data-theme") {
+		t.Errorf("output %q must not contain data-theme", out)
+	}
+	if !strings.Contains(out, "x") || !strings.Contains(out, `class="nightMode"`) {
+		t.Errorf("output %q should keep the text and the nightMode class", out)
+	}
+}

@@ -24,3 +24,7 @@ UPDATE users SET password_hash = $2 WHERE id = $1;
 -- clear query. The sha256 must already exist in media_blobs; the FK is what enforces that.
 -- name: UpdateUserAvatar :exec
 UPDATE users SET avatar_sha256 = $2 WHERE id = $1;
+
+-- Appearance (#268). Keyed only on the session user's id -- no id ever comes from the form.
+-- name: UpdateUserColorScheme :exec
+UPDATE users SET color_scheme = $2 WHERE id = $1;

@@ -82,7 +82,7 @@ concurrency mechanisms (advisory locks acquired in ascending sorted-key order, e
 `reviewed_at` order, idempotency via `review_log.id`, out-of-order replay), the reviewedAt
 clamp/reject policy, and the client-side queue module. This is also the first htmx/JS in the
 repo — `web/static/` vendors htmx and a hand-written queue module (no build step), served from a
-new `/static/` route, rather than the CDN load the stack table below describes for Pico CSS; see
+new `/static/` route, as is Pico CSS (#270); see
 `web/static/README.md`. One deliberate deviation from
 [docs/plans/56-reviewer-batch-grading.md](plans/56-reviewer-batch-grading.md)'s design: rating
 buttons are plain (no per-button `hx-post`) so grading can batch and retry with backoff, which a
@@ -95,10 +95,11 @@ middleware, wrapping outside `auth.Service.Middleware` so it covers rejected req
 the browser-enforced bound behind §8's sanitisation, not a replacement for it: `script-src`
 refuses inline and remote script outright, `img-src 'self'` refuses remote card images (§20), and
 `frame-ancestors 'none'` closes the outer half of the clickjacking threat `internal/render/css.go`'s
-property allowlist closes from the inside. Two sources are concessions with recorded expiry
-conditions — `'unsafe-eval'`, forced by htmx's `hx-vals="js:…"` on the reviewer's two
-network-touching elements, and `https://cdn.jsdelivr.net`, forced by `layout.html`'s un-vendored
-Pico CSS. `style-src 'unsafe-inline'` is not a concession but a structural fact: sanitised card
+property allowlist closes from the inside. One source is a concession with a recorded expiry
+condition — `'unsafe-eval'`, forced by htmx's `hx-vals="js:…"` on the reviewer's two
+network-touching elements. The former
+`https://cdn.jsdelivr.net` source was removed in #270 when Pico CSS was vendored.
+`style-src 'unsafe-inline'` is not a concession but a structural fact: sanitised card
 HTML carries inline `style=""` attributes, which cannot take a nonce, and a nonce in `style-src`
 makes CSP ignore `'unsafe-inline'` entirely. See
 [docs/plans/57-csp-reviewer.md](plans/57-csp-reviewer.md).
@@ -330,6 +331,9 @@ The parts you need without opening it:
   kept as `anki_id` columns for export fidelity, never as keys.
 - `notes.guid` + `UNIQUE (owner_id, guid)` is what makes re-import idempotent; decks and note
   types dedup on `UNIQUE (owner_id, name)`.
+- Per-user UI preferences live on `users`, not a side table: `users.color_scheme`
+  (`auto`/`light`/`dark`, default `auto`, #268) is rendered server-side as `data-theme` on
+  `<html>`, omitted for `auto` so Pico follows `prefers-color-scheme`.
 - `review_log` is append-only training data. `user_fsrs_params.params` is a JSON array plus
   an explicit `fsrs_version`.
 - **The day boundary is not midnight UTC.** It's a per-user rollover hour (default 04:00
@@ -647,6 +651,14 @@ each item closes a specific attack, not a generic one:
   surface) or the sanitiser silently strips the answer widget (feature that quietly stops
   working, the more likely outcome if this gets missed).
 
+**Dark mode (#268).** Every card container (`#review-stage` on the review and study pages, each
+note-preview article) carries `data-theme="light"`, so cards are a light surface in any UI mode
+and note-type CSS authored for a light page stays legible. A zero-specificity `app.css` rule gives
+the surface its Pico light background and text colour, so a note type's own `.deckshare-card …`
+rules still win. Note-type CSS cannot observe or change this: `html`/`:root`/attribute selectors
+are refused (`css.go`) and `data-*` is not on the card-HTML allowlist (`sanitise.go`).
+`.nightMode` / `.night_mode` rules are sanitised like any other class and never match (§20).
+
 ---
 
 ## 11. Build order
@@ -878,6 +890,7 @@ seemed tidier."
 | | Anki | DeckShare |
 |---|---|---|
 | Sync protocol | Yes | No, permanently (§2.9) |
+| Night-mode card styling | The reviewer applies a `nightMode` class so note-type CSS can restyle cards for a dark UI | Cards render on a light surface in dark mode (§8, #268); `.nightMode` rules are kept but never activate. Deferred, not refused: every note type's CSS hits the one shared `#review-stage`, and Auto needs the OS scheme the server cannot see — both make honouring it materially larger than the light surface, which meets #268's legibility bar |
 | Filtered / custom-study decks | Yes | Not built as a persistent deck. The importer reads `odid`/`odue` and files cards under their real home deck, so nothing is lost on the way in. A narrow slice now exists: "Keep studying" on `/decks/{id}/review`'s completion screen (#172) re-grants the deck's own preset allowance, one full round per click, for the rest of the page session only — never persisted, never a new deck, no order/priority override |
 | Add-ons | Plugin API | No plugin system (§11) |
 | Empty cards on cloze-ordinal removal | Kept as "empty cards" until the user runs Tools → Empty Cards | Deleted immediately by the edit that removed the ordinal, cascading that card's `user_card_state` (§54, `internal/db/cards.go`'s `SyncNoteCards`, docs/schema.md's card-regeneration diff rule). No empty-cards concept exists; building one wasn't required by any Phase 1 step |
