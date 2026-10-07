@@ -7,6 +7,7 @@ The minor number tracks the build-order milestone
 ([architecture.md §11](docs/architecture.md#11-build-order)): `0.1.x` was Milestone 1
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
+
 ## [0.3.14] - 2026-10-06
 
 ### Added
@@ -25,7 +26,6 @@ The patch number increments with every PR (CLAUDE.md §14).
 ### Security
 - Removed the `https://cdn.jsdelivr.net` source from the CSP `style-src`; no page now loads an
   asset from a third-party host ([#270](https://github.com/Jolls/deckshare/issues/270)).
-
 
 ## [0.3.13] - 2026-10-06
 
