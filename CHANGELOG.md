@@ -8,6 +8,12 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.18] - 2026-10-07
+
+### Added
+- Dependabot version updates (`.github/dependabot.yml`): weekly PRs for Go modules, npm, Docker,
+  Docker Compose and GitHub Actions.
+
 ## [0.3.17] - 2026-10-07
 
 ### Changed
