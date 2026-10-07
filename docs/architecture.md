@@ -196,13 +196,13 @@ target, decided in [docs/plans/architecture-reconsidered.md](plans/architecture-
 | Scheduler | `go-fsrs` (targets FSRS v6) | Runs **server-side only.** No client-side FSRS implementation exists — see §6. |
 | Database | PostgreSQL | Row-level tenancy via `user_id` columns and explicit query scoping. Unchanged from the original stack decision — this was never a TypeScript-specific choice. |
 | Typed SQL | `sqlc` | Generates Go structs/queries from real SQL, checked against the schema at compile time. |
-| Migrations | `goose` | Plain SQL up/down files, checked in under `migrations/` — matches CLAUDE.md §9's "committed, generated SQL, immutable once merged, fix forward" convention directly, with no separate declarative-state layer to keep in sync. See §12. |
+| Migrations | `goose` | Plain SQL up/down files, checked in under `migrations/` — matches CLAUDE.md §9's "committed, generated SQL, immutable once merged, fix forward" convention directly, with no separate declarative-state layer to keep in sync. See §12. Embedded in the binary (`migrations.go`, `go:embed`) and applied at startup via the goose library (`internal/db/migrate.go`); the CLI is for authoring and CI. |
 | `.apkg` read/write | `modernc.org/sqlite` (pure Go, no cgo), stdlib `archive/zip`, `klauspost/compress/zstd` | No native-binary-per-platform concern, and moot either way since deployment is prebuilt Docker images. |
 | Auth | Hand-rolled sessions | Session token SHA-256-hashed at rest, `argon2id` for password hashing via `alexedwards/argon2id` (a thin wrapper over `golang.org/x/crypto/argon2` with sensible parameter defaults — see §12), `Origin`-header CSRF check; new-account creation gated by `SIGNUP_MODE` (open default / closed — docs/plans/212-signup-mode.md). |
 | Tests | Go's `testing` + Playwright | Playwright still applies unchanged — it drives a real browser and doesn't care what rendered the page. See [CLAUDE.md §10](../CLAUDE.md#10-testing). |
 | Lint | `golangci-lint` v2, `linters.default: standard` | Start with the standard set, not `all` — add specific linters as a real gap shows up rather than fighting seventy opinions on day one. See §12. |
-| CI | GitHub Actions | Single workflow: `go build`, `go vet`, `golangci-lint run`, `go test ./...` on push and PR. See §12. |
-| Deploy | Single Go binary + Postgres, Docker / StartOS | Multi-arch Docker builds cross-compile rather than build per-host. Go 1.26 (current stable) — see §12. |
+| CI | GitHub Actions | Single workflow: `go build`, `go vet`, `golangci-lint run`, `go test ./...` on push and PR. PRs also build the multi-arch image (no push); `v*` tags build and publish it to GHCR. See §12. |
+| Deploy | Single multi-arch (amd64 + arm64) distroless image `ghcr.io/jolls/deckshare` + Postgres via compose (`deploy/compose.yaml`, [deploy.md](deploy.md)) | Multi-arch Docker builds cross-compile rather than build per-host. Go 1.26 (current stable) — see §12. StartOS packaging is separate and not built yet. |
 | Logging | `log/slog`, stdlib | One process-wide default logger (`cmd/deckshare/main.go`), never injected. Writes to `os.Stdout` as text (dev-friendly) or JSON, selected by `LOG_FORMAT` (docs/plans/210-error-logging.md). |
 
 **No FSRS implementation runs in the browser, ever.** A card's outcome under each of the four
@@ -262,6 +262,10 @@ deckshare/
 ├─ CLAUDE.md              working rules, invariants, process
 ├─ README.md              public rationale
 ├─ deckshare.md           personal notes digest
+├─ Dockerfile             multi-arch distroless image of cmd/deckshare
+├─ compose.yaml           dev stack: db + app built from this checkout
+├─ deploy/                production compose + .env.example, pulls the GHCR image
+├─ migrations.go          go:embed of migrations/*.sql, applied at startup
 ├─ .claude/
 │  ├─ memory/             agent memory — repo-local, gitignored, see CLAUDE.md §19
 │  └─ skills/
@@ -272,11 +276,13 @@ deckshare/
 │  ├─ anki-schema.md      ANKI's tables and columns — where a value lives
 │  ├─ anki-schema-diagram.md  ANKI's ER diagrams
 │  ├─ apkg-format.md      the .apkg container + encoding traps (§7 lives here)
+│  ├─ deploy.md           deploying the published image with compose
 │  └─ plans/              implementation plans and decision records, <slug>.md
 ├─ migrations/            generated SQL (committed, immutable once merged)
 ├─ cmd/deckshare/         main package: wiring, config, server startup
 ├─ internal/
-│  ├─ db/                 sqlc-generated queries + a hand-written pool/connection setup
+│  ├─ db/                 sqlc-generated queries + a hand-written pool/connection setup and
+│  │                      migrate.go (the startup goose runner)
 │  ├─ auth/
 │  ├─ apkg/
 │  │  ├─ read.go           .apkg/.colpkg -> IR
@@ -346,6 +352,18 @@ The parts you need without opening it:
 - **The day boundary is not midnight UTC.** It's a per-user rollover hour (default 04:00
   local, `users.timezone` + `users.day_start_hour`), and it's computed in the query, not the
   client.
+- **Input limits are app-level.** Note-type name, CSS and card-format sizes, field and template
+  counts, note tags, and the older caps (deck name, note field, bulk selection, flag comment) are
+  enforced in the `internal/http` handlers only (`maxFieldsPerNoteType` and friends in
+  `internal/http/notetypes.go`, #231) — no DB `CHECK` constraints and no count triggers. Two
+  reasons: a per-parent row count (fields or templates per note type) is a cross-row aggregate that
+  a `CHECK` cannot express, and a trigger would be a new mechanism here; and length `CHECK`s on
+  `note_types`/`fields`/`templates` would break `.apkg` import ([§7](#7-apkg--colpkg-mapping)),
+  which writes third-party data verbatim, so a legitimate oversized deck would 500 on `23514`
+  instead of failing gracefully. The importer is therefore unbounded by design, and edits
+  grandfather over-limit values it left behind. Revisit if a write path appears that bypasses the
+  app layer (e.g. a bulk SQL tool), or if the importer gains pre-insert validation with readable
+  errors — length `CHECK`s become safe then.
 
 ---
 

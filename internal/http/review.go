@@ -83,8 +83,8 @@ func registerReviewRoutes(mux *http.ServeMux, store db.Beginner, pages, fragment
 	})))
 
 	// GET /study (#169): a one-shot mix across every deck the user can study. Each deck's own
-	// newPerDay/revPerDay still bounds what BuildBatch draws from it (review.RevPerDay is passed
-	// separately, inside buildStudyBatchInWindow) -- initialBatchSize here is only the page-size
+	// NewPerDay/RevPerDay still bounds what BuildBatch draws from it (the per-deck review.Settings
+	// is read inside buildStudyBatchInWindow) -- initialBatchSize here is only the page-size
 	// limit, kept distinct from that budget so a deck whose budget is exhausted can still surface
 	// its learning/relearning cards, which BuildBatch's effectiveLimit deliberately never caps
 	// (see its doc comment). Deliberately not paginated: the merge point is *after* per-deck Card
@@ -258,10 +258,7 @@ func buildStudyBatchInWindow(ctx context.Context, store db.DBTX, userID pgtype.U
 		return review.Batch{}, err
 	}
 	batch, err := review.BuildBatch(ctx, store, params, userID, deck.ID, deck.Name, window,
-		review.NewPerDay(deck.Preset), review.RevPerDay(deck.Preset),
-		review.ParseRevOrder(deck.Preset), review.ParsePriority(deck.Preset), cur, limit, clock,
-		review.DueLookAheadMinutes(deck.Preset), extraRounds,
-		review.ReleaseGateDay(deck.Preset, window.LocalDate))
+		review.Settings(deck.Preset, window.LocalDate), cur, limit, clock, extraRounds)
 	if err != nil {
 		return review.Batch{}, err
 	}

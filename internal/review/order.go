@@ -50,8 +50,12 @@ func (p Priority) Valid() bool {
 // existing (and Anki's own classic) default -- same degrade-to-default philosophy as
 // NewPerDay/RevPerDay: a bad preset should never fail a study fetch.
 func ParseRevOrder(preset []byte) RevOrder {
-	p, ok := parseDeckPreset(preset)
-	if !ok || p.Rev == nil || p.Rev.Order == nil {
+	p, _ := parseDeckPreset(preset)
+	return p.revOrder()
+}
+
+func (p deckPreset) revOrder() RevOrder {
+	if p.Rev == nil || p.Rev.Order == nil {
 		return RevOrderDue
 	}
 	switch RevOrder(*p.Rev.Order) {
@@ -68,10 +72,11 @@ func ParseRevOrder(preset []byte) RevOrder {
 // would silently reverse a deck deliberately set to beforeReviews); with neither key present,
 // PriorityDue matches the pre-#118 default ordering (due cards before new).
 func ParsePriority(preset []byte) Priority {
-	p, ok := parseDeckPreset(preset)
-	if !ok {
-		return PriorityDue
-	}
+	p, _ := parseDeckPreset(preset)
+	return p.priority()
+}
+
+func (p deckPreset) priority() Priority {
 	if p.Priority != nil {
 		switch Priority(*p.Priority) {
 		case PriorityDue, PriorityNew, PriorityMixed:

@@ -150,30 +150,25 @@ func hashSeedFor(userID pgtype.UUID, window StudyDay) string {
 // deck's preset rev/perDay minus new+due consumption already logged today (#118, formerly an
 // independent due-only cap, #115); priority decides which side fills that shared total first when
 // it binds, the other side backfilling the rest -- see effectiveLimit below and PriorityAllocate's
-// doc comment. Learning/relearning cards are never capped. order and priority are the deck's
-// preset rev/order (#116) and priority (#118); priority == PriorityMixed branches to the
-// two-query interleave path, everything else to the single query. lookAheadMinutes is the deck's
-// preset due/lookAheadMinutes (#154): widens the due<=now cutoff by an explicit opt-in amount,
-// zero by default. extraRounds lets a caller request that many additional full presets for this
-// fetch (#172, "continue studying past today's cap"); learning/relearning behaviour,
-// suspended/buried filtering, the study-day last_review exclusion, rev.order, priority and
-// lookAheadMinutes are all unaffected, and extraRounds never changes what is written -- it only
-// inflates the two selection ceilings for this fetch.
+// doc comment. Learning/relearning cards are never capped. s is the deck's settings, parsed
+// from decks.preset once (#248): s.Order and s.Priority are its rev/order (#116) and priority
+// (#118); s.Priority == PriorityMixed branches to the two-query interleave path, everything else
+// to the single query. s.LookAheadMinutes is its due/lookAheadMinutes (#154): widens the due<=now
+// cutoff by an explicit opt-in amount, zero by default. extraRounds lets a caller request that
+// many additional full presets for this fetch (#172, "continue studying past today's cap");
+// learning/relearning behaviour, suspended/buried filtering, the study-day last_review exclusion,
+// rev.order, priority and lookAheadMinutes are all unaffected, and extraRounds never changes what
+// is written -- it only inflates the two selection ceilings for this fetch. It is per-request,
+// not a deck setting, which is why it stays out of s.
 //
-// Six of these parameters -- newPerDay, revPerDay, order, priority, lookAheadMinutes, classDay --
-// are decks.preset unpacked by the one production caller, which is why each new per-deck setting
-// costs a signature change and ~38 mechanical test edits; #248 tracks collapsing them into one
-// parsed settings struct.
-//
-// classDay is ReleaseGateDay's value for the deck's preset calendar on this study day (#242):
+// s.ClassDay is ReleaseGateDay's value for the deck's preset calendar on this study day (#242):
 // never-seen cards whose note is assigned to a later class meeting are not eligible to be
 // introduced, ReleaseGateOff switching that off entirely. It is an eligibility gate, not an
 // allowance, which is why extraRounds -- which only scales the two allowances below -- can burn
 // down an unlocked backlog but can never reach into a lesson that hasn't opened yet.
 func BuildBatch(ctx context.Context, store db.DBTX, p fsrs.Params, userID, deckID pgtype.UUID,
-	deckName string, window StudyDay, newPerDay, revPerDay int32, order RevOrder, priority Priority,
-	cur Cursor, limit int32, now time.Time, lookAheadMinutes int32, extraRounds int32,
-	classDay int32) (Batch, error) {
+	deckName string, window StudyDay, s DeckSettings, cur Cursor, limit int32, now time.Time,
+	extraRounds int32) (Batch, error) {
 	q := db.New(store)
 
 	introduced, err := q.CountNewIntroducedToday(ctx, db.CountNewIntroducedTodayParams{
@@ -196,8 +191,8 @@ func BuildBatch(ctx context.Context, store db.DBTX, p fsrs.Params, userID, deckI
 		return Batch{}, fmt.Errorf("review: count reviewed today: %w", err)
 	}
 
-	effectiveNewPerDay := newPerDay + extraRounds*newPerDay
-	effectiveRevPerDay := revPerDay + extraRounds*revPerDay
+	effectiveNewPerDay := s.NewPerDay + extraRounds*s.NewPerDay
+	effectiveRevPerDay := s.RevPerDay + extraRounds*s.RevPerDay
 
 	newRemaining := NewRemaining(effectiveNewPerDay, introduced)
 	totalRemaining := RevRemaining(effectiveRevPerDay, introduced+reviewed)
@@ -221,10 +216,10 @@ func BuildBatch(ctx context.Context, store db.DBTX, p fsrs.Params, userID, deckI
 		effectiveLimit = min(limit, totalRemaining)
 	}
 
-	if priority == PriorityMixed {
-		return buildMixedBatch(ctx, q, p, userID, deckID, deckName, window, order, newRemaining, totalRemaining, cur, effectiveLimit, now, lookAheadMinutes, classDay)
+	if s.Priority == PriorityMixed {
+		return buildMixedBatch(ctx, q, p, userID, deckID, deckName, window, s.Order, newRemaining, totalRemaining, cur, effectiveLimit, now, s.LookAheadMinutes, s.ClassDay)
 	}
-	return buildSingleBatch(ctx, q, p, userID, deckID, deckName, window, order, priority, newRemaining, totalRemaining, cur, effectiveLimit, now, lookAheadMinutes, classDay)
+	return buildSingleBatch(ctx, q, p, userID, deckID, deckName, window, s.Order, s.Priority, newRemaining, totalRemaining, cur, effectiveLimit, now, s.LookAheadMinutes, s.ClassDay)
 }
 
 // buildSingleBatch is BuildBatch's path for every priority mode except "mixed": one keyset query,

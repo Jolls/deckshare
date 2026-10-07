@@ -1236,6 +1236,119 @@ func TestReviewNext_ExtraRoundsGrantsOnePreset(t *testing.T) {
 	}
 }
 
+// -- #248: the deck's preset reaches BuildBatch in the right slots ------------------------------
+//
+// BuildBatch's per-deck settings were same-typed int32 positionals; this pins the production
+// wiring in buildStudyBatchInWindow so a transposition can't pass unnoticed.
+
+// deckFixture is a logged-in user with a deck of n new Basic2 notes, at a fixed clock.
+type deckFixture struct {
+	tx       pgx.Tx
+	handler  http.Handler
+	cookie   *http.Cookie
+	deckPath string
+	deckID   string
+	userID   string
+}
+
+func newDeckFixture(t *testing.T, clock time.Time, notes int) deckFixture {
+	t.Helper()
+	ctx := context.Background()
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{}, func() time.Time { return clock })
+	email := testEmail()
+	cookie := loginCookie(t, tx, a, email, "correct-horse-battery")
+	deckPath := setupDeckAndNoteType(t, handler, cookie)
+	var noteTypeID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM note_types WHERE name = 'Basic2'`).Scan(&noteTypeID); err != nil {
+		t.Fatalf("lookup note type: %v", err)
+	}
+	addNotes(t, handler, cookie, deckPath, noteTypeID, notes)
+	return deckFixture{
+		tx: tx, handler: handler, cookie: cookie, deckPath: deckPath,
+		deckID: strings.TrimPrefix(deckPath, "/decks/"), userID: userID(t, ctx, tx, email),
+	}
+}
+
+func (f deckFixture) setPreset(t *testing.T, preset string) {
+	t.Helper()
+	if _, err := f.tx.Exec(context.Background(), `UPDATE decks SET preset = $1 WHERE id = $2`, preset, f.deckID); err != nil {
+		t.Fatalf("set preset: %v", err)
+	}
+}
+
+// seedReviewState puts cardID into review state, due at the given instant. stability/difficulty
+// must be real values: the study fetch precomputes all four FSRS branches from them.
+func (f deckFixture) seedReviewState(t *testing.T, cardID string, due, lastReview time.Time) {
+	t.Helper()
+	if _, err := f.tx.Exec(context.Background(), `INSERT INTO user_card_state (user_id, card_id, due, state, reps, stability, difficulty, last_review)
+		VALUES ($1, $2, $3, 2, 1, 2.5, 5.0, $4)`, f.userID, cardID, due, lastReview); err != nil {
+		t.Fatalf("seed review state: %v", err)
+	}
+}
+
+func TestReviewNext_WiresDeckPresetIntoBatch(t *testing.T) {
+	clock := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	lastReview := clock.Add(-48 * time.Hour)
+
+	served := func(t *testing.T, f deckFixture) []string {
+		t.Helper()
+		w := doRequest(f.handler, "GET", "/api/reviews/next?deck="+f.deckID+"&cursor=", "", f.cookie, "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("fetch status = %d: %s", w.Code, w.Body.String())
+		}
+		return extractCardIDs(w.Body.String())
+	}
+
+	t.Run("new and rev caps are not transposed", func(t *testing.T) {
+		// 2 due + 3 new. new.perDay=1, rev.perDay=4: due fills first (2), then 1 new = 3 served.
+		// Swapped (new 4, rev 1) would serve 1 due and no new.
+		f := newDeckFixture(t, clock, 5)
+		cards := lookupCardIDs(t, context.Background(), f.tx, f.deckID)
+		f.seedReviewState(t, cards[0], clock.Add(-time.Hour), lastReview)
+		f.seedReviewState(t, cards[1], clock.Add(-time.Hour), lastReview)
+		f.setPreset(t, `{"new":{"perDay":1},"rev":{"perDay":4}}`)
+		if got := served(t, f); len(got) != 3 {
+			t.Errorf("served %d cards, want 3 (2 due + 1 new)", len(got))
+		}
+	})
+
+	t.Run("look-ahead minutes reach the due window", func(t *testing.T) {
+		f := newDeckFixture(t, clock, 1)
+		f.seedReviewState(t, lookupCardIDs(t, context.Background(), f.tx, f.deckID)[0], clock.Add(20*time.Minute), lastReview)
+		f.setPreset(t, `{"due":{"lookAheadMinutes":30}}`)
+		if got := served(t, f); len(got) != 1 {
+			t.Errorf("lookAheadMinutes=30 served %d cards, want 1 (due in 20m)", len(got))
+		}
+		f.setPreset(t, `{"due":{"lookAheadMinutes":0}}`)
+		if got := served(t, f); len(got) != 0 {
+			t.Errorf("lookAheadMinutes=0 served %d cards, want 0 (not due yet)", len(got))
+		}
+	})
+
+	t.Run("release gate reaches the batch", func(t *testing.T) {
+		f := newDeckFixture(t, clock, 2)
+		body := "name=Test Deck&description=&calendar_start_date=" + clock.Format(review.CalendarDateLayout) +
+			"&calendar_weekday=1&calendar_weekday=2&calendar_weekday=3&calendar_weekday=4&calendar_weekday=5&calendar_weekday=6&calendar_weekday=7"
+		if w := doRequest(f.handler, "POST", f.deckPath+"/edit", body, f.cookie, "http://example.com"); w.Code != http.StatusSeeOther {
+			t.Fatalf("POST edit status = %d, want 303: %s", w.Code, w.Body.String())
+		}
+		// The calendar starts today, so the deck is at class day 1.
+		if _, err := f.tx.Exec(context.Background(), `UPDATE notes SET release_day = 9 WHERE deck_id = $1`, f.deckID); err != nil {
+			t.Fatalf("assign release_day: %v", err)
+		}
+		if got := served(t, f); len(got) != 0 {
+			t.Errorf("release_day 9 at class day 1 served %d cards, want 0", len(got))
+		}
+		if _, err := f.tx.Exec(context.Background(), `UPDATE notes SET release_day = 1 WHERE deck_id = $1`, f.deckID); err != nil {
+			t.Fatalf("assign release_day: %v", err)
+		}
+		if got := served(t, f); len(got) != 2 {
+			t.Errorf("release_day 1 at class day 1 served %d cards, want 2", len(got))
+		}
+	})
+}
+
 func TestReviewNext_ExtraRoundsClampedToMax(t *testing.T) {
 	tx := beginTx(t)
 	ctx := context.Background()

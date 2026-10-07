@@ -183,6 +183,9 @@ README used to describe: with only one implementation, there's nothing to diverg
 stays out of the stack in the MVP either way — the optimiser (the one place it could enter, as
 an external `fsrs-rs` subprocess) is deferred out of scope for now; see the architecture doc.
 
+Deployment is a prebuilt multi-arch Docker image plus Postgres via compose — see
+[docs/deploy.md](docs/deploy.md).
+
 ### The schema decision
 
 This is the load-bearing decision of the project. **Do not adopt Anki's schema as the

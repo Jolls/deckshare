@@ -9,6 +9,11 @@ Apply:
 goose -dir migrations postgres "$DATABASE_URL" up
 ```
 
+The app binary embeds these files (the root `migrations.go`) and applies them at startup, so a
+deployment needs no separate step; the CLI above is for authoring and for preparing a database for
+DB-backed tests. Do not add a `.go` file to this directory — the goose CLI scans it and `sqlc` reads
+it as schema.
+
 Create a new migration:
 
 ```

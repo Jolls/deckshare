@@ -23,11 +23,13 @@ Thumbs.db
 coverage.out
 /media
 
-# run-app skill's tracked server process
+# run-app skill's media directory, bind-mounted into the app container
+.claude/skills/run-app/.media/
+# Legacy: the host binary, pid and log run-app wrote before the app moved into compose (#274).
+# Kept so copies left in existing checkouts stay out of `git add -A`.
 .claude/skills/run-app/.server.pid
 .claude/skills/run-app/.server.log
 .claude/skills/run-app/.deckshare-server.exe
-.claude/skills/run-app/.media/
 .claude/skills/run-app/.deckshare-server.exe~
 
 # Playwright / Node (tests/e2e)

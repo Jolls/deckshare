@@ -1,6 +1,57 @@
 package review
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+// Settings is one parse of what the individual readers each parse separately (#248); it must agree
+// with every one of them on every preset, malformed ones included.
+func TestSettings_MatchesIndividualReaders(t *testing.T) {
+	localDate := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
+	full := `{"new":{"perDay":5,"mix":"beforeReviews"},"rev":{"perDay":7,"order":"random"},"priority":"mixed",` +
+		`"due":{"lookAheadMinutes":30},"calendar":{"startDate":"2026-09-08","weekdays":[2,4]}}`
+	cases := []struct {
+		name   string
+		preset []byte
+	}{
+		{"nil", nil},
+		{"empty object", []byte(`{}`)},
+		{"not json", []byte(`not json`)},
+		{"full", []byte(full)},
+		{"new.perDay negative", []byte(`{"new":{"perDay":-1}}`)},
+		{"rev.perDay over max", []byte(`{"rev":{"perDay":10000}}`)},
+		{"lookAhead over max", []byte(`{"due":{"lookAheadMinutes":1441}}`)},
+		{"unrecognised order", []byte(`{"rev":{"order":"bogus"}}`)},
+		{"unrecognised priority", []byte(`{"priority":"bogus"}`)},
+		{"legacy new.mix only", []byte(`{"new":{"mix":"beforeReviews"}}`)},
+		{"legacy new.mix with priority", []byte(`{"new":{"mix":"beforeReviews"},"priority":"due"}`)},
+		{"valid calendar", []byte(`{"calendar":{"startDate":"2026-09-08","weekdays":[2,4]}}`)},
+		{"malformed calendar", []byte(`{"calendar":{"startDate":"nope","weekdays":[2]}}`)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			want := DeckSettings{
+				NewPerDay:        NewPerDay(c.preset),
+				RevPerDay:        RevPerDay(c.preset),
+				Order:            ParseRevOrder(c.preset),
+				Priority:         ParsePriority(c.preset),
+				LookAheadMinutes: DueLookAheadMinutes(c.preset),
+				ClassDay:         ReleaseGateDay(c.preset, localDate),
+			}
+			if got := Settings(c.preset, localDate); got != want {
+				t.Errorf("Settings(%s) = %+v, want %+v", c.preset, got, want)
+			}
+		})
+	}
+
+	// A literal expectation too, so the table above can't pass by agreeing on a shared bug.
+	got := Settings([]byte(full), localDate)
+	want := DeckSettings{NewPerDay: 5, RevPerDay: 7, Order: RevOrderRandom, Priority: PriorityMixed, LookAheadMinutes: 30, ClassDay: 2}
+	if got != want {
+		t.Errorf("Settings(full) = %+v, want %+v", got, want)
+	}
+}
 
 func TestNewPerDay(t *testing.T) {
 	cases := []struct {

@@ -1,6 +1,15 @@
 .git
 .claude
 .local
-docs
+# The root package embeds CHANGELOG.md and docs/release-notes.md (version.go, releasenotes.go), so
+# the build needs those two and nothing else under docs/ or any other markdown.
+docs/*
+!docs/release-notes.md
 tests
+deploy
 *.md
+!CHANGELOG.md
+node_modules
+test-results
+.env
+.env.*

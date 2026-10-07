@@ -44,15 +44,16 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 			serverError(w, r, err)
 			return
 		}
-		presetByDeck := make(map[pgtype.UUID][]byte, len(decks))
+		settingsByDeck := make(map[pgtype.UUID]review.DeckSettings, len(decks))
 		deckIDs := make([]pgtype.UUID, len(decks))
 		lookAheadMinutes := make([]int32, len(decks))
 		classDays := make([]int32, len(decks))
 		for i, d := range decks {
-			presetByDeck[d.ID] = d.Preset
+			s := review.Settings(d.Preset, window.LocalDate)
+			settingsByDeck[d.ID] = s
 			deckIDs[i] = d.ID
-			lookAheadMinutes[i] = review.DueLookAheadMinutes(d.Preset)
-			classDays[i] = review.ReleaseGateDay(d.Preset, window.LocalDate)
+			lookAheadMinutes[i] = s.LookAheadMinutes
+			classDays[i] = s.ClassDay
 		}
 		rows, err := q.CountQueueForUser(r.Context(), db.CountQueueForUserParams{
 			UserID:           user.ID,
@@ -95,10 +96,10 @@ func registerDeckRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]
 		counts := make(map[pgtype.UUID]queueCounts, len(rows))
 		var totalLeft int64
 		for _, row := range rows {
-			preset := presetByDeck[row.DeckID]
-			newRemaining := review.NewRemaining(review.NewPerDay(preset), introduced[row.DeckID])
-			totalRemaining := review.RevRemaining(review.RevPerDay(preset), introduced[row.DeckID]+reviewed[row.DeckID])
-			left := review.LeftToStudy(row.NewCount, row.LearningCount, row.DueCount, review.ParsePriority(preset), newRemaining, totalRemaining)
+			s := settingsByDeck[row.DeckID]
+			newRemaining := review.NewRemaining(s.NewPerDay, introduced[row.DeckID])
+			totalRemaining := review.RevRemaining(s.RevPerDay, introduced[row.DeckID]+reviewed[row.DeckID])
+			left := review.LeftToStudy(row.NewCount, row.LearningCount, row.DueCount, s.Priority, newRemaining, totalRemaining)
 			counts[row.DeckID] = queueCounts{
 				New: min(row.NewCount, int64(newRemaining)), Learning: row.LearningCount, Due: row.DueCount,
 				Left: left,
