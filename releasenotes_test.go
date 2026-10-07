@@ -16,7 +16,7 @@ func TestReleaseNotesVersionsExistInChangelog(t *testing.T) {
 		if !strings.Contains(changelog, "## ["+n.Version+"]") {
 			t.Errorf("release notes version %s has no CHANGELOG.md entry", n.Version)
 		}
-		if len(n.Items) == 0 {
+		if n.ItemCount() == 0 {
 			t.Errorf("release notes version %s has no bullets", n.Version)
 		}
 	}
@@ -56,14 +56,21 @@ func TestVersionLess(t *testing.T) {
 }
 
 func TestParseReleaseNotes(t *testing.T) {
-	got := parseReleaseNotes("# T\n\nintro\n\n## [1.2.0] - 2026-01-02\n- a\n  more\n- b\n\n## [1.1.0]\n- c\n")
+	got := parseReleaseNotes("# T\n\nintro\n\n## [1.2.0] - 2026-01-02\n### New features\n- a\n  more\n- b\n### Bug fixes\n- c\n\n## [1.1.0]\n- d\n")
 	if len(got) != 2 {
 		t.Fatalf("got %d sections, want 2", len(got))
 	}
-	if got[0].Version != "1.2.0" || got[0].Date != "2026-01-02" || len(got[0].Items) != 2 || got[0].Items[0] != "a more" {
-		t.Errorf("section 0 = %+v", got[0])
+	if got[0].Version != "1.2.0" || got[0].Date != "2026-01-02" || len(got[0].Groups) != 2 || got[0].ItemCount() != 3 {
+		t.Fatalf("section 0 = %+v", got[0])
 	}
-	if got[1].Version != "1.1.0" || got[1].Date != "" || got[1].Items[0] != "c" {
+	if g := got[0].Groups[0]; g.Title != "New features" || len(g.Items) != 2 || g.Items[0] != "a more" {
+		t.Errorf("group 0 = %+v", g)
+	}
+	if g := got[0].Groups[1]; g.Title != "Bug fixes" || len(g.Items) != 1 || g.Items[0] != "c" {
+		t.Errorf("group 1 = %+v", g)
+	}
+	// Bullets before any "###" heading land in one untitled group.
+	if got[1].Version != "1.1.0" || got[1].Date != "" || len(got[1].Groups) != 1 || got[1].Groups[0].Title != "" || got[1].Groups[0].Items[0] != "d" {
 		t.Errorf("section 1 = %+v", got[1])
 	}
 }

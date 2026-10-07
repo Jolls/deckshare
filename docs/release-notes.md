@@ -1,43 +1,29 @@
 # Release notes
 
 User-facing changes, newest first. Plain language: what a learner or instructor can now do.
-Embedded in the binary and shown at `/release-notes` (#266). Only versions with a user-visible
-change get a section; internal-only releases are simply absent. Format: `## [x.y.z] - date`
-followed by `- ` bullets (a bullet may continue on indented lines). Every version here must also
-appear in `CHANGELOG.md`.
+Embedded in the binary and shown at `/release-notes` (#266). One `## [x.y.z] - date` section per
+user-facing release, covering everything since the previous one; the patch releases in between
+don't get sections of their own. Under it, `### New features`, `### Bug fixes` and
+`### Security` (omit empty ones), each a list of `- Title: what changed` bullets (a bullet may
+continue on indented lines). The section's version must also appear in `CHANGELOG.md`.
 
 ## [0.3.17] - 2026-10-07
-- In dark mode your cards are now dark too, instead of a bright white card in a dark page. Cards
-  with their own colours (red or green highlights, for example) keep them; Light mode looks exactly
-  as before.
 
-## [0.3.16] - 2026-10-06
-- Pick an accent colour under Appearance in Settings: Azure (the default), Blue, Indigo, Purple,
-  Pink, Red, Orange or Green. It works with Light, Dark and Auto, and is remembered on every device. Choices preview instantly before you save.
+### New features
+- Colour scheme and accent: Light, Dark or Auto, plus eight accent colours, under Appearance in
+  Settings. Cards follow the scheme too.
+- Stats page: Your recall, pass rate, reviews and cards due, with charts.
+- Release notes: This page, and a bar that appears after an update.
+- Password reset links: An admin can generate a one-time link if you forget your password.
+- Suspend, bury and flag: Set a card aside while studying or from the notes list.
+- Closed instances: Sign-ups can be turned off.
 
-## [0.3.15] - 2026-10-06
-- A new Release notes page lists what changed in each version. When DeckShare is updated, a bar
-  under the top of the page links to it; dismiss the bar and it stays away until the next update.
-- The current version is shown at the bottom of every page and links to the release notes.
-
-## [0.3.14] - 2026-10-06
-- Choose Light, Dark or Auto colour scheme under Appearance in Settings. Auto follows your
-  device. Your cards keep their light background so card styling stays readable.
-
-## [0.3.13] - 2026-10-06
-- A new Stats page, linked from your deck list, shows your own recall, pass rate, reviews over the
-  last 30 days and cards due, overall and per deck, with charts of reviews and pass rate per day.
-
-## [0.3.12] - 2026-09-24
-- If you forget your password, the person running your DeckShare can generate a one-time reset link
-  for you. Opening it lets you choose a new password and signs you out everywhere.
-- Changing your password also cancels any reset link still outstanding.
-- Importing a deck no longer misreads out-of-range values in a review history, which could turn an
-  odd rating into an "Again".
-- Note types, tags and deck names now have sensible size limits.
-
-## [0.3.11] - 2026-09-11
-- Suspend, bury and flag a card while studying or from the notes list.
-- A closed instance can turn off new sign-ups.
+### Bug fixes
+- Importing a deck no longer misreads out-of-range values in a review history, which could turn
+  an odd rating into an "Again".
 - The Settings page no longer shows a "no value" placeholder for your retention target or version
   after saving.
+- Note types, tags and deck names now have sensible size limits.
+
+### Security
+- Changing your password also cancels any reset link still outstanding.

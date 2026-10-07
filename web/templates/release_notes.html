@@ -3,9 +3,12 @@
 {{range .Notes}}
 <section>
     <h2>{{.Version}}{{if .Date}} <small>{{.Date}}</small>{{end}}</h2>
+    {{range .Groups}}
+    {{if .Title}}<h3>{{.Title}}</h3>{{end}}
     <ul>
         {{range .Items}}<li>{{.}}</li>{{end}}
     </ul>
+    {{end}}
 </section>
 {{else}}
 <p>No release notes yet.</p>
