@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Jolls/deckshare"
 	"github.com/Jolls/deckshare/internal/auth"
 	"github.com/Jolls/deckshare/internal/db"
 	apphttp "github.com/Jolls/deckshare/internal/http"
@@ -61,6 +62,13 @@ func run() error {
 		return fmt.Errorf("connect to database: %w", err)
 	}
 	defer pool.Close()
+
+	// Before anything serves: a database that is unreachable or fails a migration stops the process
+	// here, with no listener, rather than serving against a schema the code does not match.
+	if _, err := db.Migrate(ctx, pool, deckshare.Migrations()); err != nil {
+		return fmt.Errorf("apply migrations: %w", err)
+	}
+	slog.Info("migrations up to date")
 
 	authSvc, err := auth.New(pool, auth.Config{
 		Origin:     os.Getenv("ORIGIN"),

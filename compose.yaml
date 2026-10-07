@@ -4,7 +4,7 @@ services:
     restart: always
     # Development only. Loopback-only binding + default credentials are fine here because
     # nothing outside this machine should ever reach this port; do not reuse this file as-is
-    # for a deployment.
+    # for a deployment (see deploy/compose.yaml).
     ports:
       - 127.0.0.1:5432:5432
     environment:
@@ -13,5 +13,30 @@ services:
       POSTGRES_DB: local
     volumes:
       - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d local"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+  app:
+    # Built from this checkout. Rebuild after code changes: docker compose up -d --build
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:3000:3000
+    # Set explicitly rather than via env_file: the host .env points DATABASE_URL at localhost,
+    # which inside this container is the container itself. The image sets ADDR and MEDIA_ROOT
+    # (/var/lib/deckshare/media, mounted below).
+    environment:
+      DATABASE_URL: postgres://root:mysecretpassword@db:5432/local
+      ORIGIN: ${ORIGIN:-}
+      SIGNUP_MODE: ${SIGNUP_MODE:-open}
+      TRUSTED_PROXY: ${TRUSTED_PROXY:-}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+    volumes:
+      # The host directory reset-db's seed step writes to, so seeded avatars resolve in the container.
+      - ./.claude/skills/run-app/.media:/var/lib/deckshare/media
 volumes:
   pgdata:

@@ -142,8 +142,12 @@ func calendarFromWire(w calendarWire) (Calendar, error) {
 // is all-or-nothing rather than per-field: half a calendar would silently shift every meeting date
 // by however many holidays failed to parse, which is worse than not pacing the deck at all.
 func ParseCalendar(preset []byte) Calendar {
-	p, ok := parseDeckPreset(preset)
-	if !ok || p.Calendar == nil {
+	p, _ := parseDeckPreset(preset)
+	return p.calendar()
+}
+
+func (p deckPreset) calendar() Calendar {
+	if p.Calendar == nil {
 		return Calendar{}
 	}
 	cal, err := calendarFromWire(*p.Calendar)

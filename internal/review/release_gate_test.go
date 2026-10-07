@@ -14,16 +14,17 @@ import (
 
 // The release-day gate (#242, part of #238): a note assigned to class day N is not introduced
 // until the Nth class meeting has arrived on the student's own clock. Every test here drives the
-// gate through BuildBatch's classDay parameter directly -- resolving a calendar into that number
+// gate through BuildBatch's DeckSettings.ClassDay directly -- resolving a calendar into that number
 // is CurrentClassDay's job and is tested purely in calendar_test.go, so these tests are about what
 // the QUERIES do with the resolved number.
 
 // servedIDs runs one full-size fetch and returns the card ids it served.
 func servedIDs(t *testing.T, tx pgx.Tx, f fixture, window StudyDay, newPerDay, extraRounds, classDay int32) map[pgtype.UUID]bool {
 	t.Helper()
-	batch, err := BuildBatch(context.Background(), tx, mustDefaultParams(t), f.UserID, f.DeckID, "D",
-		window, newPerDay, DefaultRevPerDay, RevOrderDue, PriorityDue, Cursor{AtStart: true}, 100,
-		window.Start.Add(time.Hour), 0, extraRounds, classDay)
+	s := defaultSettings()
+	s.NewPerDay = newPerDay
+	s.ClassDay = classDay
+	batch, err := BuildBatch(context.Background(), tx, mustDefaultParams(t), f.UserID, f.DeckID, "D", window, s, Cursor{AtStart: true}, 100, window.Start.Add(time.Hour), extraRounds)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}
@@ -216,9 +217,10 @@ func TestBuildBatch_ReleaseGateInMixedPriority(t *testing.T) {
 	setReleaseDay(t, tx, locked, 3)
 
 	window := testStudyDay(0)
-	batch, err := BuildBatch(context.Background(), tx, mustDefaultParams(t), f.UserID, f.DeckID, "D",
-		window, DefaultNewPerDay, DefaultRevPerDay, RevOrderDue, PriorityMixed, Cursor{AtStart: true},
-		100, window.Start.Add(time.Hour), 0, 0, 2)
+	s := defaultSettings()
+	s.Priority = PriorityMixed
+	s.ClassDay = 2
+	batch, err := BuildBatch(context.Background(), tx, mustDefaultParams(t), f.UserID, f.DeckID, "D", window, s, Cursor{AtStart: true}, 100, window.Start.Add(time.Hour), 0)
 	if err != nil {
 		t.Fatalf("BuildBatch: %v", err)
 	}

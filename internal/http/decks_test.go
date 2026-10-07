@@ -525,6 +525,46 @@ func TestDeckQueueCounts_LeftRespectsNewPerDayCap(t *testing.T) {
 	}
 }
 
+// #248: the /decks list reads rev.perDay and the due look-ahead from each deck's preset (it parses
+// them separately from the study path), so pin both before the parse is consolidated.
+func TestDeckQueueCounts_ListHonoursRevPerDayAndLookAhead(t *testing.T) {
+	clock := time.Date(2026, 3, 2, 12, 0, 0, 0, time.UTC)
+
+	listBody := func(t *testing.T, f deckFixture) string {
+		t.Helper()
+		w := doRequest(f.handler, "GET", "/decks", "", f.cookie, "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET /decks status = %d", w.Code)
+		}
+		return w.Body.String()
+	}
+
+	t.Run("rev.perDay caps the Left figure", func(t *testing.T) {
+		f := newDeckFixture(t, clock, 3)
+		f.setPreset(t, `{"rev":{"perDay":2}}`)
+		row := regexp.MustCompile(`<td>3</td>\s*<td>3</td>\s*<td>0</td>\s*<td>0</td>\s*<td>2</td>`)
+		if body := listBody(t, f); !row.MatchString(body) {
+			t.Errorf("/decks should list 3 cards, 3 New, Left capped to 2 by rev.perDay:\n%s", body)
+		}
+	})
+
+	t.Run("lookAheadMinutes widens the Due count", func(t *testing.T) {
+		f := newDeckFixture(t, clock, 1)
+		f.seedReviewState(t, lookupCardIDs(t, context.Background(), f.tx, f.deckID)[0], clock.Add(20*time.Minute), clock.Add(-48*time.Hour))
+		dueRow := regexp.MustCompile(`<td>1</td>\s*<td>0</td>\s*<td>0</td>\s*<td>1</td>\s*<td>1</td>`)
+		notDueRow := regexp.MustCompile(`<td>1</td>\s*<td>0</td>\s*<td>0</td>\s*<td>0</td>\s*<td>0</td>`)
+
+		f.setPreset(t, `{"due":{"lookAheadMinutes":30}}`)
+		if body := listBody(t, f); !dueRow.MatchString(body) {
+			t.Errorf("lookAheadMinutes=30 should count the card due in 20m as Due:\n%s", body)
+		}
+		f.setPreset(t, `{"due":{"lookAheadMinutes":0}}`)
+		if body := listBody(t, f); !notDueRow.MatchString(body) {
+			t.Errorf("lookAheadMinutes=0 should not count the card due in 20m:\n%s", body)
+		}
+	})
+}
+
 // #106: once the day's new-card allowance is fully used up, the displayed New count drops to 0
 // -- it must not keep reporting the deck's total unseen-card count -- while Due, which the daily
 // new-card limit never touches, is unaffected.

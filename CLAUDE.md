@@ -292,8 +292,9 @@ covering everything since the last; start a new one only when told a new user-fa
 beginning. Skip it for internal-only PRs. The section's version must exist in `CHANGELOG.md`
 (tested).
 
-After committing a version bump, tag it: `git tag vX.Y.Z` (push with the branch/PR, never
-force). While major `x` is 0, `z` increments with every PR; `y` bumps only for a deliberate
+After a version-bump PR merges, tag the merge commit on main: `git tag vX.Y.Z` and push the tag
+(never force). A `v*` tag publishes the Docker image to GHCR (CI `publish` job, #274), so it is
+pushed only once the code is on main, not with the branch/PR. While major `x` is 0, `z` increments with every PR; `y` bumps only for a deliberate
 milestone release.
 
 **Plans.** Draft implementation plans (Plan Mode, issue-tied) as a scratch file,
@@ -365,6 +366,12 @@ Windows 11, PowerShell primary (Bash tool also available — each takes its own 
   `.env.example`) before trusting a DB-backed result, and if in doubt run
   `go test ./... -v | grep -i skip` (PowerShell: `... | Select-String -Pattern skip`) to confirm
   nothing silently skipped.
+- **The app runs in compose; dev tooling stays on the host.** `docker compose up -d --build`
+  starts `db` + `app`; the binary embeds `migrations/` and applies them at startup, so there is no
+  goose step for the app. `go test`, `cmd/seed` and `reset-db` still run on the host against `db`'s
+  loopback port. A running container serves the image it was built from — rebuild (`--build`)
+  after code changes. The goose CLI remains how migrations are authored and how CI and `reset-db`
+  prepare a database for DB-backed tests.
 - Go-specific, once the scaffold exists: `go generate` regenerates `sqlc` output — run it and
   commit the result, don't hand-edit generated files. Docker images are multi-arch, so builds
   cross-compile (`GOOS`/`GOARCH`), not just build for the host.

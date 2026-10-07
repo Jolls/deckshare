@@ -1,0 +1,40 @@
+# Production example: pulls the published image. Copy .env.example to .env in this directory, fill
+# it in, then `docker compose up -d`. Put a TLS-terminating reverse proxy in front of the app
+# (docs/deploy.md).
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: deckshare
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: deckshare
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deckshare -d deckshare"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  app:
+    image: ghcr.io/jolls/deckshare:${DECKSHARE_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${APP_PORT:-3000}:3000"
+    # The image sets ADDR and MEDIA_ROOT (/var/lib/deckshare/media, mounted below). The password goes
+    # in PGPASSWORD rather than the URL, so it needs no URL-escaping.
+    environment:
+      DATABASE_URL: postgres://deckshare@db:5432/deckshare
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      ORIGIN: ${ORIGIN:?set ORIGIN in .env (the public URL, e.g. https://deckshare.example)}
+      SIGNUP_MODE: ${SIGNUP_MODE:-open}
+      TRUSTED_PROXY: ${TRUSTED_PROXY:-}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+    volumes:
+      - media:/var/lib/deckshare/media
+volumes:
+  pgdata:
+  media:

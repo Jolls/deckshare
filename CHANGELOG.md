@@ -8,6 +8,32 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.19] - 2026-10-07
+
+### Added
+- Containerised stack: the app runs as a compose service beside Postgres (`compose.yaml`);
+  `deploy/compose.yaml` and `docs/deploy.md` cover servers; CI builds the multi-arch image on PRs
+  and publishes `ghcr.io/jolls/deckshare` on `v*` tags
+  ([#274](https://github.com/Jolls/deckshare/issues/274)).
+- The server applies its embedded goose migrations at startup and refuses to start if one fails
+  ([#274](https://github.com/Jolls/deckshare/issues/274)).
+
+### Changed
+- `BuildBatch` takes one parsed `review.DeckSettings` instead of six preset-derived parameters, and
+  `GET /decks` parses each deck's preset once instead of five times
+  ([#248](https://github.com/Jolls/deckshare/issues/248)).
+- `docs/architecture.md` §5 records that input limits are enforced in the application layer only,
+  with no DB `CHECK` constraints or count triggers, and why
+  ([#260](https://github.com/Jolls/deckshare/issues/260)).
+- `run-app` starts the app container instead of a host binary, and a `v*` tag is now pushed after
+  merge rather than with the branch ([#274](https://github.com/Jolls/deckshare/issues/274)).
+- Adds `github.com/pressly/goose/v3` as a dependency, which also raises `golang.org/x/net` and
+  `golang.org/x/crypto` ([#274](https://github.com/Jolls/deckshare/issues/274)).
+
+### Fixed
+- `.dockerignore` no longer excludes the embedded `CHANGELOG.md` and `docs/release-notes.md`;
+  `docker build` previously failed ([#274](https://github.com/Jolls/deckshare/issues/274)).
+
 ## [0.3.18] - 2026-10-07
 
 ### Added

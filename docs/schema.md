@@ -561,7 +561,8 @@ applied one. Migration tool is `goose`, one migration per table, sequentially nu
 the `-s` flag is what forces sequential rather than timestamp-based numbering, which matters
 because `sqlc` reads `migrations/` in filename order and 14 migrations authored in one sitting
 would otherwise sort by accident rather than by intent. Apply with
-`goose -dir migrations postgres "$DATABASE_URL" up`.
+`goose -dir migrations postgres "$DATABASE_URL" up` (the server also applies them itself at
+startup).
 
 Checklist for a new table:
 

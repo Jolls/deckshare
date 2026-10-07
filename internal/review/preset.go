@@ -1,6 +1,9 @@
 package review
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // The per-deck daily new-card limit (#101) and review-card limit (#115), stored under
 // decks.preset as Anki's own dconf shape: {"new":{"perDay":20},"rev":{"perDay":200}}. Parsed here
@@ -24,7 +27,7 @@ const (
 // deckPreset is the whole of decks.preset (#101, #115, #116, #118, #154, #242): per-deck daily
 // caps plus review order, review prioritization, the due-date look-ahead window, and the class
 // calendar. One struct so every reader (NewPerDay, RevPerDay, ParseRevOrder, ParsePriority,
-// DueLookAheadMinutes, ParseCalendar) shares one JSON-unmarshal/degrade-on-error path. Priority is
+// DueLookAheadMinutes, ParseCalendar) and Settings share one JSON-unmarshal/degrade-on-error path. Priority is
 // top-level, not nested under New, since it governs the whole day's new/due split (#118) rather
 // than describing new-card mixing the way its predecessor (new.mix) did. new.Mix itself stays here, read-only, purely so ParsePriority can
 // translate an existing deck's pre-#118 choice instead of silently discarding it -- see
@@ -45,6 +48,33 @@ type deckPreset struct {
 	Calendar *calendarWire `json:"calendar"` // the deck's class calendar (#242), see calendar.go
 }
 
+// DeckSettings is every per-deck study setting BuildBatch needs, parsed from decks.preset once
+// (#248) instead of once per field. extraRounds is deliberately not here: it is per-request, not a
+// deck setting (#172).
+type DeckSettings struct {
+	NewPerDay, RevPerDay int32
+	Order                RevOrder
+	Priority             Priority
+	LookAheadMinutes     int32
+	ClassDay             int32 // the release gate value for localDate: ReleaseGateOff when the deck has no calendar (#242)
+}
+
+// Settings reads decks.preset once. Each field degrades to its default exactly as its individual
+// reader (NewPerDay, RevPerDay, ParseRevOrder, ParsePriority, DueLookAheadMinutes, ReleaseGateDay)
+// does -- they share these method bodies. localDate is the caller's study day, which the class day
+// is resolved against.
+func Settings(preset []byte, localDate time.Time) DeckSettings {
+	p, _ := parseDeckPreset(preset)
+	return DeckSettings{
+		NewPerDay:        p.newPerDay(),
+		RevPerDay:        p.revPerDay(),
+		Order:            p.revOrder(),
+		Priority:         p.priority(),
+		LookAheadMinutes: p.dueLookAheadMinutes(),
+		ClassDay:         p.calendar().GateDay(localDate),
+	}
+}
+
 // parseDeckPreset unmarshals preset, ok=false on malformed JSON (all fields degrade to their
 // defaults in that case, same as a nil/empty preset).
 func parseDeckPreset(preset []byte) (deckPreset, bool) {
@@ -58,8 +88,12 @@ func parseDeckPreset(preset []byte) (deckPreset, bool) {
 // NewPerDay reads decks.preset. Absent, malformed, or out of range -> DefaultNewPerDay; a value
 // inside 0..MaxNewPerDay is returned as written, 0 included (no new cards from this deck).
 func NewPerDay(preset []byte) int32 {
-	p, ok := parseDeckPreset(preset)
-	if !ok || p.New == nil || p.New.PerDay == nil {
+	p, _ := parseDeckPreset(preset)
+	return p.newPerDay()
+}
+
+func (p deckPreset) newPerDay() int32 {
+	if p.New == nil || p.New.PerDay == nil {
 		return DefaultNewPerDay
 	}
 	v := *p.New.PerDay
@@ -84,8 +118,12 @@ func NewRemaining(perDay int32, introducedToday int64) int32 {
 // new+due daily total -- new.perDay still separately ceilings how many of that total can be new,
 // via PriorityAllocate.
 func RevPerDay(preset []byte) int32 {
-	p, ok := parseDeckPreset(preset)
-	if !ok || p.Rev == nil || p.Rev.PerDay == nil {
+	p, _ := parseDeckPreset(preset)
+	return p.revPerDay()
+}
+
+func (p deckPreset) revPerDay() int32 {
+	if p.Rev == nil || p.Rev.PerDay == nil {
 		return DefaultRevPerDay
 	}
 	v := *p.Rev.PerDay
@@ -140,8 +178,12 @@ func PriorityAllocate(priority Priority, newCeiling, totalRemaining int32, newAv
 // DefaultDueLookAheadMinutes (0, i.e. due<=now only); a value inside 0..MaxDueLookAheadMinutes is
 // returned as written, 0 included.
 func DueLookAheadMinutes(preset []byte) int32 {
-	p, ok := parseDeckPreset(preset)
-	if !ok || p.Due == nil || p.Due.LookAheadMinutes == nil {
+	p, _ := parseDeckPreset(preset)
+	return p.dueLookAheadMinutes()
+}
+
+func (p deckPreset) dueLookAheadMinutes() int32 {
+	if p.Due == nil || p.Due.LookAheadMinutes == nil {
 		return DefaultDueLookAheadMinutes
 	}
 	v := *p.Due.LookAheadMinutes
