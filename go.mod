@@ -6,7 +6,7 @@ require (
 	github.com/alexedwards/argon2id v1.0.0
 	github.com/aymerick/douceur v0.2.0
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/klauspost/compress v1.19.2
+	github.com/klauspost/compress v1.20.1
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/open-spaced-repetition/go-fsrs/v4 v4.0.0
 	github.com/pressly/goose/v3 v3.27.3
