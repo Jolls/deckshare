@@ -52,6 +52,7 @@ erDiagram
         text timezone
         smallint day_start_hour
         text color_scheme "auto | light | dark"
+        text accent "azure | blue | indigo | purple | pink | red | orange | green"
         text last_seen_version "newest release notes seen; empty = never"
         text avatar_sha256 FK "NULL = no avatar"
         timestamptz created_at

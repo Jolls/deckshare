@@ -163,6 +163,7 @@ type User struct {
 	AvatarSha256    pgtype.Text
 	ColorScheme     string
 	LastSeenVersion string
+	Accent          string
 }
 
 type UserCardState struct {

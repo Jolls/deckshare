@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
@@ -37,7 +38,7 @@ func TestSettingsAppearanceRoutes_AllowDeny(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			w := doRequest(handler, "POST", "/settings/appearance", "color_scheme=dark", tt.cookie, "http://example.com")
+			w := doRequest(handler, "POST", "/settings/appearance", "color_scheme=dark&accent=azure", tt.cookie, "http://example.com")
 			if w.Code != tt.want {
 				t.Errorf("status = %d, want %d", w.Code, tt.want)
 			}
@@ -51,7 +52,7 @@ func TestPostSettingsAppearanceWithoutOrigin_403(t *testing.T) {
 	email := testEmail()
 	cookie := loginCookie(t, tx, a, email, "correct-horse-battery")
 
-	w := doRequest(handler, "POST", "/settings/appearance", "color_scheme=dark", cookie, "")
+	w := doRequest(handler, "POST", "/settings/appearance", "color_scheme=dark&accent=azure", cookie, "")
 	if w.Code != 403 {
 		t.Errorf("status = %d, want 403", w.Code)
 	}
@@ -72,7 +73,7 @@ func TestSettingsAppearanceGoldenPath(t *testing.T) {
 		{"light", `<html lang="en" data-theme="light">`},
 		{"auto", `<html lang="en">`},
 	} {
-		w := doRequest(handler, "POST", "/settings/appearance", "color_scheme="+tt.scheme, cookie, "http://example.com")
+		w := doRequest(handler, "POST", "/settings/appearance", "color_scheme="+tt.scheme+"&accent=azure", cookie, "http://example.com")
 		if w.Code != 200 {
 			t.Fatalf("%s: status = %d, want 200: %s", tt.scheme, w.Code, w.Body.String())
 		}
@@ -95,7 +96,7 @@ func TestSettingsAppearance_OnlyCallerRow(t *testing.T) {
 	loginCookie(t, tx, a, emailB, "correct-horse-battery")
 	idA, idB := userID(t, ctx, tx, emailA), userID(t, ctx, tx, emailB)
 
-	w := doRequest(handler, "POST", "/settings/appearance", "color_scheme=dark&user_id="+idB+"&id="+idB, cookieA, "http://example.com")
+	w := doRequest(handler, "POST", "/settings/appearance", "color_scheme=dark&accent=azure&user_id="+idB+"&id="+idB, cookieA, "http://example.com")
 	if w.Code != 200 {
 		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
 	}
@@ -115,7 +116,7 @@ func TestSettingsAppearance_RejectsUnknownValue(t *testing.T) {
 	id := userID(t, context.Background(), tx, email)
 
 	for _, v := range []string{"sepia", "", "DARK", "%20dark", "auto%3B"} {
-		w := doRequest(handler, "POST", "/settings/appearance", "color_scheme="+v, cookie, "http://example.com")
+		w := doRequest(handler, "POST", "/settings/appearance", "color_scheme="+v+"&accent=azure", cookie, "http://example.com")
 		if w.Code != 400 {
 			t.Errorf("value %q: status = %d, want 400", v, w.Code)
 		}
@@ -133,7 +134,7 @@ func TestSettingsAppearance_AppliedOnNextPage(t *testing.T) {
 	handler, a := newTestHandler(t, tx, auth.Config{})
 	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
 
-	doRequest(handler, "POST", "/settings/appearance", "color_scheme=dark", cookie, "http://example.com")
+	doRequest(handler, "POST", "/settings/appearance", "color_scheme=dark&accent=azure", cookie, "http://example.com")
 	w := doRequest(handler, "GET", "/decks", "", cookie, "")
 	if w.Code != 200 {
 		t.Fatalf("GET /decks status = %d", w.Code)
@@ -152,7 +153,7 @@ func TestSettingsPage_AppearanceRadiosReflectStoredValue(t *testing.T) {
 	if !strings.Contains(w.Body.String(), `value="auto" checked`) {
 		t.Error("a fresh user should see Auto selected")
 	}
-	doRequest(handler, "POST", "/settings/appearance", "color_scheme=light", cookie, "http://example.com")
+	doRequest(handler, "POST", "/settings/appearance", "color_scheme=light&accent=azure", cookie, "http://example.com")
 	body := doRequest(handler, "GET", "/settings", "", cookie, "").Body.String()
 	if !strings.Contains(body, `value="light" checked`) || strings.Contains(body, `value="auto" checked`) {
 		t.Error("after choosing Light, only Light should be selected")
@@ -165,7 +166,7 @@ func TestReviewPage_CardStageIsLightSurface(t *testing.T) {
 	handler, a := newTestHandler(t, tx, auth.Config{})
 	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
 	deckID, _ := setupOneCard(t, tx, handler, cookie)
-	doRequest(handler, "POST", "/settings/appearance", "color_scheme=dark", cookie, "http://example.com")
+	doRequest(handler, "POST", "/settings/appearance", "color_scheme=dark&accent=azure", cookie, "http://example.com")
 
 	body := doRequest(handler, "GET", "/decks/"+deckID+"/review", "", cookie, "").Body.String()
 	if !strings.Contains(body, `<html lang="en" data-theme="dark">`) {
@@ -208,5 +209,141 @@ func TestNotePreview_CardIsLightSurface(t *testing.T) {
 	w := doRequest(handler, "POST", deckPath+"/notes/preview", body.Encode(), cookie, "http://example.com")
 	if got := strings.Count(w.Body.String(), `class="deckshare-card" data-theme="light"`); got != 2 {
 		t.Errorf("light-surface card count = %d, want 2: %s", got, w.Body.String())
+	}
+}
+
+// accentOf reads the stored accent colour (#267) for a user id.
+func accentOf(t *testing.T, tx pgx.Tx, id string) string {
+	t.Helper()
+	var s string
+	if err := tx.QueryRow(context.Background(), `SELECT accent FROM users WHERE id = $1`, id).Scan(&s); err != nil {
+		t.Fatalf("read accent: %v", err)
+	}
+	return s
+}
+
+func TestSettingsAccent_GoldenPath(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	email := testEmail()
+	cookie := loginCookie(t, tx, a, email, "correct-horse-battery")
+	id := userID(t, context.Background(), tx, email)
+
+	if got := accentOf(t, tx, id); got != "azure" {
+		t.Fatalf("default accent = %q, want azure", got)
+	}
+	body := doRequest(handler, "GET", "/decks", "", cookie, "").Body.String()
+	if strings.Contains(body, "data-accent") {
+		t.Error("the default accent must render no data-accent, so existing users are unchanged")
+	}
+
+	w := doRequest(handler, "POST", "/settings/appearance", "color_scheme=dark&accent=purple", cookie, "http://example.com")
+	if w.Code != 200 {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	const wantTag = `<html lang="en" data-theme="dark" data-accent="purple">`
+	if !strings.Contains(w.Body.String(), wantTag) {
+		t.Errorf("response missing %s", wantTag)
+	}
+	if got := accentOf(t, tx, id); got != "purple" {
+		t.Errorf("stored accent = %q, want purple", got)
+	}
+	if !strings.Contains(doRequest(handler, "GET", "/decks", "", cookie, "").Body.String(), wantTag) {
+		t.Error("the next page load should render the stored accent")
+	}
+
+	// Choosing the default again clears the attribute.
+	w = doRequest(handler, "POST", "/settings/appearance", "color_scheme=dark&accent=azure", cookie, "http://example.com")
+	if !strings.Contains(w.Body.String(), `<html lang="en" data-theme="dark">`) {
+		t.Error("azure should render no data-accent on <html>")
+	}
+}
+
+func TestSettingsAccent_RejectsUnknownValue(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	email := testEmail()
+	cookie := loginCookie(t, tx, a, email, "correct-horse-battery")
+	id := userID(t, context.Background(), tx, email)
+
+	for _, v := range []string{"magenta", "", "Blue", "%20blue", `blue%22%20onload%3D`} {
+		w := doRequest(handler, "POST", "/settings/appearance", "color_scheme=dark&accent="+v, cookie, "http://example.com")
+		if w.Code != 400 {
+			t.Errorf("accent %q: status = %d, want 400", v, w.Code)
+		}
+		if got := accentOf(t, tx, id); got != "azure" {
+			t.Errorf("accent %q: stored accent = %q, want unchanged azure", v, got)
+		}
+		if got := colorSchemeOf(t, tx, id); got != "auto" {
+			t.Errorf("accent %q: color_scheme = %q, want unchanged auto (no partial write)", v, got)
+		}
+	}
+}
+
+func TestSettingsAccent_OnlyCallerRow(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	ctx := context.Background()
+	emailA, emailB := testEmail(), testEmail()
+	cookieA := loginCookie(t, tx, a, emailA, "correct-horse-battery")
+	loginCookie(t, tx, a, emailB, "correct-horse-battery")
+	idA, idB := userID(t, ctx, tx, emailA), userID(t, ctx, tx, emailB)
+
+	doRequest(handler, "POST", "/settings/appearance", "color_scheme=auto&accent=red&user_id="+idB+"&id="+idB, cookieA, "http://example.com")
+	if got := accentOf(t, tx, idA); got != "red" {
+		t.Errorf("caller's accent = %q, want red", got)
+	}
+	if got := accentOf(t, tx, idB); got != "azure" {
+		t.Errorf("other user's accent = %q, want azure", got)
+	}
+}
+
+func TestSettingsPage_AccentRadiosReflectStoredValue(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	body := doRequest(handler, "GET", "/settings", "", cookie, "").Body.String()
+	if !strings.Contains(body, `value="azure" checked`) {
+		t.Error("a fresh user should see Azure selected")
+	}
+	doRequest(handler, "POST", "/settings/appearance", "color_scheme=auto&accent=green", cookie, "http://example.com")
+	body = doRequest(handler, "GET", "/settings", "", cookie, "").Body.String()
+	if !strings.Contains(body, `value="green" checked`) || strings.Contains(body, `value="azure" checked`) {
+		t.Error("after choosing Green, only Green should be selected")
+	}
+}
+
+// Every offered accent must have a generated override block, or choosing it silently renders
+// Pico's default colour.
+func TestAccentOptions_HaveGeneratedCSS(t *testing.T) {
+	css, err := os.ReadFile("../../web/static/accents.css")
+	if err != nil {
+		t.Fatalf("read accents.css: %v", err)
+	}
+	for _, o := range accentOptions {
+		if o.Value == "azure" {
+			continue // Pico's default: no override block
+		}
+		if want := `:root[data-accent="` + o.Value + `"]:not([data-theme=dark])`; !strings.Contains(string(css), want) {
+			t.Errorf("accents.css has no light block for %q", o.Value)
+		}
+	}
+}
+
+// The live preview (#267) needs the form id it binds to and its same-origin script (CSP script-src 'self').
+func TestSettingsPage_LoadsAppearancePreview(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	body := doRequest(handler, "GET", "/settings", "", cookie, "").Body.String()
+	for _, want := range []string{`id="appearance-form"`, `src="/static/settings_appearance.js"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("settings page missing %s", want)
+		}
+	}
+	if w := doRequest(handler, "GET", "/static/settings_appearance.js", "", nil, ""); w.Code != 200 {
+		t.Errorf("GET settings_appearance.js status = %d, want 200", w.Code)
 	}
 }

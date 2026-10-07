@@ -23,6 +23,10 @@ Pico.css doesn't cover.
 back to a malformed default encoding -- docs/plans/99-grading-persistence.md). The review batch
 POST is sent with a direct `fetch()` instead (`web/static/review.js`'s `flush()`).
 
+`accents.css` (issue #267) is generated, not hand-written or vendored: `go run ./scripts/gen-accents`
+downloads Pico's `pico.<colour>.min.css` files (same pinned version) and keeps only the variables that
+differ from the default palette. Re-run it after updating `pico.min.css`.
+
 `favicon.png` is the app icon (hand-supplied artwork, not vendored), downscaled to 256x256 and
 converted to PNG from the source image; referenced from `web/templates/layout.html`.
 
