@@ -20,7 +20,7 @@
     <h2>Appearance</h2>
     {{template "errorMsg" .AppearanceError}}
     {{template "successMsg" .AppearanceSuccess}}
-    <form method="post" action="/settings/appearance">
+    <form id="appearance-form" method="post" action="/settings/appearance">
         <fieldset>
             <legend>Theme</legend>
             <label><input type="radio" name="color_scheme" value="auto"{{if eq .User.ColorScheme "auto"}} checked{{end}}> Auto (match device)</label>
@@ -34,6 +34,7 @@
         </fieldset>
         <button type="submit">Update appearance</button>
     </form>
+    <script src="/static/settings_appearance.js" defer></script>
 </section>
 
 <section>

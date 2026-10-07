@@ -330,3 +330,20 @@ func TestAccentOptions_HaveGeneratedCSS(t *testing.T) {
 		}
 	}
 }
+
+// The live preview (#267) needs the form id it binds to and its same-origin script (CSP script-src 'self').
+func TestSettingsPage_LoadsAppearancePreview(t *testing.T) {
+	tx := beginTx(t)
+	handler, a := newTestHandler(t, tx, auth.Config{})
+	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
+
+	body := doRequest(handler, "GET", "/settings", "", cookie, "").Body.String()
+	for _, want := range []string{`id="appearance-form"`, `src="/static/settings_appearance.js"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("settings page missing %s", want)
+		}
+	}
+	if w := doRequest(handler, "GET", "/static/settings_appearance.js", "", nil, ""); w.Code != 200 {
+		t.Errorf("GET settings_appearance.js status = %d, want 200", w.Code)
+	}
+}

@@ -8,7 +8,7 @@ appear in `CHANGELOG.md`.
 
 ## [0.3.16] - 2026-10-06
 - Pick an accent colour under Appearance in Settings: Azure (the default), Blue, Indigo, Purple,
-  Pink, Red, Orange or Green. It works with Light, Dark and Auto, and is remembered on every device.
+  Pink, Red, Orange or Green. It works with Light, Dark and Auto, and is remembered on every device. Choices preview instantly before you save.
 
 ## [0.3.15] - 2026-10-06
 - A new Release notes page lists what changed in each version. When DeckShare is updated, a bar
