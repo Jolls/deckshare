@@ -658,13 +658,23 @@ each item closes a specific attack, not a generic one:
   surface) or the sanitiser silently strips the answer widget (feature that quietly stops
   working, the more likely outcome if this gets missed).
 
-**Dark mode (#268).** Every card container (`#review-stage` on the review and study pages, each
-note-preview article) carries `data-theme="light"`, so cards are a light surface in any UI mode
-and note-type CSS authored for a light page stays legible. A zero-specificity `app.css` rule gives
-the surface its Pico light background and text colour, so a note type's own `.deckshare-card …`
-rules still win. Note-type CSS cannot observe or change this: `html`/`:root`/attribute selectors
-are refused (`css.go`) and `data-*` is not on the card-HTML allowlist (`sanitise.go`).
-`.nightMode` / `.night_mode` rules are sanitised like any other class and never match (§20).
+**Dark mode (#268, #276).** Cards follow the user's colour scheme: the card containers
+(`#review-stage` on the review and study pages, each note-preview article) carry no `data-theme`
+of their own, so a zero-specificity `app.css` rule gives them the page's Pico background and text
+colour and a note type's own `.deckshare-card …` rules still win. Note-type CSS hard-codes colours
+for a light page, so `SanitiseCSS` emits, after each single-colour `color` / `background-color` /
+`border-color` / `text-decoration-color` declaration, a second one wrapping the same colour in
+`light-dark(<colour>, oklch(from <colour> …))`. In dark mode the browser flips the lightness of
+near-greys (white page → dark, black text → light, remapped linearly into lightness 0.2–0.95) and leaves chromatic colours
+alone, hue and chroma always untouched; in light mode the original value applies unchanged, and
+the original declaration doubles as the fallback for browsers without `light-dark()` or relative
+colour syntax. The rewrite happens at render time, so the stored CSS and the `.apkg` round-trip are
+untouched. Not covered: shorthands (`border`, `background`), multi-value `border-color`, SVG
+`fill`/`stroke`, inline `style=""` on card HTML (bluemonday can only allow or drop a value, not
+rewrite it), and chromatic light backgrounds (a pale-yellow block stays pale). Note-type CSS
+cannot observe the scheme: `html`/`:root`/attribute selectors are refused (`css.go`) and `data-*`
+is not on the card-HTML allowlist (`sanitise.go`). `.nightMode` / `.night_mode` rules are
+sanitised like any other class and never match (§20).
 
 ---
 
@@ -897,7 +907,7 @@ seemed tidier."
 | | Anki | DeckShare |
 |---|---|---|
 | Sync protocol | Yes | No, permanently (§2.9) |
-| Night-mode card styling | The reviewer applies a `nightMode` class so note-type CSS can restyle cards for a dark UI | Cards render on a light surface in dark mode (§8, #268); `.nightMode` rules are kept but never activate. Deferred, not refused: every note type's CSS hits the one shared `#review-stage`, and Auto needs the OS scheme the server cannot see — both make honouring it materially larger than the light surface, which meets #268's legibility bar |
+| Night-mode card styling | The reviewer applies a `nightMode` class so note-type CSS can restyle cards for a dark UI | Cards follow the user's colour scheme (§8, #276): `SanitiseCSS` adds a `light-dark()` variant to each single-colour declaration that flips near-greys in dark mode, so note-type CSS authored for a white page stays legible without being rewritten. `.nightMode` rules are kept but never activate. Traces to the content/progress seam (§2.1): the CSS is another user's, so the server adapts it rather than trusting it to know our scheme. Chromatic colours, shorthands and inline `style=""` are left as authored |
 | Filtered / custom-study decks | Yes | Not built as a persistent deck. The importer reads `odid`/`odue` and files cards under their real home deck, so nothing is lost on the way in. A narrow slice now exists: "Keep studying" on `/decks/{id}/review`'s completion screen (#172) re-grants the deck's own preset allowance, one full round per click, for the rest of the page session only — never persisted, never a new deck, no order/priority override |
 | Add-ons | Plugin API | No plugin system (§11) |
 | Empty cards on cloze-ordinal removal | Kept as "empty cards" until the user runs Tools → Empty Cards | Deleted immediately by the edit that removed the ordinal, cascading that card's `user_card_state` (§54, `internal/db/cards.go`'s `SyncNoteCards`, docs/schema.md's card-regeneration diff rule). No empty-cards concept exists; building one wasn't required by any Phase 1 step |

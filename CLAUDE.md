@@ -284,10 +284,12 @@ version entry, grouped under `### Added` / `### Changed` / `### Fixed` / `### Re
 ```
 
 Link is a pointer to the issue; omit only if no issue. No comparison links in the footer.
-**Release notes.** If the PR changes something a learner or instructor can see or do, also add
-a `## [x.y.z] - YYYY-MM-DD` section to `docs/release-notes.md` (same version as the changelog
-entry; plain-language `- ` bullets, no issue links or internals). Skip it for internal-only PRs
-— no section means no what's-new bar. The section's version must exist in `CHANGELOG.md`
+**Release notes.** If the PR changes something a learner or instructor can see or do, add
+`- Title: what changed` bullets (plain language, no issue links or internals) to the newest section
+of `docs/release-notes.md`, under `### New features` / `### Bug fixes` / `### Security`, and set that
+section's heading to this PR's version and date. There is one section per user-facing release,
+covering everything since the last; start a new one only when told a new user-facing release is
+beginning. Skip it for internal-only PRs. The section's version must exist in `CHANGELOG.md`
 (tested).
 
 After committing a version bump, tag it: `git tag vX.Y.Z` (push with the branch/PR, never

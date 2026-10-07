@@ -160,8 +160,8 @@ func TestSettingsPage_AppearanceRadiosReflectStoredValue(t *testing.T) {
 	}
 }
 
-// Card content is authored for a light page, so the review stage is a light surface in every mode.
-func TestReviewPage_CardStageIsLightSurface(t *testing.T) {
+// #276: the card stage follows the page scheme, so it must not force one.
+func TestReviewPage_CardStageFollowsScheme(t *testing.T) {
 	tx := beginTx(t)
 	handler, a := newTestHandler(t, tx, auth.Config{})
 	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
@@ -172,24 +172,24 @@ func TestReviewPage_CardStageIsLightSurface(t *testing.T) {
 	if !strings.Contains(body, `<html lang="en" data-theme="dark">`) {
 		t.Error("review page should render the user's dark scheme on <html>")
 	}
-	if !strings.Contains(body, `class="review-card deckshare-card" data-theme="light"`) {
-		t.Error("#review-stage should carry data-theme=light so cards stay a light surface")
+	if !strings.Contains(body, `class="review-card deckshare-card">`) || strings.Contains(body, `class="review-card deckshare-card" data-theme`) {
+		t.Error("#review-stage must not carry its own data-theme, so cards follow the page scheme")
 	}
 }
 
-func TestStudyAll_CardStageIsLightSurface(t *testing.T) {
+func TestStudyAll_CardStageFollowsScheme(t *testing.T) {
 	tx := beginTx(t)
 	handler, a := newTestHandler(t, tx, auth.Config{})
 	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
 	setupOneCard(t, tx, handler, cookie)
 
 	body := doRequest(handler, "GET", "/study", "", cookie, "").Body.String()
-	if !strings.Contains(body, `class="review-card deckshare-card" data-theme="light"`) {
-		t.Error("#review-stage on /study should carry data-theme=light")
+	if !strings.Contains(body, `class="review-card deckshare-card">`) || strings.Contains(body, `class="review-card deckshare-card" data-theme`) {
+		t.Error("#review-stage on /study must not carry its own data-theme")
 	}
 }
 
-func TestNotePreview_CardIsLightSurface(t *testing.T) {
+func TestNotePreview_CardFollowsScheme(t *testing.T) {
 	tx := beginTx(t)
 	handler, a := newTestHandler(t, tx, auth.Config{})
 	cookie := loginCookie(t, tx, a, testEmail(), "correct-horse-battery")
@@ -207,8 +207,8 @@ func TestNotePreview_CardIsLightSurface(t *testing.T) {
 	body.Set("note_type_id", noteTypeID)
 	body.Add("field[]", "{{c1::first}} and {{c2::second}}")
 	w := doRequest(handler, "POST", deckPath+"/notes/preview", body.Encode(), cookie, "http://example.com")
-	if got := strings.Count(w.Body.String(), `class="deckshare-card" data-theme="light"`); got != 2 {
-		t.Errorf("light-surface card count = %d, want 2: %s", got, w.Body.String())
+	if got := strings.Count(w.Body.String(), `class="deckshare-card">`); got != 2 || strings.Contains(w.Body.String(), `class="deckshare-card" data-theme`) {
+		t.Errorf("unthemed card count = %d, want 2: %s", got, w.Body.String())
 	}
 }
 

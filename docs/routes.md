@@ -309,7 +309,8 @@ ownership-transfer decision for shared decks and a written `review_log` decision
 ## Release notes — `releasenotes.go` ([#266](https://github.com/Jolls/deckshare/issues/266))
 
 User-facing changelog from the embedded `docs/release-notes.md` (one `## [x.y.z]` section per
-user-visible release; internal-only releases have none).
+user-facing release, covering all patch releases since the last, its bullets grouped under
+`### New features` / `### Bug fixes` / `### Security`).
 
 | Method | Path | Permission | Purpose |
 |---|---|---|---|

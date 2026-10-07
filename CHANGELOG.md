@@ -8,6 +8,14 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.17] - 2026-10-07
+
+### Changed
+- Cards now follow the colour scheme in dark mode instead of staying on a light surface. Note-type
+  CSS colours get a `light-dark()` variant that flips near-greys (white page, black text) and leaves
+  chromatic colours alone; light mode is unchanged. Done at render time in `SanitiseCSS`, so stored
+  CSS and `.apkg` export are untouched ([#276](https://github.com/Jolls/deckshare/issues/276)).
+
 ## [0.3.16] - 2026-10-06
 
 ### Added

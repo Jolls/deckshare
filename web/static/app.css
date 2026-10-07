@@ -253,11 +253,11 @@ svg.chart {
 .msg-error { color: var(--pico-del-color); }
 .msg-success { color: var(--pico-ins-color); }
 
-/* #268: card content is authored for a light page (note-type CSS and imported HTML routinely
-   hard-code black text / white backgrounds), so every card container carries data-theme="light"
-   and is a light surface in every mode -- Pico's light variables apply inside it. :where() keeps
-   this at zero specificity so a note type's own .card rules (scoped to .deckshare-card) win. */
-:where(.deckshare-card[data-theme="light"]) {
+/* #276: the card follows the page's colour scheme. Note-type CSS routinely hard-codes black text /
+   white backgrounds, so SanitiseCSS (internal/render/css.go) emits a light-dark() variant of each
+   colour that flips near-greys in dark mode. :where() keeps this at zero specificity so a note
+   type's own .card rules (scoped to .deckshare-card) win. */
+:where(.deckshare-card) {
     background-color: var(--pico-background-color);
     color: var(--pico-color);
 }

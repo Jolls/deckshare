@@ -14,10 +14,27 @@ var releaseNotesSrc string
 type ReleaseNote struct {
 	Version string
 	Date    string
-	Items   []string
+	Groups  []ReleaseNoteGroup
+}
+
+// ReleaseNoteGroup is one "### Features" / "### Bug fixes" block of a version's bullets. Title is
+// empty for bullets that appear before any "###" heading.
+type ReleaseNoteGroup struct {
+	Title string
+	Items []string
+}
+
+// ItemCount is the number of bullets across all groups.
+func (n ReleaseNote) ItemCount() int {
+	count := 0
+	for _, g := range n.Groups {
+		count += len(g.Items)
+	}
+	return count
 }
 
 var releaseNoteHeadingRe = regexp.MustCompile(`^## \[([^\]]+)\](?: - (\S+))?`)
+var releaseNoteGroupRe = regexp.MustCompile(`^### (.+)`)
 
 var releaseNotes = parseReleaseNotes(releaseNotesSrc)
 
@@ -67,11 +84,24 @@ func parseReleaseNotes(src string) []ReleaseNote {
 			continue
 		}
 		cur := &notes[len(notes)-1]
+		if m := releaseNoteGroupRe.FindStringSubmatch(line); m != nil {
+			cur.Groups = append(cur.Groups, ReleaseNoteGroup{Title: strings.TrimSpace(m[1])})
+			continue
+		}
+		isBullet := strings.HasPrefix(line, "- ")
+		isContinuation := strings.HasPrefix(line, " ") && strings.TrimSpace(line) != ""
+		if !isBullet && !isContinuation {
+			continue
+		}
+		if len(cur.Groups) == 0 {
+			cur.Groups = append(cur.Groups, ReleaseNoteGroup{})
+		}
+		g := &cur.Groups[len(cur.Groups)-1]
 		switch {
-		case strings.HasPrefix(line, "- "):
-			cur.Items = append(cur.Items, strings.TrimPrefix(line, "- "))
-		case strings.HasPrefix(line, " ") && strings.TrimSpace(line) != "" && len(cur.Items) > 0:
-			cur.Items[len(cur.Items)-1] += " " + strings.TrimSpace(line)
+		case isBullet:
+			g.Items = append(g.Items, strings.TrimPrefix(line, "- "))
+		case len(g.Items) > 0:
+			g.Items[len(g.Items)-1] += " " + strings.TrimSpace(line)
 		}
 	}
 	return notes
