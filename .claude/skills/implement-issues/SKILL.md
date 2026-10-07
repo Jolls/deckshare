@@ -29,7 +29,7 @@ clicking.
    /update-issue on it first, then re-evaluate.
 2. Parallel planning agents, one per group → plan files (with a Test plan) and zero judgment calls.
 3. Resolve every "Open question" with the user; write the decision into the plan.
-4. One branch off main; per group: characterization tests (pass) → red tests
+4. One branch off main; plans moved into their issues (files deleted); per group: characterization tests (pass) → red tests
    (fail) → change (all pass) → a low-effort code review — UNCOMMITTED.
    Optional per-group human checkpoint.
 5. Human tests the tip (manual-only items); recommend pre-commit checks; get go-ahead.
@@ -69,8 +69,8 @@ model/level `/evaluate-issue` recommended. Prompt each with:
 - This instruction: **"provide a plan with specific file changes to implement
   the plan. The plan should only provide enough context needed to implement. No
   judgement calls in the plan. If unsure, ask."**
-- Plan path: `docs/plans/<issue-id(s)>-<short-slug>.md` (or wherever your
-  project keeps implementation plans — adjust to match).
+- Plan path: `docs/plans/<issue-id(s)>-<short-slug>.md` -- a scratch file while planning. Step 4
+  moves it into the issue and deletes it, so it is never committed.
 - Read the actual current code at every referenced location before writing —
   issue text describing line numbers goes stale.
 - A **Test plan** section with four parts:
@@ -124,6 +124,13 @@ One branch off main for the whole batch:
 git checkout main
 git checkout -b feature/<batch-slug>
 ```
+
+**Move each plan into its issue** before the first group: post the plan file as a comment on its
+issue (`gh issue comment <N> --body-file docs/plans/<file>.md`; for a bundled group, comment on
+each member issue), then delete the file. The issue comment is the plan from here on -- if it
+changes mid-implementation, edit that comment rather than recreating a file. Plan files are never
+committed.
+
 Then per group in apply order, following its Test plan:
 1. **Characterization tests** — write them, run them against unchanged code.
    They must **pass**. A failure means an existing bug or a wrong assumption:
@@ -203,7 +210,7 @@ file list from its plan):
 Commit hygiene:
 - Changelog (if your project keeps one): **one** entry, all groups' changes
   grouped by category.
-- `git add` the plan files too — useful PR context.
+- Don't commit plan files -- they were moved into the issues in step 4.
 - Tag the tip commit if your project uses version tags.
 
 Push and open one PR (body file — here-strings/heredocs can garble multi-line
@@ -226,7 +233,7 @@ Once the user confirms the PR is merged, run `/done`.
 
 - Apply order must put a dependency before the group that needs it (step 0) —
   you build it up in one tree.
-- Keep each plan file scoped to its own group.
+- Keep each plan scoped to its own group.
 - If sequential implementation becomes the bottleneck (many groups, long
   builds), reconsider — but default to single-branch unless the user asks.
 
