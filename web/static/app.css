@@ -261,3 +261,12 @@ svg.chart {
     background-color: var(--pico-background-color);
     color: var(--pico-color);
 }
+
+/* Accent picker swatch (#267); the per-accent colours are generated into accents.css. */
+.accent-swatch {
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    border-radius: 50%;
+    vertical-align: middle;
+}

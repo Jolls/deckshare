@@ -28,7 +28,7 @@ import "net/http"
 //	                        (#166) also evaluates its x-data/x-show/@click expressions through
 //	                        the Function constructor and would need this same source if it were
 //	                        ever removed.
-//	style-src 'self'        Covers web/static/app.css (#166) and the vendored Pico, pico.min.css (#270),
+//	style-src 'self'        Covers web/static/app.css (#166), accents.css (#267) and the vendored Pico, pico.min.css (#270),
 //	                        alongside the vendored JS.
 //	          'unsafe-inline'  Forced, and a nonce would be strictly worse. Sanitised card HTML
 //	                        carries inline style="" attributes on arbitrary elements

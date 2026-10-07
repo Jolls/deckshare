@@ -12,6 +12,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"slices"
 	"strconv"
 
 	"github.com/jackc/pgx/v5"
@@ -38,6 +39,20 @@ const maxAvatarDimension = 2048
 // (migration 00023). Exact match: no trimming or case folding.
 var colorSchemes = map[string]bool{"auto": true, "light": true, "dark": true}
 
+// accentOption is one choice for users.accent (#267).
+type accentOption struct{ Value, Label string }
+
+// accentOptions is the users.accent allowlist, in display order -- must match users_accent_check
+// (migration 00025) and the accents in scripts/gen-accents (web/static/accents.css). Exact match.
+var accentOptions = []accentOption{
+	{"azure", "Azure (default)"}, {"blue", "Blue"}, {"indigo", "Indigo"}, {"purple", "Purple"},
+	{"pink", "Pink"}, {"red", "Red"}, {"orange", "Orange"}, {"green", "Green"},
+}
+
+func validAccent(v string) bool {
+	return slices.ContainsFunc(accentOptions, func(o accentOption) bool { return o.Value == v })
+}
+
 // appVersion is read from the top CHANGELOG.md entry at startup, so it can never drift from
 // the version already bumped alongside every PR (CLAUDE.md §14).
 var appVersion = deckshare.Version()
@@ -62,6 +77,7 @@ func currentRetention(ctx context.Context, store db.Beginner, userID pgtype.UUID
 // that only means to set one section's error/success message (#218).
 type settingsView struct {
 	User             db.User
+	Accents          []accentOption
 	Version          string
 	DesiredRetention float64
 	// BodyClass unconditionally read by layout.html:13; a struct field, unlike a map key,
@@ -89,6 +105,7 @@ type settingsView struct {
 func buildSettingsView(user db.User, retention float64) settingsView {
 	return settingsView{
 		User:             user,
+		Accents:          accentOptions,
 		Version:          appVersion,
 		DesiredRetention: retention,
 	}
@@ -248,19 +265,20 @@ func registerSettingsRoutes(mux *http.ServeMux, a *auth.Service, store db.Beginn
 			return
 		}
 		scheme := r.PostForm.Get("color_scheme")
-		if !colorSchemes[scheme] {
+		accent := r.PostForm.Get("accent")
+		if !colorSchemes[scheme] || !validAccent(accent) {
 			view := buildSettingsView(user, retention)
-			view.AppearanceError = "Choose Light, Dark or Auto"
+			view.AppearanceError = "Choose Light, Dark or Auto, and one of the listed accent colours"
 			render(w, pages["settings"], http.StatusBadRequest, view)
 			return
 		}
-		if err := db.New(store).UpdateUserColorScheme(r.Context(), db.UpdateUserColorSchemeParams{
-			ID: user.ID, ColorScheme: scheme,
+		if err := db.New(store).UpdateUserAppearance(r.Context(), db.UpdateUserAppearanceParams{
+			ID: user.ID, ColorScheme: scheme, Accent: accent,
 		}); err != nil {
 			serverError(w, r, err)
 			return
 		}
-		user.ColorScheme = scheme // so this very response paints in the new scheme
+		user.ColorScheme, user.Accent = scheme, accent // so this very response paints in the new look
 		view := buildSettingsView(user, retention)
 		view.AppearanceSuccess = "Appearance updated"
 		render(w, pages["settings"], http.StatusOK, view)

@@ -375,12 +375,13 @@ user_fsrs_params id, user_id, deck_id NULL,   -- deck_id NULL = the user's globa
 
 users            id, email, password_hash, display_name, timezone,
                  day_start_hour smallint DEFAULT 4, avatar_sha256 NULL,
-                 color_scheme text DEFAULT 'auto',
+                 color_scheme text DEFAULT 'auto', accent text DEFAULT 'azure',
                  last_seen_version text DEFAULT '', created_at
                  -- UNIQUE on lower(email): one account per address, any casing
                  -- password_hash is argon2id (@node-rs/argon2), never a weaker algorithm
                  -- avatar_sha256 -> media_blobs, ON DELETE RESTRICT; NULL = no avatar (#176)
                  -- color_scheme: 'auto' | 'light' | 'dark' (users_color_scheme_check); 'auto' = follow prefers-color-scheme (#268)
+                 -- accent: one of Pico's stock palettes (users_accent_check): 'azure' (Pico's default) | 'blue' | 'indigo' | 'purple' | 'pink' | 'red' | 'orange' | 'green'; 'azure' renders no attribute (#267)
                  -- last_seen_version: newest release-notes version the user has seen; '' = never (#266)
 
 sessions         id text pk,             -- SHA-256 hex of the session token; the raw token
@@ -401,7 +402,7 @@ given a bad value, so the database rejects them: `users.day_start_hour` 0–23 (
 straight into `make_interval`), `review_log.rating` 1–4, `review_log.review_kind` 0–4,
 `review_log.state_before` and `user_card_state.state` 0–3, and
 `user_fsrs_params.desired_retention` strictly between 0 and 1.
-`users.color_scheme` is also CHECKed (`auto`/`light`/`dark`, #268): not a scheduling input, but
+`users.color_scheme` (`auto`/`light`/`dark`, #268) and `users.accent` (#267) are also CHECKed: not a scheduling input, but
 the layout renders it into an attribute, so the database holds it to the values the template
 understands.
 

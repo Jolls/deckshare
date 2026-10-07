@@ -15,7 +15,7 @@ const createUser = `-- name: CreateUser :one
 INSERT INTO users (email, password_hash, display_name, last_seen_version)
 VALUES ($1, $2, $3, $4)
 ON CONFLICT (lower(email)) DO NOTHING
-RETURNING id, email, password_hash, display_name, timezone, day_start_hour, created_at, avatar_sha256, color_scheme, last_seen_version
+RETURNING id, email, password_hash, display_name, timezone, day_start_hour, created_at, avatar_sha256, color_scheme, last_seen_version, accent
 `
 
 type CreateUserParams struct {
@@ -44,6 +44,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.AvatarSha256,
 		&i.ColorScheme,
 		&i.LastSeenVersion,
+		&i.Accent,
 	)
 	return i, err
 }
@@ -60,7 +61,7 @@ func (q *Queries) EmailExists(ctx context.Context, email string) (bool, error) {
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, email, password_hash, display_name, timezone, day_start_hour, created_at, avatar_sha256, color_scheme, last_seen_version FROM users WHERE id = $1
+SELECT id, email, password_hash, display_name, timezone, day_start_hour, created_at, avatar_sha256, color_scheme, last_seen_version, accent FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id pgtype.UUID) (User, error) {
@@ -77,12 +78,13 @@ func (q *Queries) GetUser(ctx context.Context, id pgtype.UUID) (User, error) {
 		&i.AvatarSha256,
 		&i.ColorScheme,
 		&i.LastSeenVersion,
+		&i.Accent,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, display_name, timezone, day_start_hour, created_at, avatar_sha256, color_scheme, last_seen_version FROM users WHERE lower(email) = lower($1)
+SELECT id, email, password_hash, display_name, timezone, day_start_hour, created_at, avatar_sha256, color_scheme, last_seen_version, accent FROM users WHERE lower(email) = lower($1)
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -99,8 +101,25 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.AvatarSha256,
 		&i.ColorScheme,
 		&i.LastSeenVersion,
+		&i.Accent,
 	)
 	return i, err
+}
+
+const updateUserAppearance = `-- name: UpdateUserAppearance :exec
+UPDATE users SET color_scheme = $2, accent = $3 WHERE id = $1
+`
+
+type UpdateUserAppearanceParams struct {
+	ID          pgtype.UUID
+	ColorScheme string
+	Accent      string
+}
+
+// Appearance (#268, #267). Keyed only on the session user's id -- no id ever comes from the form.
+func (q *Queries) UpdateUserAppearance(ctx context.Context, arg UpdateUserAppearanceParams) error {
+	_, err := q.db.Exec(ctx, updateUserAppearance, arg.ID, arg.ColorScheme, arg.Accent)
+	return err
 }
 
 const updateUserAvatar = `-- name: UpdateUserAvatar :exec
@@ -117,21 +136,6 @@ type UpdateUserAvatarParams struct {
 // clear query. The sha256 must already exist in media_blobs; the FK is what enforces that.
 func (q *Queries) UpdateUserAvatar(ctx context.Context, arg UpdateUserAvatarParams) error {
 	_, err := q.db.Exec(ctx, updateUserAvatar, arg.ID, arg.AvatarSha256)
-	return err
-}
-
-const updateUserColorScheme = `-- name: UpdateUserColorScheme :exec
-UPDATE users SET color_scheme = $2 WHERE id = $1
-`
-
-type UpdateUserColorSchemeParams struct {
-	ID          pgtype.UUID
-	ColorScheme string
-}
-
-// Appearance (#268). Keyed only on the session user's id -- no id ever comes from the form.
-func (q *Queries) UpdateUserColorScheme(ctx context.Context, arg UpdateUserColorSchemeParams) error {
-	_, err := q.db.Exec(ctx, updateUserColorScheme, arg.ID, arg.ColorScheme)
 	return err
 }
 

@@ -27,6 +27,11 @@
             <label><input type="radio" name="color_scheme" value="light"{{if eq .User.ColorScheme "light"}} checked{{end}}> Light</label>
             <label><input type="radio" name="color_scheme" value="dark"{{if eq .User.ColorScheme "dark"}} checked{{end}}> Dark</label>
         </fieldset>
+        <fieldset>
+            <legend>Accent colour</legend>
+            {{range .Accents}}<label><input type="radio" name="accent" value="{{.Value}}"{{if eq $.User.Accent .Value}} checked{{end}}> <span class="accent-swatch" data-accent="{{.Value}}"></span> {{.Label}}</label>
+            {{end}}
+        </fieldset>
         <button type="submit">Update appearance</button>
     </form>
 </section>

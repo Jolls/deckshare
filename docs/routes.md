@@ -234,11 +234,11 @@ does not get a flag control in this pass — its queued cards don't carry a per-
 
 | Method | Path | Permission | Purpose |
 |---|---|---|---|
-| GET | `/settings` | session | Profile (display name, timezone, `day_start_hour`), appearance (colour scheme: Auto/Light/Dark), password change, global FSRS default (`desired_retention` where `deck_id IS NULL`) |
+| GET | `/settings` | session | Profile (display name, timezone, `day_start_hour`), appearance (colour scheme: Auto/Light/Dark; accent colour), password change, global FSRS default (`desired_retention` where `deck_id IS NULL`) |
 | POST | `/settings` | session | Update profile |
 | POST | `/settings/password` | session | Change password |
 | POST | `/settings/fsrs` | session | Update the global `desired_retention` default |
-| POST | `/settings/appearance` | session | Set the caller's colour scheme (`users.color_scheme`: `auto`/`light`/`dark`, #268). Writes only the caller's own row (id from the session, never the form); unknown values 400. Rendered server-side as `data-theme` on `<html>`, none for `auto` |
+| POST | `/settings/appearance` | session | Set the caller's colour scheme (`users.color_scheme`: `auto`/`light`/`dark`, #268) and accent colour (`users.accent`, one of the eight listed on the page, #267) in one form. Writes only the caller's own row (id from the session, never the form); an unknown value of either 400s with nothing written. Rendered server-side as `data-theme` / `data-accent` on `<html>`, none for `auto` / `azure` |
 | POST | `/decks/{id}/settings/fsrs` | `can_study` | Per-deck override. Scoped to the caller, not the deck — `user_fsrs_params` keys on `(user_id, deck_id)`, so this is "my retention target for this deck," not a deck-wide setting an admin sets for everyone |
 | POST | `/settings/avatar` | session | Upload an avatar image (JPEG only, client resizes to ≤512px before sending; server independently caps size and decoded dimensions). Stored as a content-addressed blob (`media_blobs` + `users.avatar_sha256`, #176) — no `media_refs` row, since an avatar isn't deck-scoped media |
 | GET | `/settings/avatar` | session, self only | Serve the caller's own avatar bytes; 404 if none set. No cross-user visibility rule exists yet, so this doesn't reuse `GetMediaBlobForUser`'s `deck_access` gate |

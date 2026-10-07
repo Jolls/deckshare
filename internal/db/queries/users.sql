@@ -25,9 +25,9 @@ UPDATE users SET password_hash = $2 WHERE id = $1;
 -- name: UpdateUserAvatar :exec
 UPDATE users SET avatar_sha256 = $2 WHERE id = $1;
 
--- Appearance (#268). Keyed only on the session user's id -- no id ever comes from the form.
--- name: UpdateUserColorScheme :exec
-UPDATE users SET color_scheme = $2 WHERE id = $1;
+-- Appearance (#268, #267). Keyed only on the session user's id -- no id ever comes from the form.
+-- name: UpdateUserAppearance :exec
+UPDATE users SET color_scheme = $2, accent = $3 WHERE id = $1;
 
 -- Release notes (#266). Keyed only on the session user's id -- the version comes from the running
 -- binary, never the form.
