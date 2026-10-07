@@ -288,8 +288,12 @@ After committing a version bump, tag it: `git tag vX.Y.Z` (push with the branch/
 force). While major `x` is 0, `z` increments with every PR; `y` bumps only for a deliberate
 milestone release.
 
-**Plans.** Save implementation plans (Plan Mode, issue-tied) to
-`docs/plans/<issue-id>-<description-stem>.md`.
+**Plans.** Draft implementation plans (Plan Mode, issue-tied) as a scratch file,
+`docs/plans/<issue-id>-<description-stem>.md`. At implementation start, post the plan as a
+comment on its issue (`gh issue comment <N> --body-file <file>`) and delete the file — plans
+are never committed. The issue comment is the plan from then on; edit it if the plan changes.
+Durable rationale belongs in `docs/architecture.md` (§20 for Anki deviations), not the plan.
+Existing `docs/plans/*` files stay: docs and code comments cite them.
 
 ---
 
