@@ -43,7 +43,7 @@ jobs:
         run: |
           sqlc generate
           git diff --exit-code -- internal/db
-      - uses: golangci/golangci-lint-action@v7
+      - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
       - run: go test -race ./...
