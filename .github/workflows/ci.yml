@@ -27,7 +27,7 @@ jobs:
       DATABASE_URL: postgres://root:mysecretpassword@localhost:5432/local
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.26"
       - run: go build ./...
@@ -72,7 +72,7 @@ jobs:
       MEDIA_ROOT: ./media
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.26"
       - name: Build and start the server
