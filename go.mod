@@ -5,7 +5,7 @@ go 1.26
 require (
 	github.com/alexedwards/argon2id v1.0.0
 	github.com/aymerick/douceur v0.2.0
-	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jackc/pgx/v5 v5.11.0
 	github.com/klauspost/compress v1.19.2
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/open-spaced-repetition/go-fsrs/v4 v4.0.0
