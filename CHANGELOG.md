@@ -8,6 +8,13 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.20] - 2026-10-11
+
+### Security
+- Bump `golang.org/x/net` to v0.60.0 (GO-2026-6617) and make CI's `setup-go` resolve the latest
+  Go 1.26 patch (`check-latest`), clearing the `govulncheck` failures for GO-2026-6617 and
+  GO-2026-6613 (`net/http`, fixed in go1.26.9).
+
 ## [0.3.19] - 2026-10-07
 
 ### Added
