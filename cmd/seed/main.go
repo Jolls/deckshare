@@ -122,6 +122,9 @@ func main() {
 }
 
 func run() error {
+	if !seedAllowed() {
+		return errors.New("refusing to seed: set DECKSHARE_ALLOW_SEED=1 to confirm DATABASE_URL is a development database")
+	}
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		return errors.New("DATABASE_URL is required")
@@ -782,3 +785,7 @@ func randomGuid() (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
+
+// seedAllowed reports whether the caller opted in. seed creates accounts with a known password,
+// so DATABASE_URL alone is not enough -- it could be pointed at a non-development database (#216).
+func seedAllowed() bool { return os.Getenv("DECKSHARE_ALLOW_SEED") == "1" }

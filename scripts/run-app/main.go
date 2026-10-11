@@ -218,7 +218,7 @@ func resetDB() error {
 		return err
 	}
 	seedCmd := exec.Command("go", "run", "./cmd/seed")
-	seedCmd.Env = append(os.Environ(), "DATABASE_URL="+dbURL, "MEDIA_ROOT="+mediaRoot)
+	seedCmd.Env = append(os.Environ(), "DATABASE_URL="+dbURL, "MEDIA_ROOT="+mediaRoot, "DECKSHARE_ALLOW_SEED=1")
 	seedCmd.Stdout = os.Stdout
 	seedCmd.Stderr = os.Stderr
 	if err := seedCmd.Run(); err != nil {
