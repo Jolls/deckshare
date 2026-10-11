@@ -8,6 +8,16 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.21] - 2026-10-11
+
+### Changed
+- `render` and `renderFragment` set `Content-Type: text/html; charset=utf-8` explicitly instead of
+  relying on sniffing, which gave `text/plain` for an empty refill fragment
+  ([#222](https://github.com/Jolls/deckshare/issues/222)).
+- `cmd/seed` refuses to run unless `DECKSHARE_ALLOW_SEED=1` is set, so it cannot be pointed at a
+  non-development database by accident; `scripts/run-app` sets it
+  ([#216](https://github.com/Jolls/deckshare/issues/216)).
+
 ## [0.3.20] - 2026-10-11
 
 ### Security

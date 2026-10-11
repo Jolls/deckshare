@@ -369,7 +369,8 @@ Windows 11, PowerShell primary (Bash tool also available — each takes its own 
 - **The app runs in compose; dev tooling stays on the host.** `docker compose up -d --build`
   starts `db` + `app`; the binary embeds `migrations/` and applies them at startup, so there is no
   goose step for the app. `go test`, `cmd/seed` and `reset-db` still run on the host against `db`'s
-  loopback port. A running container serves the image it was built from — rebuild (`--build`)
+  loopback port. `cmd/seed` refuses to run unless `DECKSHARE_ALLOW_SEED=1` is set (`reset-db` sets
+  it for you); export it yourself when running `go run ./cmd/seed` directly. A running container serves the image it was built from — rebuild (`--build`)
   after code changes. The goose CLI remains how migrations are authored and how CI and `reset-db`
   prepare a database for DB-backed tests.
 - Go-specific, once the scaffold exists: `go generate` regenerates `sqlc` output — run it and

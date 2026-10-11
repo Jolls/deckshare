@@ -94,6 +94,7 @@ func notFoundPage(w http.ResponseWriter, pages map[string]*template.Template, us
 }
 
 func render(w http.ResponseWriter, t *template.Template, status int, data any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "layout", data); err != nil {
 		slog.Error("render template failed", "error", err)
@@ -106,6 +107,7 @@ func render(w http.ResponseWriter, t *template.Template, status int, data any) {
 
 // renderFragment executes a standalone fragment template (no layout) -- htmx refill responses.
 func renderFragment(w http.ResponseWriter, t *template.Template, status int, name string, data any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, name, data); err != nil {
 		slog.Error("render fragment failed", "error", err)
