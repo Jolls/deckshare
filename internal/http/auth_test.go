@@ -82,6 +82,13 @@ func countRows(t *testing.T, tx pgx.Tx, query string, args ...any) int64 {
 // production serves.
 func newTestHandler(t *testing.T, tx pgx.Tx, cfg auth.Config, clocks ...func() time.Time) (http.Handler, *auth.Service) {
 	t.Helper()
+	return newTestHandlerWithSlots(t, tx, cfg, make(chan struct{}, packageConcurrency), clocks...)
+}
+
+// newTestHandlerWithSlots is newTestHandler with the import/export concurrency slots supplied by
+// the test, so it can fill them and observe the 503 (#214).
+func newTestHandlerWithSlots(t *testing.T, tx pgx.Tx, cfg auth.Config, slots chan struct{}, clocks ...func() time.Time) (http.Handler, *auth.Service) {
+	t.Helper()
 	a, err := auth.New(tx, cfg)
 	if err != nil {
 		t.Fatalf("auth.New: %v", err)
@@ -115,8 +122,8 @@ func newTestHandler(t *testing.T, tx pgx.Tx, cfg auth.Config, clocks ...func() t
 	registerNotePreviewRoutes(mux, tx, fragments)
 	registerReviewRoutes(mux, tx, pages, fragments, clock)
 	registerMediaRoutes(mux, tx, blobs)
-	registerImportRoutes(mux, tx, pages, blobs, clock)
-	registerExportRoutes(mux, tx, pages, clock)
+	registerImportRoutes(mux, tx, pages, blobs, clock, slots)
+	registerExportRoutes(mux, tx, pages, clock, slots)
 	registerAIImportRoutes(mux, tx, pages)
 	return requestLog(securityHeaders(a.Middleware(captureUser(mux)))), a
 }
@@ -166,6 +173,7 @@ func TestRoutes_NoSession(t *testing.T) {
 		{"GET", "/reset-password", 200, ""},
 		{"GET", "/media/" + testSHA, 303, "/login"},
 		{"GET", "/import", 303, "/login"},
+		{"GET", "/decks/00000000-0000-0000-0000-000000000000/export", 303, "/login"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.method+" "+tt.path, func(t *testing.T) {

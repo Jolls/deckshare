@@ -123,7 +123,7 @@ The deck-detail notes list (`GET /decks/{id}`, above) is paginated in teaching o
 `modified_at DESC` — via an opaque keyset cursor, `?notesCursor=`
 ([#90](https://github.com/Jolls/deckshare/issues/90)). Keyset rather than offset: bulk-editing
 the list mutates `modified_at`, which would reshuffle an offset page mid-edit, while
-`import_due_position` never changes after import.
+`import_due_position` is written only when a card is created or imported ([#240](https://github.com/Jolls/deckshare/issues/240)), never by a note edit.
 
 ---
 
@@ -257,6 +257,10 @@ Synchronous upload is a Simplicity First choice for MVP — no job queue. Revisi
 collection makes the request time out; nothing here blocks adding an async path later.
 Full-collection `.colpkg` export isn't scoped yet — not required by any Milestone 1 step;
 Milestone 2 scope (architecture.md §11).
+
+`POST /import` and `GET /decks/{id}/export` share `packageConcurrency` (2) slots; with every slot
+taken they answer `503` with `Retry-After: 30`. Export output is capped at `maxExportBytes`
+(500 MiB). Both bound whole-package memory use ([#214](https://github.com/Jolls/deckshare/issues/214)).
 
 ---
 

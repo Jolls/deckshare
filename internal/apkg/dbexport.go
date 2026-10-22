@@ -130,9 +130,9 @@ func Export(ctx context.Context, tx pgx.Tx, deckID, callerID pgtype.UUID, now ti
 		cardAnkiID[c.ID] = id
 		position++
 
-		// A card imported with an Anki queue position (#82) exports with that same position,
-		// round-tripping the order the user actually saw rather than re-deriving one from export
-		// row order. Manually created cards (import_due_position NULL) keep the row-order fallback.
+		// A card's queue position (#82: Anki's on import; #240: deck max + 1 on creation) exports
+		// as itself, round-tripping the order the user actually saw. Only a card still carrying
+		// NULL -- one that was not new in Anki when imported -- falls back to export row order.
 		cardPosition := position
 		if c.ImportDuePosition.Valid {
 			cardPosition = c.ImportDuePosition.Int32

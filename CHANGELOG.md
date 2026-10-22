@@ -8,6 +8,24 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.22] - 2026-10-21
+
+### Changed
+- The study queue's new-card sentinel and `rev.order` sort key are SQL functions defined once in a
+  migration (`deckshare_new_card_key`, `deckshare_rev_key`) instead of seven inline copies across
+  `reviews.sql`'s sort and daily-cap sites ([#219](https://github.com/Jolls/deckshare/issues/219)).
+
+### Fixed
+- Cards created in DeckShare join the end of their deck's new-card queue (deck max position + 1)
+  instead of staying position-less behind every imported card, and export with that position;
+  existing position-less cards are backfilled per deck in creation order
+  ([#240](https://github.com/Jolls/deckshare/issues/240)).
+
+### Security
+- `POST /import` and `GET /decks/{id}/export` share a two-slot concurrency limit (503 +
+  `Retry-After` when full), bounding how many whole packages are held in memory at once, and
+  export output is capped at 500 MiB ([#214](https://github.com/Jolls/deckshare/issues/214)).
+
 ## [0.3.21] - 2026-10-11
 
 ### Changed

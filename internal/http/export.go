@@ -3,7 +3,9 @@ package http
 import (
 	"bytes"
 	"context"
+	"errors"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,13 +20,36 @@ import (
 // header write or buffer send) -- see docs/plans/213-timeouts.md Decision 4.
 const exportTimeout = 60 * time.Second
 
+// maxExportBytes caps the size of the generated (compressed) package. It is a ceiling on the
+// output, not on peak memory -- bytes.Buffer grows by doubling and apkg.Write builds the
+// collection in memory first, so one export can briefly hold a multiple of this. The value
+// matches apkg.DefaultArchiveLimits().MaxTotalBytes, which counts DEcompressed bytes, so it is
+// the right order of magnitude for re-importing what we emit, not a guarantee that it will.
+const maxExportBytes = 500 << 20
+
+var errExportTooLarge = errors.New("export exceeds maxExportBytes")
+
+// cappedBuffer is a bytes.Buffer that refuses to grow past max, so an oversize export fails
+// inside apkg.Write instead of allocating without bound.
+type cappedBuffer struct {
+	bytes.Buffer
+	max int
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if c.Len()+len(p) > c.max {
+		return 0, errExportTooLarge
+	}
+	return c.Buffer.Write(p)
+}
+
 // registerExportRoutes wires GET /decks/{id}/export (docs/routes.md): one deck's content plus the
 // CALLER's own progress on it, serialised db -> IR -> .apkg and sent as a download. can_view, not
 // can_edit_* -- exporting reads the deck, it does not change it. Authorisation is enforced inside
 // apkg.Export's queries (export.sql's deck_access joins, CLAUDE.md §9); no access surfaces here as
 // a wrapped pgx.ErrNoRows and collapses to 404, the same as every other deck route.
-func registerExportRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]*template.Template, now func() time.Time) {
-	mux.Handle("GET /decks/{id}/export", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func registerExportRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]*template.Template, now func() time.Time, slots chan struct{}) {
+	mux.Handle("GET /decks/{id}/export", auth.RequireUser(concurrencyLimit(slots, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, _ := auth.UserFromContext(r.Context())
 		deckID, ok := pathUUID(r, "id")
 		if !ok {
@@ -53,9 +78,15 @@ func registerExportRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 		// Buffered rather than streamed straight into w: a Write failure partway through would
 		// otherwise land after the 200 and the Content-Disposition, leaving the browser a
 		// truncated .apkg it believes is complete. Packages are already held whole in memory on
-		// the /import side.
-		var buf bytes.Buffer
+		// the /import side. The buffer is capped at maxExportBytes (#214).
+		buf := cappedBuffer{max: maxExportBytes}
 		if err := apkg.Write(col, &buf); err != nil {
+			if errors.Is(err, errExportTooLarge) {
+				slog.Warn("export over size ceiling",
+					"deck_id", deckID.String(), "user_id", user.ID.String(), "limit_bytes", maxExportBytes)
+				http.Error(w, "deck too large to export", http.StatusInternalServerError)
+				return
+			}
 			serverError(w, exportReq, err)
 			return
 		}
@@ -65,7 +96,7 @@ func registerExportRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 		w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
 		w.WriteHeader(http.StatusOK)
 		_, _ = buf.WriteTo(w)
-	})))
+	}))))
 }
 
 // exportFilename turns a deck name into a Content-Disposition-safe ASCII filename. Deliberately

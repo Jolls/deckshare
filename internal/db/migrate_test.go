@@ -13,6 +13,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Jolls/deckshare"
@@ -189,5 +190,76 @@ func TestMigrate_FailsFastOnBadSQL(t *testing.T) {
 	}
 	if n := scalar[int64](t, pool, "SELECT count(*) FROM goose_db_version WHERE version_id = 2"); n != 0 {
 		t.Errorf("goose_db_version has %d row(s) for the failed version 2, want 0", n)
+	}
+}
+
+// #240: migration 00027 gives every position-less card the same treatment CreateCard now does --
+// per deck, in card-id (creation) order, after the deck's current highest position -- and leaves
+// already-positioned cards alone. Seeded at the state just before the migration, in a committed
+// transaction on the throwaway schema, then migrated.
+func TestMigrate_00027BackfillsNullPositionsPerDeck(t *testing.T) {
+	pool := migrationPool(t)
+	ctx := context.Background()
+	names := embeddedMigrationNames(t)
+	idx := slices.IndexFunc(names, func(n string) bool { return strings.HasPrefix(n, "00027_") })
+	if idx < 0 {
+		t.Fatal("no 00027_* migration embedded")
+	}
+
+	before := fstest.MapFS{}
+	for _, name := range names[:idx] {
+		b, err := fs.ReadFile(deckshare.Migrations(), name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		before[name] = &fstest.MapFile{Data: b}
+	}
+	if _, err := Migrate(ctx, pool, before); err != nil {
+		t.Fatalf("Migrate up to just before 00027: %v", err)
+	}
+
+	seed, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin seed tx: %v", err)
+	}
+	user := mustUser(t, seed)
+	noteType := mustNoteType(t, seed, user)
+	template := mustTemplate(t, seed, noteType, 0)
+	seedDeck := func(positions ...*int32) (deck pgtype.UUID, cards []pgtype.UUID) {
+		deck = mustDeck(t, seed, user)
+		for _, pos := range positions {
+			cards = append(cards, mustCardWithPosition(t, seed, mustNote(t, seed, user, noteType, deck), template, deck, 0, pos))
+		}
+		return deck, cards
+	}
+	_, a := seedDeck(int32p(5), nil, int32p(3), nil)
+	_, b := seedDeck(nil, nil)
+	_, c := seedDeck(int32p(2), int32p(4))
+	if err := seed.Commit(ctx); err != nil {
+		t.Fatalf("commit seed: %v", err)
+	}
+
+	if _, err := Migrate(ctx, pool, deckshare.Migrations()); err != nil {
+		t.Fatalf("Migrate (00027 onward): %v", err)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		cards []pgtype.UUID
+		want  []int32
+	}{
+		{"deck A: NULLs continue after max 5, ids in order", a, []int32{5, 6, 3, 7}},
+		{"deck B: all NULL start at 1", b, []int32{1, 2}},
+		{"deck C: nothing to backfill", c, []int32{2, 4}},
+	} {
+		for i, card := range tc.cards {
+			var got pgtype.Int4
+			if err := pool.QueryRow(ctx, `SELECT import_due_position FROM cards WHERE id = $1`, card).Scan(&got); err != nil {
+				t.Fatalf("%s: read card %d: %v", tc.name, i, err)
+			}
+			if !got.Valid || got.Int32 != tc.want[i] {
+				t.Errorf("%s: card %d import_due_position = %+v, want %d", tc.name, i, got, tc.want[i])
+			}
+		}
 	}
 }

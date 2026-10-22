@@ -23,7 +23,7 @@ const maxUploadBytes = 550 << 20
 // registerImportRoutes wires GET/POST /import (docs/routes.md): upload a .apkg/.colpkg, synchronous
 // read -> IR -> db (CLAUDE.md §9's Simplicity First -- no job queue for MVP), redirect to the
 // resulting deck.
-func registerImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]*template.Template, blobs *media.Store, now func() time.Time) {
+func registerImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[string]*template.Template, blobs *media.Store, now func() time.Time, slots chan struct{}) {
 	mux.Handle("GET /import", auth.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, _ := auth.UserFromContext(r.Context())
 		render(w, pages["import"], http.StatusOK, map[string]any{"User": user})
@@ -47,6 +47,15 @@ func registerImportRoutes(mux *http.ServeMux, store db.Beginner, pages map[strin
 			return
 		}
 		defer func() { _ = file.Close() }()
+
+		// The slot bounds the in-memory package, so it is taken only now that the upload is in:
+		// a client trickling its body (the server sets no ReadTimeout, so big uploads can finish)
+		// must not hold one of the few slots while it does (#214).
+		release, ok := acquireSlot(w, slots)
+		if !ok {
+			return
+		}
+		defer release()
 
 		col, err := apkg.Read(file, header.Size, apkg.DefaultArchiveLimits())
 		if err != nil {

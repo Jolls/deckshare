@@ -804,3 +804,54 @@ func TestImport_DesiredRetentionMajorityWinsWithinDeck(t *testing.T) {
 		t.Errorf("Default deck desired_retention = %v, want 0.85 (the majority value, 2 votes vs 1)", got)
 	}
 }
+
+// TestImport_ReimportLeavesHandAddedCardAlone (#240): a card added in DeckShare to an imported
+// note is not part of the package, so re-importing the package must neither delete it nor change
+// its id or queue position. Holds whether or not creation assigns a position: the card's
+// import_due_position is compared as-is before and after.
+func TestImport_ReimportLeavesHandAddedCardAlone(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	ownerID := seedUser(t, tx)
+
+	spec := defaultSynthSpec(t)
+	col := readBytes(t, buildSchema11Package(t, spec))
+	if _, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t)); err != nil {
+		t.Fatalf("first Import: %v", err)
+	}
+	imported, err := findCardByAnkiID(ctx, tx, 203)
+	if err != nil {
+		t.Fatalf("card 203: %v", err)
+	}
+
+	existing, err := db.New(tx).ListCardsForNoteForUpdate(ctx, imported.NoteID)
+	if err != nil {
+		t.Fatalf("list note cards: %v", err)
+	}
+	var desired []db.DesiredCard
+	for _, c := range existing {
+		desired = append(desired, db.DesiredCard{Ordinal: c.Ordinal, TemplateID: c.TemplateID})
+	}
+	const handAddedOrdinal = 9
+	desired = append(desired, db.DesiredCard{Ordinal: handAddedOrdinal, TemplateID: imported.TemplateID})
+	if err := db.SyncNoteCards(ctx, tx, imported.NoteID, imported.DeckID, desired); err != nil {
+		t.Fatalf("SyncNoteCards: %v", err)
+	}
+
+	handAdded := func() noteCard {
+		t.Helper()
+		cards, err := findCardsForNote(ctx, tx, imported.NoteID)
+		if err != nil {
+			t.Fatalf("read note cards: %v", err)
+		}
+		return cards[handAddedOrdinal]
+	}
+	before := handAdded()
+
+	if _, err := Import(ctx, tx, ownerID, col, time.Now(), testMediaStore(t)); err != nil {
+		t.Fatalf("second Import: %v", err)
+	}
+	if after := handAdded(); after != before {
+		t.Errorf("hand-added card changed across reimport: %+v -> %+v", before, after)
+	}
+}

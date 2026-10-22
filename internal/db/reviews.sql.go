@@ -423,20 +423,11 @@ WITH scored AS (
            COALESCE(ucs.suspended, false)               AS suspended,
            ucs.buried_until                            AS buried_until,
            CASE
-               -- New-card gather order (#82): Anki's persisted new-card queue position when the
-               -- import carried one, else the sentinel below -- pushes position-less cards (never
-               -- imported, manually created) after every real position, falling back to the
-               -- card_id tie-break among themselves (unchanged behavior for that subset). The
-               -- 2147483647 (int32 max) sentinel is repeated, not shared -- sqlc has no macro
-               -- mechanism across query bodies -- at 3 other sites in this file (search for it);
-               -- change all 4 together or the new-card sort order and its own cap boundary desync.
-               WHEN ucs.user_id IS NULL THEN COALESCE(c.import_due_position, 2147483647)::double precision
-               WHEN $2::text = 'random' THEN
-                   ('x' || md5(c.id::text || $3::text))
-                   ::bit(52)::bigint::double precision
-               WHEN $2::text = 'intervalAsc' THEN ucs.scheduled_days::double precision
-               WHEN $2::text = 'intervalDesc' THEN (-ucs.scheduled_days)::double precision
-               ELSE extract(epoch from ucs.due)
+               -- New-card gather order (#82) and the rev.order key (#116): both defined once, in
+               -- migration 00026 (#219) -- the same functions rank the cap boundaries below, so
+               -- the order and its cutoffs cannot desync.
+               WHEN ucs.user_id IS NULL THEN deckshare_new_card_key(c.import_due_position)
+               ELSE deckshare_rev_key($2::text, ucs.due, ucs.scheduled_days, c.id, $3::text)
            END                                          AS raw_key
     FROM cards c
     JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $4
@@ -469,14 +460,7 @@ SELECT scored.card_id, scored.card_ordinal, scored.unseen, scored.due, scored.st
        scored.raw_key::double precision AS sort_key
 FROM scored
 LEFT JOIN LATERAL (
-    SELECT (CASE
-                WHEN $2::text = 'random' THEN
-                    ('x' || md5(c2.id::text || $3::text))
-                    ::bit(52)::bigint::double precision
-                WHEN $2::text = 'intervalAsc' THEN u2.scheduled_days::double precision
-                WHEN $2::text = 'intervalDesc' THEN (-u2.scheduled_days)::double precision
-                ELSE extract(epoch from u2.due)
-            END) AS cutoff_key,
+    SELECT deckshare_rev_key($2::text, u2.due, u2.scheduled_days, c2.id, $3::text) AS cutoff_key,
            c2.id AS cutoff_id
     FROM cards c2
     JOIN user_card_state u2 ON u2.user_id = $4 AND u2.card_id = c2.id
@@ -490,7 +474,7 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) rev_cutoff ON true
 LEFT JOIN LATERAL (
-    SELECT COALESCE(c2.import_due_position, 2147483647)::double precision AS cutoff_key,
+    SELECT deckshare_new_card_key(c2.import_due_position) AS cutoff_key,
            c2.id AS cutoff_id
     FROM cards c2
     JOIN card_release_days crd2 ON crd2.card_id = c2.id
@@ -518,8 +502,8 @@ WHERE NOT scored.suspended
   -- to be INTRODUCED yet. current_class_day is internal/review.ReleaseGateDay's value -- the
   -- deck's calendar resolved against the student's own study day, or a class day past every
   -- possible lesson when the deck has no calendar, which releases everything without needing a
-  -- second branch here (the same "sentinel past every real value" trick as import_due_position's
-  -- 2147483647 above). Never-seen cards only: a card with a user_card_state row has already been
+  -- second branch here (the same "sentinel past every real value" trick as
+  -- deckshare_new_card_key, migration 00026). Never-seen cards only: a card with a user_card_state row has already been
   -- introduced and is never re-gated, which is what "cumulative" means. Orthogonal to the daily
   -- limits above: this decides WHICH cards are eligible, new.perDay decides HOW MANY. extraRounds
   -- (#172) only scales the allowances, so it can burn down an unlocked backlog but can never
@@ -628,8 +612,8 @@ type ListDueCardsForStudyRow struct {
 // The new-card cutoff for the per-deck daily new-card cap (#101): the (position, id) of the card
 // ranked last within the deck's remaining new-card allowance, in the same (import_due_position,
 // id) gather order raw_key uses for never-seen rows (#82) -- so the cap boundary agrees with the
-// order it's capping, same InitPlan/LEFT JOIN shape as rev_cutoff above. Sentinel: keep in sync
-// with the scored CTE's raw_key CASE above (see its doc comment).
+// order it's capping, same InitPlan/LEFT JOIN shape as rev_cutoff above. Same
+// deckshare_new_card_key as raw_key above (#219).
 func (q *Queries) ListDueCardsForStudy(ctx context.Context, arg ListDueCardsForStudyParams) ([]ListDueCardsForStudyRow, error) {
 	rows, err := q.db.Query(ctx, listDueCardsForStudy,
 		arg.Priority,
@@ -691,11 +675,9 @@ func (q *Queries) ListDueCardsForStudy(ctx context.Context, arg ListDueCardsForS
 
 const listNewCardsForStudy = `-- name: ListNewCardsForStudy :many
 WITH scored AS (
-    -- Sentinel: keep 2147483647 in sync with the other 3 occurrences in this file (search for
-    -- it) -- see ListDueCardsForStudy's raw_key CASE doc comment (#82).
     SELECT c.id                                                            AS card_id,
            c.ordinal                                                       AS card_ordinal,
-           COALESCE(c.import_due_position, 2147483647)::double precision   AS sort_key,
+           deckshare_new_card_key(c.import_due_position)                   AS sort_key,
            n.fields                                                       AS note_fields,
            n.tags                                                         AS note_tags,
            nt.id                                                          AS note_type_id,
@@ -732,7 +714,7 @@ SELECT scored.card_id, scored.card_ordinal,
        scored.sort_key
 FROM scored
 LEFT JOIN LATERAL (
-    SELECT COALESCE(c2.import_due_position, 2147483647)::double precision AS cutoff_key,
+    SELECT deckshare_new_card_key(c2.import_due_position) AS cutoff_key,
            c2.id AS cutoff_id
     FROM cards c2
     JOIN card_release_days crd2 ON crd2.card_id = c2.id
@@ -907,14 +889,7 @@ WITH scored AS (
            t.afmt                                      AS afmt,
            ucs.suspended                                AS suspended,
            ucs.buried_until                            AS buried_until,
-           (CASE
-               WHEN $1::text = 'random' THEN
-                   ('x' || md5(c.id::text || $2::text))
-                   ::bit(52)::bigint::double precision
-               WHEN $1::text = 'intervalAsc' THEN ucs.scheduled_days::double precision
-               WHEN $1::text = 'intervalDesc' THEN (-ucs.scheduled_days)::double precision
-               ELSE extract(epoch from ucs.due)
-           END)                                         AS raw_key
+           deckshare_rev_key($1::text, ucs.due, ucs.scheduled_days, c.id, $2::text) AS raw_key
     FROM cards c
     JOIN deck_access da ON da.deck_id = c.deck_id AND da.user_id = $3
                        AND da.can_view AND da.can_study
@@ -931,14 +906,7 @@ SELECT scored.card_id, scored.card_ordinal, scored.due, scored.stability, scored
        scored.raw_key::double precision AS sort_key
 FROM scored
 LEFT JOIN LATERAL (
-    SELECT (CASE
-                WHEN $1::text = 'random' THEN
-                    ('x' || md5(c2.id::text || $2::text))
-                    ::bit(52)::bigint::double precision
-                WHEN $1::text = 'intervalAsc' THEN u2.scheduled_days::double precision
-                WHEN $1::text = 'intervalDesc' THEN (-u2.scheduled_days)::double precision
-                ELSE extract(epoch from u2.due)
-            END) AS cutoff_key,
+    SELECT deckshare_rev_key($1::text, u2.due, u2.scheduled_days, c2.id, $2::text) AS cutoff_key,
            c2.id AS cutoff_id
     FROM cards c2
     JOIN user_card_state u2 ON u2.user_id = $3 AND u2.card_id = c2.id

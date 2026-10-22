@@ -3,6 +3,8 @@ package db
 import (
 	"context"
 	"errors"
+	"maps"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -57,11 +59,14 @@ func SyncNoteCards(ctx context.Context, tx pgx.Tx, noteID, homeDeckID pgtype.UUI
 		desiredByOrdinal[d.Ordinal] = d
 	}
 
-	// Create before destroy, so the note is never transiently card-less.
-	for ord, d := range desiredByOrdinal {
+	// Create before destroy, so the note is never transiently card-less. In ordinal order:
+	// CreateCard hands out queue positions in call order (#240), so a cloze note's c1 must be
+	// created before its c2.
+	for _, ord := range slices.Sorted(maps.Keys(desiredByOrdinal)) {
 		if _, ok := existingByOrdinal[ord]; ok {
 			continue
 		}
+		d := desiredByOrdinal[ord]
 		if _, err := q.CreateCard(ctx, CreateCardParams{
 			NoteID:     noteID,
 			TemplateID: d.TemplateID,
