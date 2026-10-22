@@ -7,7 +7,7 @@ don't get sections of their own. Under it, `### New features`, `### Bug fixes` a
 `### Security` (omit empty ones), each a list of `- Title: what changed` bullets (a bullet may
 continue on indented lines). The section's version must also appear in `CHANGELOG.md`.
 
-## [0.3.17] - 2026-10-07
+## [0.3.22] - 2026-10-21
 
 ### New features
 - Colour scheme and accent: Light, Dark or Auto, plus eight accent colours, under Appearance in
@@ -19,6 +19,8 @@ continue on indented lines). The section's version must also appear in `CHANGELO
 - Closed instances: Sign-ups can be turned off.
 
 ### Bug fixes
+- Cards you add yourself: They now join the end of the deck's new-card queue in the order you
+  added them, and keep that order when you export the deck.
 - Importing a deck no longer misreads out-of-range values in a review history, which could turn
   an odd rating into an "Again".
 - The Settings page no longer shows a "no value" placeholder for your retention target or version

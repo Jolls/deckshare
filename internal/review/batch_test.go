@@ -1427,3 +1427,167 @@ func TestBuildBatch_PriorityMixed_ExtraRound(t *testing.T) {
 		t.Errorf("got %d unseen, %d due -- want both sides represented under the mixed interleave", unseenCount, dueCount)
 	}
 }
+
+// TestBuildBatch_RevCapAgreesWithRevOrder (#219): the daily rev cap's boundary must pick exactly
+// the first RevPerDay cards of the display order, for every rev.order under both priorities. The
+// order and its cutoff are computed by separate copies of the same key in reviews.sql, so drift
+// between the copies serves a set the order would not have ranked first. Six cards, all review
+// state, scheduled_days scrambled relative to due so each order ranks them differently.
+func TestBuildBatch_RevCapAgreesWithRevOrder(t *testing.T) {
+	orders := []RevOrder{RevOrderDue, RevOrderRandom, RevOrderIntervalAsc, RevOrderIntervalDesc}
+	priorities := []Priority{PriorityDue, PriorityMixed}
+	for _, order := range orders {
+		for _, priority := range priorities {
+			t.Run(string(order)+"/"+string(priority), func(t *testing.T) {
+				tx := beginTx(t)
+				ctx := context.Background()
+				p := mustDefaultParams(t)
+				f := seedFixture(t, tx)
+				cards := append([]pgtype.UUID{f.CardID}, seedCards(t, tx, f, 5)...)
+				window := testStudyDay(0)
+				now := window.Start.Add(time.Hour)
+				for i, days := range []int32{40, 10, 60, 20, 50, 30} {
+					if _, err := tx.Exec(ctx,
+						`INSERT INTO user_card_state (user_id, card_id, due, state, reps, stability, difficulty, last_review, scheduled_days)
+						 VALUES ($1, $2, $3, 2, 1, 2.5, 5.0, $4, $5)`,
+						f.UserID, cards[i], window.Start.Add(dueCardOffset+time.Duration(i)*time.Minute), window.Start.Add(-24*time.Hour), days,
+					); err != nil {
+						t.Fatalf("insert review card %d: %v", i, err)
+					}
+				}
+
+				s := defaultSettings()
+				s.Order = order
+				s.Priority = priority
+				full, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, s, Cursor{AtStart: true}, 30, now, 0)
+				if err != nil {
+					t.Fatalf("BuildBatch (uncapped): %v", err)
+				}
+				if len(full.Cards) != len(cards) {
+					t.Fatalf("uncapped batch has %d cards, want %d", len(full.Cards), len(cards))
+				}
+
+				s.RevPerDay = 3
+				var served []pgtype.UUID
+				cur := Cursor{AtStart: true}
+				exhausted := false
+				for i := 0; i < 10 && !exhausted; i++ {
+					batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, s, cur, 1, now, 0)
+					if err != nil {
+						t.Fatalf("BuildBatch (capped): %v", err)
+					}
+					for _, c := range batch.Cards {
+						served = append(served, c.CardID)
+					}
+					exhausted = batch.Exhausted
+					if !exhausted {
+						if cur, err = DecodeCursor(batch.Cursor); err != nil {
+							t.Fatalf("DecodeCursor: %v", err)
+						}
+					}
+				}
+				if !exhausted {
+					t.Fatalf("did not reach Exhausted within 10 fetches")
+				}
+				if len(served) != 3 {
+					t.Fatalf("capped sequence has %d cards, want 3", len(served))
+				}
+				for i := range served {
+					if served[i] != full.Cards[i].CardID {
+						t.Errorf("capped position %d: got %s, want %s (the uncapped order's first 3)",
+							i, served[i].String(), full.Cards[i].CardID.String())
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestBuildBatch_NewCardCapCrossesSentinel (#219): the new-card cap boundary and the display sort
+// must agree on where a position-less (NULL) card ranks relative to real positions, under both
+// priorities -- the sentinel is spelled separately in the sort key and in the cap's boundary.
+// Real positions first (10, 20), then position-less cards by id: a cap of 3 admits the two real
+// ones and the earliest position-less card.
+func TestBuildBatch_NewCardCapCrossesSentinel(t *testing.T) {
+	for _, priority := range []Priority{PriorityDue, PriorityMixed} {
+		t.Run(string(priority), func(t *testing.T) {
+			tx := beginTx(t)
+			ctx := context.Background()
+			p := mustDefaultParams(t)
+			f := seedFixture(t, tx)
+			cards := seedCards(t, tx, f, 3)
+			setImportDuePosition(t, tx, f.CardID, 20)
+			setImportDuePosition(t, tx, cards[0], 10)
+			window := testStudyDay(0)
+			now := window.Start.Add(time.Hour)
+
+			s := defaultSettings()
+			s.Priority = priority
+			s.NewPerDay = 3
+			batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, s, Cursor{AtStart: true}, 30, now, 0)
+			if err != nil {
+				t.Fatalf("BuildBatch: %v", err)
+			}
+			want := []pgtype.UUID{cards[0], f.CardID, cards[1]}
+			if len(batch.Cards) != len(want) {
+				t.Fatalf("got %d cards, want %d: %v", len(batch.Cards), len(want), batch.Cards)
+			}
+			for i, c := range batch.Cards {
+				if c.CardID != want[i] {
+					t.Errorf("position %d: got card %s, want %s", i, c.CardID.String(), want[i].String())
+				}
+			}
+		})
+	}
+}
+
+// TestBuildBatch_HandAddedCardKeepsPlaceBeforeLaterImports (#240): a card authored in DeckShare
+// joins the end of the deck's queue as it stands when it is added, so cards imported afterwards
+// (higher positions) come after it, instead of the hand-added card being stuck behind every
+// imported card forever. The three seeded cards stand in for imported ones.
+func TestBuildBatch_HandAddedCardKeepsPlaceBeforeLaterImports(t *testing.T) {
+	for _, priority := range []Priority{PriorityDue, PriorityMixed} {
+		t.Run(string(priority), func(t *testing.T) {
+			tx := beginTx(t)
+			ctx := context.Background()
+			p := mustDefaultParams(t)
+			f := seedFixture(t, tx)
+			setImportDuePosition(t, tx, f.CardID, 10)
+			early := seedCards(t, tx, f, 1)[0]
+			setImportDuePosition(t, tx, early, 20)
+
+			note, err := db.CreateNoteWithCards(ctx, tx, db.CreateNoteParams{
+				Guid: "hand-added-guid", Fields: []byte(`["Q","A"]`), Tags: []string{}, Checksum: 1,
+				UserID: f.UserID, NoteTypeID: f.NoteTypeID, DeckID: f.DeckID,
+			}, []db.DesiredCard{{Ordinal: 0, TemplateID: f.TemplateID}})
+			if err != nil {
+				t.Fatalf("CreateNoteWithCards: %v", err)
+			}
+			var handAdded pgtype.UUID
+			if err := tx.QueryRow(ctx, `SELECT id FROM cards WHERE note_id = $1`, note.ID).Scan(&handAdded); err != nil {
+				t.Fatalf("read hand-added card: %v", err)
+			}
+
+			later := seedCards(t, tx, f, 1)[0]
+			setImportDuePosition(t, tx, later, 30)
+
+			window := testStudyDay(0)
+			now := window.Start.Add(time.Hour)
+			s := defaultSettings()
+			s.Priority = priority
+			batch, err := BuildBatch(ctx, tx, p, f.UserID, f.DeckID, "D", window, s, Cursor{AtStart: true}, 30, now, 0)
+			if err != nil {
+				t.Fatalf("BuildBatch: %v", err)
+			}
+			want := []pgtype.UUID{f.CardID, early, handAdded, later}
+			if len(batch.Cards) != len(want) {
+				t.Fatalf("got %d cards, want %d", len(batch.Cards), len(want))
+			}
+			for i, c := range batch.Cards {
+				if c.CardID != want[i] {
+					t.Errorf("position %d: got card %s, want %s", i, c.CardID.String(), want[i].String())
+				}
+			}
+		})
+	}
+}

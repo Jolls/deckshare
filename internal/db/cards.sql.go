@@ -24,7 +24,12 @@ func (q *Queries) CountCardsForTemplates(ctx context.Context, templateIds []pgty
 }
 
 const createCard = `-- name: CreateCard :one
-INSERT INTO cards (note_id, template_id, ordinal, deck_id) VALUES ($1, $2, $3, $4) RETURNING id, note_id, template_id, ordinal, deck_id, anki_id, import_due_position
+INSERT INTO cards (note_id, template_id, ordinal, deck_id, import_due_position)
+SELECT $1, $2, $3, $4,
+       LEAST(COALESCE(max(c.import_due_position), 0)::bigint + 1, 2147483647)::integer
+FROM cards c
+WHERE c.deck_id = $4
+RETURNING id, note_id, template_id, ordinal, deck_id, anki_id, import_due_position
 `
 
 type CreateCardParams struct {
@@ -37,6 +42,13 @@ type CreateCardParams struct {
 // Called once per card in the create set (§0.3's "create" batch is small -- at most one row
 // per template/cloze ordinal) rather than as a single multi-row statement: sqlc's query
 // analyzer cannot resolve a two-array unnest(...) without a live database catalog.
+//
+// A card created in DeckShare joins the end of its deck's new-card queue (#240): the deck's
+// highest import_due_position + 1, or 1 for a deck with none. Without this it stayed NULL and
+// sorted after every imported card, including ones imported later. Not serialised: two concurrent
+// creates in one deck can share a position, and every reader breaks ties on card id (uuidv7, so
+// creation order). LEAST caps at the integer column's maximum; a capped card ties with
+// position-less cards at deckshare_new_card_key's sentinel, which the id tie-break handles.
 func (q *Queries) CreateCard(ctx context.Context, arg CreateCardParams) (Card, error) {
 	row := q.db.QueryRow(ctx, createCard,
 		arg.NoteID,
@@ -58,9 +70,21 @@ func (q *Queries) CreateCard(ctx context.Context, arg CreateCardParams) (Card, e
 }
 
 const createCardsForNewTemplate = `-- name: CreateCardsForNewTemplate :execrows
-INSERT INTO cards (note_id, template_id, ordinal, deck_id)
-SELECT n.id, $1, $2, n.deck_id
-FROM notes n WHERE n.note_type_id = $3
+WITH targets AS (
+    SELECT n.id AS note_id, n.deck_id
+    FROM notes n
+    WHERE n.note_type_id = $3
+), deck_max AS (
+    SELECT t.deck_id, COALESCE(max(c.import_due_position), 0)::bigint AS max_pos
+    FROM (SELECT DISTINCT deck_id FROM targets) t
+    LEFT JOIN cards c ON c.deck_id = t.deck_id
+    GROUP BY t.deck_id
+)
+INSERT INTO cards (note_id, template_id, ordinal, deck_id, import_due_position)
+SELECT t.note_id, $1, $2, t.deck_id,
+       LEAST(dm.max_pos + row_number() OVER (PARTITION BY t.deck_id ORDER BY t.note_id), 2147483647)::integer
+FROM targets t
+JOIN deck_max dm ON dm.deck_id = t.deck_id
 ON CONFLICT (note_id, ordinal) DO NOTHING
 `
 
@@ -72,7 +96,9 @@ type CreateCardsForNewTemplateParams struct {
 
 // One card per existing note when a template is appended to a non-cloze note type (#54 §0.5).
 // Filed in each note's home deck: notes.deck_id is the default for cards generated later
-// (architecture.md §20).
+// (architecture.md §20). Each deck's new cards go after its highest import_due_position, numbered
+// in note-id (creation) order -- CreateCard's rule (#240), applied per deck. A row skipped by
+// ON CONFLICT still uses up its number; gaps are harmless because only the order matters.
 func (q *Queries) CreateCardsForNewTemplate(ctx context.Context, arg CreateCardsForNewTemplateParams) (int64, error) {
 	result, err := q.db.Exec(ctx, createCardsForNewTemplate, arg.TemplateID, arg.Ordinal, arg.NoteTypeID)
 	if err != nil {

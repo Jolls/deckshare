@@ -231,7 +231,7 @@ func (c Cursor) revCardIDArg() pgtype.UUID {
 }
 
 // newKeyArg uses -Inf, not 0, as the AtStart sentinel: ListNewCardsForStudy's sort_key is
-// COALESCE(import_due_position, 2147483647), and a held/buried new card's Anki due position can
+// deckshare_new_card_key(import_due_position) (migration 00026), and a held/buried new card's Anki due position can
 // resolve negative (internal/apkg/ir.go's resolveDue), so only -Inf is guaranteed to sort before
 // every real position.
 func (c Cursor) newKeyArg() float64 {

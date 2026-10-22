@@ -420,3 +420,75 @@ func findCardsForNote(ctx context.Context, tx pgx.Tx, noteID pgtype.UUID) (map[i
 	}
 	return out, rows.Err()
 }
+
+// TestExport_HandAddedCardExportsItsPosition (#240): a card authored in DeckShare carries a real
+// queue position, so export emits it (deck max + 1) rather than the export-row-order fallback,
+// which would not match what the author saw. Imported positions are shifted well past any row
+// count first, so the fallback and the real position cannot coincide.
+func TestExport_HandAddedCardExportsItsPosition(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+	owner := seedUser(t, tx)
+	now := time.Now()
+
+	if _, err := Import(ctx, tx, owner, readBytes(t, buildSchema11Package(t, defaultSynthSpec(t))), now, testMediaStore(t)); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	q := db.New(tx)
+	deck, err := q.GetDeckByOwnerAndName(ctx, db.GetDeckByOwnerAndNameParams{OwnerID: owner, Name: "Default"})
+	if err != nil {
+		t.Fatalf("Default deck: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE cards SET import_due_position = import_due_position + 100
+		 WHERE deck_id = $1 AND import_due_position IS NOT NULL`, deck.ID); err != nil {
+		t.Fatalf("shift imported positions: %v", err)
+	}
+	var maxPos int32
+	if err := tx.QueryRow(ctx, `SELECT max(import_due_position) FROM cards WHERE deck_id = $1`, deck.ID).Scan(&maxPos); err != nil {
+		t.Fatalf("read max position: %v", err)
+	}
+
+	imported, err := findCardByAnkiID(ctx, tx, 201)
+	if err != nil {
+		t.Fatalf("card 201: %v", err)
+	}
+	src, err := q.GetNoteByOwnerAndGuid(ctx, db.GetNoteByOwnerAndGuidParams{OwnerID: owner, Guid: "guid-note-1"})
+	if err != nil {
+		t.Fatalf("guid-note-1: %v", err)
+	}
+	const handGuid = "hand-added-guid"
+	if _, err := db.CreateNoteWithCards(ctx, tx, db.CreateNoteParams{
+		Guid: handGuid, Fields: src.Fields, Tags: []string{}, Checksum: src.Checksum,
+		UserID: owner, NoteTypeID: src.NoteTypeID, DeckID: deck.ID,
+	}, []db.DesiredCard{{Ordinal: 0, TemplateID: imported.TemplateID}}); err != nil {
+		t.Fatalf("CreateNoteWithCards: %v", err)
+	}
+
+	col, err := Export(ctx, tx, deck.ID, owner, now)
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	var noteAnkiID int64
+	for _, n := range col.Notes {
+		if n.Guid == handGuid {
+			noteAnkiID = n.AnkiID
+		}
+	}
+	if noteAnkiID == 0 {
+		t.Fatalf("hand-added note not in export")
+	}
+	found := false
+	for _, c := range col.Cards {
+		if c.NoteAnkiID != noteAnkiID {
+			continue
+		}
+		found = true
+		if c.Due.Kind != DuePosition || c.Due.Position != maxPos+1 {
+			t.Errorf("hand-added card Due = %+v, want position %d (deck max %d + 1)", c.Due, maxPos+1, maxPos)
+		}
+	}
+	if !found {
+		t.Fatal("hand-added card not in export")
+	}
+}

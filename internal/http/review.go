@@ -270,7 +270,7 @@ func buildStudyBatchInWindow(ctx context.Context, store db.DBTX, userID pgtype.U
 // deck's own queue and stays stable across a study day; this just interleaves already-selected
 // decks' slices for one page view, so an unseeded PRNG is fine.
 func shuffleCards(cards []review.Card) {
-	rand.Shuffle(len(cards), func(i, j int) { cards[i], cards[j] = cards[j], cards[i] })
+	rand.Shuffle(len(cards), func(i, j int) { cards[i], cards[j] = cards[j], cards[i] }) //nolint:gosec // study-order shuffle, not security-sensitive
 }
 
 // noteTypeCSS sanitises each note type's CSS blob once per page (never per card, #55) so a

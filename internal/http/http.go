@@ -50,8 +50,9 @@ func NewHandler(pool *pgxpool.Pool, a *auth.Service, blobs *media.Store, trusted
 	registerNotePreviewRoutes(mux, pool, fragments)
 	registerReviewRoutes(mux, pool, pages, fragments, time.Now)
 	registerMediaRoutes(mux, pool, blobs)
-	registerImportRoutes(mux, pool, pages, blobs, time.Now)
-	registerExportRoutes(mux, pool, pages, time.Now)
+	packageSlots := make(chan struct{}, packageConcurrency)
+	registerImportRoutes(mux, pool, pages, blobs, time.Now, packageSlots)
+	registerExportRoutes(mux, pool, pages, time.Now, packageSlots)
 	registerAIImportRoutes(mux, pool, pages)
 	return requestLog(securityHeaders(a.Middleware(captureUser(mux)))), nil
 }

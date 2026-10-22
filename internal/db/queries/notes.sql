@@ -3,19 +3,20 @@
 -- note's earliest card's import queue position -- (import_due_position, id) is the order new
 -- cards are actually introduced in (reviews.sql), which is what "the first 40 cards" means to a
 -- teacher, not recently-edited-first. A cloze note can hold several cards/positions; MIN takes
--- the earliest. NULL (manually created cards, or a note with no cards yet) sorts last via the
--- same 2147483647 sentinel reviews.sql's COALESCE uses for import_due_position, cast to bigint
--- for headroom against negative Anki due positions. at_start (not a cursor_sort_key/cursor_id
+-- the earliest. NULL (a note with no cards yet, or only cards that were not new when imported) sorts last via
+-- deckshare_new_card_key's sentinel (migration 00026, the same key reviews.sql sorts new cards
+-- by), cast to bigint for headroom against negative Anki due positions. at_start (not a cursor_sort_key/cursor_id
 -- sentinel value) marks the first page, mirroring review.Cursor's own AtStart field
 -- (internal/review/types.go) -- cursor_sort_key/cursor_id are meaningless when at_start is true.
 -- Keyset, not offset (#238 comment): bulk-editing this list mutates modified_at, which would
--- reshuffle an offset page mid-edit; import_due_position never changes after import.
+-- reshuffle an offset page mid-edit; import_due_position is written only when a card is created or
+-- imported (#240), never by a note edit.
 -- name: ListNotesInDeck :many
 WITH ordered_notes AS (
     SELECT n.id, n.fields ->> nt.sort_field_idx AS sort_text, n.tags, n.modified_at, nt.name AS note_type_name,
            n.release_day,   -- the lesson this note is assigned to (#242); gate-only, never an order
            count(c.id) AS card_count,
-           COALESCE(min(c.import_due_position), 2147483647)::bigint AS sort_key,
+           deckshare_new_card_key(min(c.import_due_position))::bigint AS sort_key,
            -- Whether every one of this note's cards is currently suspended for the CALLER (#223):
            -- feeds the per-note Suspend/Unsuspend toggle's label (deck.html). bool_and over a
            -- LEFT JOIN so a never-seen card (no user_card_state row) counts as "not suspended"

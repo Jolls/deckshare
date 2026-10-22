@@ -3,10 +3,65 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/Jolls/deckshare"
 )
+
+func int32p(n int32) *int32 { return &n }
+
+// createHandAuthoredNote creates a note in deck through CreateNoteWithCards -- the path a
+// hand-authored note takes -- with one card per template, ordinal 0..len-1, and returns the new
+// cards in ascending id order.
+func createHandAuthoredNote(t *testing.T, tx pgx.Tx, user, noteType, deck pgtype.UUID, templates ...pgtype.UUID) []cardPosition {
+	t.Helper()
+	ctx := context.Background()
+	desired := make([]DesiredCard, len(templates))
+	for i, tpl := range templates {
+		desired[i] = DesiredCard{Ordinal: int32(i), TemplateID: tpl}
+	}
+	note, err := CreateNoteWithCards(ctx, tx, CreateNoteParams{
+		Guid: fmt.Sprintf("created-%d", nextSeq()), Fields: []byte(`["Q","A"]`), Tags: []string{}, Checksum: 1,
+		UserID: user, NoteTypeID: noteType, DeckID: deck,
+	}, desired)
+	if err != nil {
+		t.Fatalf("CreateNoteWithCards: %v", err)
+	}
+	return cardPositions(t, tx, note.ID)
+}
+
+type cardPosition struct {
+	ID      pgtype.UUID
+	Ordinal int32
+	Pos     pgtype.Int4
+}
+
+func cardPositions(t *testing.T, tx pgx.Tx, noteID pgtype.UUID) []cardPosition {
+	t.Helper()
+	rows, err := tx.Query(context.Background(),
+		`SELECT id, ordinal, import_due_position FROM cards WHERE note_id = $1 ORDER BY id`, noteID)
+	if err != nil {
+		t.Fatalf("read card positions: %v", err)
+	}
+	defer rows.Close()
+	var out []cardPosition
+	for rows.Next() {
+		var c cardPosition
+		if err := rows.Scan(&c.ID, &c.Ordinal, &c.Pos); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	return out
+}
 
 // The trap's regression test (docs/schema.md, #51 §0.4): editing a note must not drop and
 // recreate its cards -- a surviving ordinal's card id, and therefore its user_card_state, must
@@ -375,5 +430,210 @@ func TestSyncNoteCards_SequentialSyncsAccumulate(t *testing.T) {
 
 	if countRows(t, tx, `SELECT count(*) FROM cards WHERE note_id = $1 AND ordinal = 1`, note) != 1 {
 		t.Fatal("newly created card should exist")
+	}
+}
+
+// #240: a card created in DeckShare joins the end of its deck's new-card queue -- the deck's
+// highest import_due_position + 1 -- instead of staying position-less behind every imported card.
+func TestCreateCard_AppendsAfterDeckMaxPosition(t *testing.T) {
+	cases := []struct {
+		name  string
+		prior []*int32 // existing cards' positions; nil = position-less
+		want  []int32  // positions of the cards created afterwards, in creation order
+	}{
+		{"mixed imported and position-less", []*int32{int32p(5), int32p(9), nil}, []int32{10, 11}},
+		{"empty deck", nil, []int32{1, 2}},
+		{"all position-less", []*int32{nil, nil}, []int32{1, 2}},
+		{"negative max (held Anki card)", []*int32{int32p(-5)}, []int32{-4, -3}},
+		{"int32 ceiling", []*int32{int32p(2147483647)}, []int32{2147483647, 2147483647}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tx := beginTx(t)
+			user := mustUser(t, tx)
+			deck := mustDeck(t, tx, user)
+			mustDeckAccess(t, tx, deck, user, fullAccess())
+			noteType := mustNoteType(t, tx, user)
+			template := mustTemplate(t, tx, noteType, 0)
+
+			// A second deck holding position 100 must not influence this deck's max.
+			otherDeck := mustDeck(t, tx, user)
+			mustCardWithPosition(t, tx, mustNote(t, tx, user, noteType, otherDeck), template, otherDeck, 0, int32p(100))
+			for _, pos := range tc.prior {
+				mustCardWithPosition(t, tx, mustNote(t, tx, user, noteType, deck), template, deck, 0, pos)
+			}
+
+			var got []pgtype.Int4
+			for range tc.want {
+				for _, c := range createHandAuthoredNote(t, tx, user, noteType, deck, template) {
+					got = append(got, c.Pos)
+				}
+			}
+			for i, w := range tc.want {
+				if i >= len(got) || !got[i].Valid || got[i].Int32 != w {
+					t.Fatalf("created card %d import_due_position = %+v, want %d (all: %+v)", i, got, w, got)
+				}
+			}
+		})
+	}
+}
+
+// A note with several templates gets consecutive positions, ascending by card id.
+func TestCreateCard_MultiTemplateNoteGetsConsecutivePositions(t *testing.T) {
+	tx := beginTx(t)
+	user := mustUser(t, tx)
+	deck := mustDeck(t, tx, user)
+	mustDeckAccess(t, tx, deck, user, fullAccess())
+	noteType := mustNoteType(t, tx, user)
+	t0 := mustTemplate(t, tx, noteType, 0)
+	t1 := mustTemplate(t, tx, noteType, 1)
+	mustCardWithPosition(t, tx, mustNote(t, tx, user, noteType, deck), t0, deck, 0, int32p(5))
+	mustCardWithPosition(t, tx, mustNote(t, tx, user, noteType, deck), t0, deck, 0, int32p(9))
+
+	cards := createHandAuthoredNote(t, tx, user, noteType, deck, t0, t1)
+	if len(cards) != 2 {
+		t.Fatalf("created %d cards, want 2", len(cards))
+	}
+	for i, want := range []int32{10, 11} {
+		if !cards[i].Pos.Valid || cards[i].Pos.Int32 != want {
+			t.Errorf("card %d (by id) import_due_position = %+v, want %d", i, cards[i].Pos, want)
+		}
+	}
+}
+
+// Adding a template to a note type creates a card per existing note; each deck's new cards go
+// after that deck's own highest position, numbered in note-id (creation) order.
+func TestRemapNoteTypeCards_AddedTemplate_AppendsPerDeck(t *testing.T) {
+	tx := beginTx(t)
+	ctx := context.Background()
+
+	user := mustUser(t, tx)
+	deckA := mustDeck(t, tx, user)
+	deckB := mustDeck(t, tx, user)
+	noteType := mustNoteType(t, tx, user)
+
+	// An unrelated card at position 7 already sits in deck A, from another note type.
+	otherType := mustNoteType(t, tx, user)
+	otherTemplate := mustTemplate(t, tx, otherType, 0)
+	mustCardWithPosition(t, tx, mustNote(t, tx, user, otherType, deckA), otherTemplate, deckA, 0, int32p(7))
+
+	nA1 := mustNote(t, tx, user, noteType, deckA)
+	nA2 := mustNote(t, tx, user, noteType, deckA)
+	nB1 := mustNote(t, tx, user, noteType, deckB)
+
+	newTemplate := mustTemplate(t, tx, noteType, 0)
+	if err := RemapNoteTypeCards(ctx, tx, noteType, nil, nil, []AddedTemplate{{TemplateID: newTemplate, Ordinal: 0}}); err != nil {
+		t.Fatalf("RemapNoteTypeCards: %v", err)
+	}
+
+	for note, want := range map[pgtype.UUID]int32{nA1: 8, nA2: 9, nB1: 1} {
+		cards := cardPositions(t, tx, note)
+		if len(cards) != 1 || !cards[0].Pos.Valid || cards[0].Pos.Int32 != want {
+			t.Errorf("note %v: cards = %+v, want one card at position %d", note, cards, want)
+		}
+	}
+}
+
+// Two transactions creating cards in one deck at the same moment must neither block each other nor
+// fail. They may compute the same position (the column is not unique); the card-id tie-break then
+// keeps the queue order deterministic. Committed rows, so it runs in a throwaway schema.
+func TestCreateCard_ConcurrentSameDeckTiesBreakByID(t *testing.T) {
+	pool := migrationPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := Migrate(ctx, pool, deckshare.Migrations()); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	seed, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin seed tx: %v", err)
+	}
+	user := mustUser(t, seed)
+	deck := mustDeck(t, seed, user)
+	noteType := mustNoteType(t, seed, user)
+	template := mustTemplate(t, seed, noteType, 0)
+	note1 := mustNote(t, seed, user, noteType, deck)
+	note2 := mustNote(t, seed, user, noteType, deck)
+	if err := seed.Commit(ctx); err != nil {
+		t.Fatalf("commit seed: %v", err)
+	}
+
+	txA, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin txA: %v", err)
+	}
+	defer func() { _ = txA.Rollback(context.Background()) }()
+	txB, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin txB: %v", err)
+	}
+	defer func() { _ = txB.Rollback(context.Background()) }()
+
+	// Both inserts happen before either commit, so neither sees the other's row.
+	cardA, err := New(txA).CreateCard(ctx, CreateCardParams{NoteID: note1, TemplateID: template, Ordinal: 0, DeckID: deck})
+	if err != nil {
+		t.Fatalf("CreateCard in txA: %v", err)
+	}
+	cardB, err := New(txB).CreateCard(ctx, CreateCardParams{NoteID: note2, TemplateID: template, Ordinal: 0, DeckID: deck})
+	if err != nil {
+		t.Fatalf("CreateCard in txB (blocked or failed): %v", err)
+	}
+	if err := txA.Commit(ctx); err != nil {
+		t.Fatalf("commit txA: %v", err)
+	}
+	if err := txB.Commit(ctx); err != nil {
+		t.Fatalf("commit txB: %v", err)
+	}
+
+	for _, c := range []Card{cardA, cardB} {
+		if !c.ImportDuePosition.Valid || c.ImportDuePosition.Int32 != 1 {
+			t.Errorf("card %v import_due_position = %+v, want 1 (both saw an empty deck)", c.ID, c.ImportDuePosition)
+		}
+	}
+	rows, err := pool.Query(ctx,
+		`SELECT id FROM cards WHERE deck_id = $1 ORDER BY deckshare_new_card_key(import_due_position), id`, deck)
+	if err != nil {
+		t.Fatalf("read queue order: %v", err)
+	}
+	defer rows.Close()
+	var order []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		order = append(order, id)
+	}
+	if len(order) != 2 || order[0].String() > order[1].String() {
+		t.Errorf("queue order = %v, want the two cards in ascending id order", order)
+	}
+}
+
+// A note's new cards get positions in ordinal order (a cloze note's c1 before c2), not in
+// whatever order SyncNoteCards happens to walk its desired set. Eight ordinals make a lucky pass
+// under random map iteration a 1-in-40320 event.
+func TestCreateCard_NoteCardsGetPositionsInOrdinalOrder(t *testing.T) {
+	tx := beginTx(t)
+	user := mustUser(t, tx)
+	deck := mustDeck(t, tx, user)
+	mustDeckAccess(t, tx, deck, user, fullAccess())
+	noteType := mustNoteType(t, tx, user)
+	template := mustTemplate(t, tx, noteType, 0)
+
+	templates := make([]pgtype.UUID, 8)
+	for i := range templates {
+		templates[i] = template
+	}
+	// Positions are handed out in creation order and ids are time-ordered, so by id the ordinals
+	// must come out 0..7 -- and each card's position one more than the last.
+	cards := createHandAuthoredNote(t, tx, user, noteType, deck, templates...)
+	if len(cards) != 8 {
+		t.Fatalf("created %d cards, want 8", len(cards))
+	}
+	for i, c := range cards {
+		if c.Ordinal != int32(i) || !c.Pos.Valid || c.Pos.Int32 != int32(i)+1 {
+			t.Errorf("card %d (by id): ordinal %d, position %+v; want ordinal %d, position %d", i, c.Ordinal, c.Pos, i, i+1)
+		}
 	}
 }

@@ -22,7 +22,8 @@ const (
 	// ReleaseGateOff is the current_class_day the study queries take for a deck with no calendar:
 	// a class day past every lesson that can exist, so `release_day <= current_class_day` admits
 	// everything and the gate needs no second branch. The same "sentinel beyond every real value"
-	// trick, and the same constant, that reviews.sql already uses for import_due_position (#82).
+	// trick, and the same constant, that deckshare_new_card_key (migration 00026) uses for
+	// import_due_position (#82).
 	ReleaseGateOff int32 = math.MaxInt32
 
 	// MaxReleaseDay bounds notes.release_day, and must match migration 00020's CHECK -- this is

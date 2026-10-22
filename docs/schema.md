@@ -101,9 +101,20 @@ card_release_days (view)  card_id, release_day
             -- subquery, so the obvious released(card_id, day) helper would be an opaque
             -- per-row call (~7.7us/row) instead of the hash join a view rewrites into
 
-cards       id, note_id, template_id, ordinal, deck_id, anki_id
+deckshare_new_card_key(import_due_position) -> float8                          (function)
+deckshare_rev_key(rev_order, due, scheduled_days, card_id, seed) -> float8     (function)
+            -- the study queue's sort keys (#219): one definition each, so reviews.sql's sort
+            -- sites and daily-cap boundary sites cannot desync. Pure expressions over their own
+            -- arguments, so the planner inlines them -- unlike card_release_days above, which
+            -- needs a lookup and is a view for that reason
+
+cards       id, note_id, template_id, ordinal, deck_id, anki_id, import_due_position
             -- content addressing ONLY. No due, no ivl, no factor, no state.
             -- UNIQUE (note_id, ordinal)
+            -- import_due_position: the deck's new-card queue order (#82) -- Anki's position on
+            --   import, deck max + 1 for a card created in DeckShare (#240), NULL only for a card
+            --   that was not new when imported. Not unique: ties are possible, and every reader
+            --   breaks them on card id
 
 decks       id, owner_id, name, description,
             preset jsonb, created_at, modified_at, anki_id
