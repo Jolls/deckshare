@@ -49,7 +49,7 @@ jobs:
           git diff --exit-code -- internal/db
       - uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12.2
+          version: v2.15.0
       - run: go test -race ./...
 
   e2e:
