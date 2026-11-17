@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version: "1.27"
           check-latest: true
       - run: go build ./...
       - name: Install govulncheck
@@ -49,7 +49,7 @@ jobs:
           git diff --exit-code -- internal/db
       - uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12.2
+          version: v2.15.0
       - run: go test -race ./...
 
   e2e:
@@ -75,7 +75,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version: "1.27"
           check-latest: true
       - name: Build and start the server
         # No goose step: the server applies its embedded migrations on startup (#274), so this job
