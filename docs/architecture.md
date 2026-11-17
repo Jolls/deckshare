@@ -202,7 +202,7 @@ target, decided in [docs/plans/architecture-reconsidered.md](plans/architecture-
 | Tests | Go's `testing` + Playwright | Playwright still applies unchanged — it drives a real browser and doesn't care what rendered the page. See [CLAUDE.md §10](../CLAUDE.md#10-testing). |
 | Lint | `golangci-lint` v2, `linters.default: standard` | Start with the standard set, not `all` — add specific linters as a real gap shows up rather than fighting seventy opinions on day one. See §12. |
 | CI | GitHub Actions | Single workflow: `go build`, `go vet`, `golangci-lint run`, `go test ./...` on push and PR. PRs also build the multi-arch image (no push); `v*` tags build and publish it to GHCR. See §12. |
-| Deploy | Single multi-arch (amd64 + arm64) distroless image `ghcr.io/jolls/deckshare` + Postgres via compose (`deploy/compose.yaml`, [deploy.md](deploy.md)) | Multi-arch Docker builds cross-compile rather than build per-host. Go 1.26 (current stable) — see §12. StartOS packaging is separate and not built yet. |
+| Deploy | Single multi-arch (amd64 + arm64) distroless image `ghcr.io/jolls/deckshare` + Postgres via compose (`deploy/compose.yaml`, [deploy.md](deploy.md)) | Multi-arch Docker builds cross-compile rather than build per-host. Go 1.27 (current stable) — see §12. StartOS packaging is separate and not built yet. |
 | Logging | `log/slog`, stdlib | One process-wide default logger (`cmd/deckshare/main.go`), never injected. Writes to `os.Stdout` as text (dev-friendly) or JSON, selected by `LOG_FORMAT` (docs/plans/210-error-logging.md). |
 
 **No FSRS implementation runs in the browser, ever.** A card's outcome under each of the four
