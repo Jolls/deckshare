@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -169,12 +170,13 @@ func TestMediaRoute_RejectsMalformedHash(t *testing.T) {
 	}
 }
 
-// A media blob stored with a script-capable MIME type (SVG and HTML chief among them, since both
-// are derivable from a filename extension by detectMediaMime) must never be served with that
-// Content-Type -- the vulnerability this issue fixes. The fix relabels, not withholds: the bytes
-// still come back unchanged, just as application/octet-stream.
+// A media blob stored with a script-capable MIME type (HTML chief among them, since it is
+// derivable from a filename extension by detectMediaMime) must never be served with that
+// Content-Type -- the vulnerability #133 fixed. The fix relabels, not withholds: the bytes
+// still come back unchanged, just as application/octet-stream. SVG is the one exception, covered
+// by TestMediaRoute_ServesSVGSandboxed.
 func TestMediaRoute_ForcesUnsafeMimeToOctetStream(t *testing.T) {
-	for _, mimeType := range []string{"image/svg+xml", "text/html", "text/plain", "application/javascript"} {
+	for _, mimeType := range []string{"text/html", "text/plain", "application/javascript"} {
 		t.Run(mimeType, func(t *testing.T) {
 			tx := beginTx(t)
 			ctx := context.Background()
@@ -194,6 +196,59 @@ func TestMediaRoute_ForcesUnsafeMimeToOctetStream(t *testing.T) {
 			}
 			if ct := w.Header().Get("Content-Type"); ct != "application/octet-stream" {
 				t.Errorf("Content-Type = %q, want application/octet-stream", ct)
+			}
+			if w.Body.String() != string(data) {
+				t.Errorf("body = %q, want %q", w.Body.String(), data)
+			}
+		})
+	}
+}
+
+// Standalone SVG media (#306) is served as image/svg+xml so <img src> renders it, but only with a
+// sandboxing CSP and Content-Disposition: attachment on the response so that opening
+// /media/{sha256} directly can't render it, run its script in the app's origin, or be framed.
+// Other types must not get the SVG CSP from the media route (the global CSP is still present on
+// every response via securityHeaders).
+func TestMediaRoute_ServesSVGSandboxed(t *testing.T) {
+	// The parameterised and upper-case forms must take the same path as the plain one --
+	// mime.ParseMediaType normalises them, and a miss would serve SVG with no sandbox at all.
+	for _, mimeType := range []string{"image/svg+xml", "image/svg+xml; charset=utf-8", "IMAGE/SVG+XML"} {
+		t.Run(mimeType, func(t *testing.T) {
+			tx := beginTx(t)
+			ctx := context.Background()
+			store := media.New(t.TempDir())
+			handler, a := newMediaTestHandler(t, tx, store)
+
+			ownerEmail := testEmail()
+			ownerCookie := loginCookie(t, tx, a, ownerEmail, "correct-horse-battery")
+			ownerID := userID(t, ctx, tx, ownerEmail)
+
+			data := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`)
+			sha := seedMediaRefMime(t, ctx, tx, store, ownerID, data, mimeType, "flag.svg")
+
+			w := doRequest(handler, "GET", "/media/"+sha, "", ownerCookie, "")
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+			}
+			if ct := w.Header().Get("Content-Type"); ct != mimeType {
+				t.Errorf("Content-Type = %q, want %q", ct, mimeType)
+			}
+			csp := w.Header().Get("Content-Security-Policy")
+			if csp != svgMediaCSP {
+				t.Errorf("Content-Security-Policy = %q, want %q", csp, svgMediaCSP)
+			}
+			// The per-response CSP replaces the global one, so it must carry the directives that
+			// don't fall back to default-src -- notably frame-ancestors (clickjacking).
+			for _, want := range []string{"sandbox", "frame-ancestors 'none'", "base-uri 'none'", "form-action 'none'"} {
+				if !strings.Contains(csp, want) {
+					t.Errorf("SVG CSP %q is missing %q", csp, want)
+				}
+			}
+			if cd := w.Header().Get("Content-Disposition"); cd != "attachment" {
+				t.Errorf("Content-Disposition = %q, want attachment", cd)
+			}
+			if nosniff := w.Header().Get("X-Content-Type-Options"); nosniff != "nosniff" {
+				t.Errorf("X-Content-Type-Options = %q, want nosniff", nosniff)
 			}
 			if w.Body.String() != string(data) {
 				t.Errorf("body = %q, want %q", w.Body.String(), data)
@@ -232,6 +287,9 @@ func TestMediaRoute_AllowsSafeMimeTypes(t *testing.T) {
 			}
 			if ct := w.Header().Get("Content-Type"); ct != mimeType {
 				t.Errorf("Content-Type = %q, want %q", ct, mimeType)
+			}
+			if csp := w.Header().Get("Content-Security-Policy"); csp == svgMediaCSP {
+				t.Errorf("non-SVG response carries the SVG-only CSP %q", csp)
 			}
 		})
 	}

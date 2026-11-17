@@ -79,6 +79,8 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
 		// Stop a browser from second-guessing our Content-Type. Load-bearing for /media/{sha256},
 		// which serves imported .apkg blobs with a MIME derived from the filename extension.
+		// The media route overrides the CSP above for SVG (media.go's svgMediaCSP) -- a
+		// per-response CSP replaces this one, so changes here must be mirrored there.
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		// Don't leak deck or note ids in the Referer on outbound navigation.
 		w.Header().Set("Referrer-Policy", "same-origin")

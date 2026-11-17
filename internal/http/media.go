@@ -46,19 +46,38 @@ var safeMediaContentTypes = map[string]bool{
 	"video/ogg":                true,
 }
 
+// svgMediaContentType is the one script-capable type served as itself, because flag/diagram decks
+// reference standalone .svg files from <img src>. Inside <img> a browser runs SVG with script and
+// external loads disabled. The other way in is a top-level navigation or iframe to
+// /media/{sha256}, closed three ways: Content-Disposition: attachment (browsers ignore it for
+// <img> loads, but a direct navigation downloads instead of rendering), and svgMediaCSP as
+// defence in depth -- sandbox gives an opaque origin with scripts off, and frame-ancestors/
+// base-uri/form-action repeat what security.go's global CSP would have set, because a
+// per-response CSP header replaces that one rather than adding to it.
+const (
+	svgMediaContentType = "image/svg+xml"
+	svgMediaCSP         = "default-src 'none'; sandbox; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+)
+
 // mediaContentType returns what to send as Content-Type for a blob whose recorded MIME is
-// stored. Anything not on safeMediaContentTypes -- image/svg+xml and text/html chief among them,
-// since both are filename-extension-derivable and both are script-capable -- is forced to
-// application/octet-stream so nosniff keeps the browser from ever treating the bytes as markup.
+// stored. Anything not on safeMediaContentTypes -- text/html chief among them, since it is
+// filename-extension-derivable and script-capable -- is forced to application/octet-stream so
+// nosniff keeps the browser from ever treating the bytes as markup. image/svg+xml is the
+// exception, passed through only together with svgMediaCSP (see registerMediaRoutes).
 // detectMediaMime (internal/apkg/dbwrite.go) still records the real type; this is a presentation
 // decision made fresh on every response, not a data correction, so it also covers blobs imported
 // before this allowlist existed.
 func mediaContentType(stored string) string {
 	base, _, err := mime.ParseMediaType(stored)
-	if err != nil || !safeMediaContentTypes[base] {
+	if err != nil || (!safeMediaContentTypes[base] && base != svgMediaContentType) {
 		return "application/octet-stream"
 	}
 	return stored
+}
+
+func isSVGContentType(ct string) bool {
+	base, _, err := mime.ParseMediaType(ct)
+	return err == nil && base == svgMediaContentType
 }
 
 // registerMediaRoutes wires the content-addressed blob-serving route (docs/routes.md's Media
@@ -90,7 +109,12 @@ func registerMediaRoutes(mux *http.ServeMux, store db.Beginner, blobs *media.Sto
 		// Long-lived and private: the address is the hash so the content behind it never
 		// changes, but visibility is per-user (deck_access), so a shared cache must not serve
 		// one user's fetch to another.
-		w.Header().Set("Content-Type", mediaContentType(blob.Mime))
+		ct := mediaContentType(blob.Mime)
+		w.Header().Set("Content-Type", ct)
+		if isSVGContentType(ct) {
+			w.Header().Set("Content-Security-Policy", svgMediaCSP)
+			w.Header().Set("Content-Disposition", "attachment")
+		}
 		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.Copy(w, f)
