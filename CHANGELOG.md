@@ -8,6 +8,15 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.23] - 2026-11-16
+
+### Fixed
+- Standalone `.svg` media (e.g. flag decks) renders again instead of showing a broken image:
+  `GET /media/{sha256}` serves it as `image/svg+xml` with `Content-Disposition: attachment` and a
+  sandboxing per-response CSP (also keeping `frame-ancestors 'none'`), so opening or framing the
+  file directly downloads it instead of rendering script in the app's origin. `text/html` and every
+  other non-allowlisted type stay forced to `application/octet-stream` ([#306](https://github.com/Jolls/deckshare/issues/306)).
+
 ## [0.3.22] - 2026-10-21
 
 ### Changed
