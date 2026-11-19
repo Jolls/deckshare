@@ -8,6 +8,18 @@ The minor number tracks the build-order milestone
 (single-user core), `0.2.x` Milestone 2 (LAN multiuser), `0.3.x` Milestone 3 (classroom).
 The patch number increments with every PR (CLAUDE.md §14).
 
+## [0.3.24] - 2026-11-18
+
+### Changed
+- Dependency bumps: `pgx/v5` 5.13.0, `klauspost/compress` 1.20.4, `goose/v3` 3.30.1,
+  `golang.org/x/text` 0.44.0, `@playwright/test` 1.65.1, plus the transitive `x/sync`, `x/sys`,
+  `modernc.org/libc` and `mfridman/interpolate` updates
+  ([#310](https://github.com/Jolls/deckshare/pull/310),
+  [#311](https://github.com/Jolls/deckshare/pull/311),
+  [#312](https://github.com/Jolls/deckshare/pull/312),
+  [#313](https://github.com/Jolls/deckshare/pull/313),
+  [#314](https://github.com/Jolls/deckshare/pull/314))
+
 ## [0.3.23] - 2026-11-16
 
 ### Fixed
